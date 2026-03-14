@@ -27,12 +27,25 @@ By participating in this project, you are expected to uphold our Code of Conduct
     ```bash
     npm install
     ```
-4.  **Create a branch** for your feature or bug fix:
-    ```bash
-    git checkout -b feature/my-awesome-feature
-    # or
-    git checkout -b fix/annoying-bug
-    ```
+4.  **Create a branch** for your feature or bug fix (see naming conventions below).
+
+### Branch Naming Guidelines
+
+Use the following prefixes for your branches:
+
+| Prefix | Purpose | Example |
+|--------|---------|---------|
+| `feature/` | New features or enhancements | `feature/add-cohere-provider` |
+| `fix/` | Bug fixes | `fix/streaming-timeout` |
+| `docs/` | Documentation changes | `docs/update-readme` |
+| `refactor/` | Code refactoring (no behavior change) | `refactor/simplify-tool-router` |
+| `test/` | Adding or updating tests | `test/add-gemini-tests` |
+| `chore/` | Maintenance tasks, dependencies | `chore/upgrade-typescript` |
+
+**Rules:**
+- Use lowercase with hyphens (kebab-case): `feature/add-new-tool` ✓
+- Keep names short but descriptive
+- Reference issue numbers when applicable: `fix/123-memory-leak`
 
 ## Development Workflow
 

@@ -1,5 +1,5 @@
 {
-  "name": "toolpack",
+  "name": "toolpack-sdk",
   "version": "0.1.0-SNAPSHOT",
   "description": "Unified TypeScript SDK for AI providers (OpenAI, Anthropic, Gemini, Ollama) with 72 built-in tools, workflow engine, and mode system for building AI-powered applications",
   "engines": {
@@ -49,14 +49,11 @@
     "typescript",
     "sdk"
   ],
-  "author": {
-    "name": "Sajeer",
-    "url": "https://sajeerzeji.com"
-  },
+  "author": "Sajeer (https://sajeerzeji.com)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/toolpack-ai/toolpack-sdk"
+    "url": "git+https://github.com/toolpack-ai/toolpack-sdk.git"
   },
   "homepage": "https://toolpacksdk.com",
   "bugs": {
@@ -100,5 +97,9 @@
   "optionalDependencies": {
     "puppeteer": "^24.39.0",
     "rss-parser": "^3.13.0"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
   }
 }

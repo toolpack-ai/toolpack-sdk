@@ -2,7 +2,7 @@
 
 A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 77 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
-[![npm version](https://img.shields.io/npm/v/toolpack.svg)](https://www.npmjs.com/package/toolpack)
+[![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **Website:** [https://toolpacksdk.com](https://toolpacksdk.com)
@@ -41,13 +41,13 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 ### Installation
 
 ```bash
-npm install toolpack
+npm install toolpack-sdk
 ```
 
 ### Basic Usage
 
 ```typescript
-import { Toolpack } from 'toolpack';
+import { Toolpack } from 'toolpack-sdk';
 
 // Initialize with one or more providers
 const sdk = await Toolpack.init({
@@ -124,7 +124,7 @@ const sdk = await Toolpack.init({
 Bring your own provider (e.g., xAI/Grok, Cohere, Mistral) by extending `ProviderAdapter`:
 
 ```typescript
-import { Toolpack, ProviderAdapter, CompletionRequest, CompletionResponse, CompletionChunk, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo } from 'toolpack';
+import { Toolpack, ProviderAdapter, CompletionRequest, CompletionResponse, CompletionChunk, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo } from 'toolpack-sdk';
 
 class XAIAdapter extends ProviderAdapter {
   name = 'xai';
@@ -199,7 +199,7 @@ Modes control AI behavior by setting a system prompt, filtering available tools,
 ### Custom Modes
 
 ```typescript
-import { createMode, Toolpack } from 'toolpack';
+import { createMode, Toolpack } from 'toolpack-sdk';
 
 // Read-only code reviewer
 const reviewMode = createMode({
@@ -390,7 +390,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 In addition to the 77 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
-import { Toolpack, createToolProject } from 'toolpack';
+import { Toolpack, createToolProject } from 'toolpack-sdk';
 
 // Define a custom tool project
 const myToolProject = createToolProject({
@@ -448,7 +448,7 @@ const sdk = await Toolpack.init({
 The SDK supports multimodal inputs (text + images) across all vision-capable providers. Images can be provided in three formats:
 
 ```typescript
-import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart } from 'toolpack';
+import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart } from 'toolpack-sdk';
 
 const sdk = await Toolpack.init({ provider: 'openai' });
 
@@ -633,7 +633,7 @@ When you have many tools (50+), enable tool search to reduce token usage. The AI
 ### Toolpack (High-Level)
 
 ```typescript
-import { Toolpack } from 'toolpack';
+import { Toolpack } from 'toolpack-sdk';
 
 const sdk = await Toolpack.init(config: ToolpackInitConfig): Promise<Toolpack>
 
@@ -663,7 +663,7 @@ await sdk.disconnect(): Promise<void>
 ### AIClient (Low-Level)
 
 ```typescript
-import { AIClient } from 'toolpack';
+import { AIClient } from 'toolpack-sdk';
 
 // Direct client usage (without workflow engine)
 await client.generate(request: CompletionRequest, provider?: string): Promise<CompletionResponse>
@@ -715,7 +715,7 @@ interface ProviderModelInfo {
 The SDK provides typed error classes for common failure scenarios:
 
 ```typescript
-import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError, ConnectionError, TimeoutError } from 'toolpack';
+import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError, ConnectionError, TimeoutError } from 'toolpack-sdk';
 
 try {
   await sdk.generate('Hello');
