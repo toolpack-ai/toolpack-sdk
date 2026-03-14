@@ -1,0 +1,104 @@
+{
+  "name": "toolpack",
+  "version": "0.1.0-SNAPSHOT",
+  "description": "Unified TypeScript SDK for AI providers (OpenAI, Anthropic, Gemini, Ollama) with 72 built-in tools, workflow engine, and mode system for building AI-powered applications",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "watch": "tsc -w",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:tools": "vitest run src/tools",
+    "test:tools:fs": "vitest run src/tools/fs-tools",
+    "test:tools:exec": "vitest run src/tools/exec-tools",
+    "test:tools:web": "vitest run src/tools/web-tools",
+    "test:tools:http": "vitest run src/tools/http-tools",
+    "test:tools:coding": "vitest run src/tools/coding-tools",
+    "test:tools:system": "vitest run src/tools/system-tools",
+    "test:tools:git": "vitest run src/tools/git-tools",
+    "test:tools:diff": "vitest run src/tools/diff-tools",
+    "test:tools:db": "vitest run src/tools/db-tools",
+    "test:tools:cloud": "vitest run src/tools/cloud-tools",
+    "test:coverage": "vitest run --coverage",
+    "test:integration:multimodal": "vitest run tests/integration/multimodal.test.ts",
+    "test:integration:tools": "npx tsx tests/integration/tools.test.ts",
+    "test:integration:tools:parallel": "vitest run --config vitest.config.parallel.ts tests/integration/parallel-tools.test.ts",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint src/**",
+    "prepublishOnly": "npm run build",
+    "publish:npm": "npm run build && npm run test && npm publish --access public"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "ai-agent",
+    "coding-agent",
+    "tools",
+    "function-calling",
+    "typescript",
+    "sdk"
+  ],
+  "author": {
+    "name": "Sajeer",
+    "url": "https://sajeerzeji.com"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toolpack-ai/toolpack-sdk"
+  },
+  "homepage": "https://toolpacksdk.com",
+  "bugs": {
+    "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__traverse": "^7.28.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^7.0.2",
+    "@types/mysql": "^2.15.27",
+    "@types/node": "^25.3.2",
+    "@types/pg": "^8.18.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "globals": "^17.3.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.73.0",
+    "@babel/parser": "^7.29.0",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.6.2",
+    "cheerio": "^1.2.0",
+    "diff": "^7.0.0",
+    "fast-glob": "^3.3.3",
+    "mysql2": "^3.18.2",
+    "netlify": "^24.0.1",
+    "openai": "^6.18.0",
+    "pg": "^8.19.0",
+    "simple-git": "^3.32.3",
+    "web-tree-sitter": "^0.22.6"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^24.39.0",
+    "rss-parser": "^3.13.0"
+  }
+}

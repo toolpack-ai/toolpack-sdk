@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+toolpack-sdk.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+.cache/
+.temp/
+
+# Custom development docs (internal planning)
+development/
+samples/
+documentation/
+
+# Docusaurus build artifacts
+.docusaurus/
+
+# Firebase config (deployment specific)
+.firebaserc
+
+# Local toolpack config with user settings
+.toolpack/

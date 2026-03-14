@@ -1,0 +1,14 @@
+{
+    "name": "system-tools",
+    "version": "1.0.0",
+    "description": "System tools for querying OS info, environment variables, working directory, and disk usage.",
+    "author": "Sajeer",
+    "tools": [
+        "system.info",
+        "system.env",
+        "system.set_env",
+        "system.cwd",
+        "system.disk_usage"
+    ],
+    "category": "system"
+}

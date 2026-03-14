@@ -1,0 +1,23 @@
+{
+    "name": "fs-tools",
+    "version": "1.0.0",
+    "description": "File system tools for reading, writing, searching, and managing files and directories.",
+    "author": "Sajeer",
+    "tools": [
+        "fs.read_file",
+        "fs.write_file",
+        "fs.append_file",
+        "fs.delete_file",
+        "fs.exists",
+        "fs.stat",
+        "fs.list_dir",
+        "fs.create_dir",
+        "fs.move",
+        "fs.copy",
+        "fs.read_file_range",
+        "fs.search",
+        "fs.replace_in_file",
+        "fs.tree"
+    ],
+    "category": "filesystem"
+}

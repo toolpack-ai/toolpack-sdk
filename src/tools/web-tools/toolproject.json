@@ -1,0 +1,18 @@
+{
+    "name": "web-tools",
+    "version": "1.0.0",
+    "description": "Web intelligence tools for fetching, searching, scraping, and extracting content from the web.",
+    "author": "Sajeer",
+    "tools": [
+        "web.fetch",
+        "web.search",
+        "web.scrape",
+        "web.extract_links",
+        "web.map",
+        "web.metadata",
+        "web.sitemap",
+        "web.feed",
+        "web.screenshot"
+    ],
+    "category": "network"
+}

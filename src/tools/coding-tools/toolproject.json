@@ -1,0 +1,9 @@
+{
+  "key": "coding",
+  "name": "coding-tools",
+  "displayName": "Code Intelligence",
+  "version": "1.0.0",
+  "description": "AST-aware code intelligence tools for finding symbols, references, and analyzing code structure.",
+  "author": "Sajeer",
+  "category": "coding"
+}

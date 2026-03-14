@@ -1,0 +1,15 @@
+{
+    "name": "exec-tools",
+    "version": "1.0.0",
+    "description": "Code execution tools for running commands, managing background processes, and automation.",
+    "author": "Sajeer",
+    "tools": [
+        "exec.run",
+        "exec.run_shell",
+        "exec.run_background",
+        "exec.read_output",
+        "exec.kill",
+        "exec.list_processes"
+    ],
+    "category": "execution"
+}

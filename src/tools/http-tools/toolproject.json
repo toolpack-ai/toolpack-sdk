@@ -1,0 +1,14 @@
+{
+    "name": "http-tools",
+    "version": "1.0.0",
+    "description": "HTTP tools for making GET, POST, PUT, DELETE requests and downloading files.",
+    "author": "Sajeer",
+    "tools": [
+        "http.get",
+        "http.post",
+        "http.put",
+        "http.delete",
+        "http.download"
+    ],
+    "category": "network"
+}
