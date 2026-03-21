@@ -9,11 +9,14 @@ const DEFAULT_MAX_CHUNK_SIZE = 2000;
 const DEFAULT_CHUNK_OVERLAP = 200;
 const DEFAULT_MIN_CHUNK_SIZE = 100;
 
+type FrontmatterValue = string | number | boolean | string[];
+type Frontmatter = Record<string, FrontmatterValue>;
+
 interface ParsedSection {
   headings: string[];
   content: string;
   hasCode: boolean;
-  frontmatter: Record<string, any>;
+  frontmatter: Frontmatter;
 }
 
 export class MarkdownSource implements KnowledgeSource {
@@ -182,7 +185,7 @@ export class MarkdownSource implements KnowledgeSource {
     return chunks;
   }
 
-  private extractFrontmatter(content: string): { frontmatter: Record<string, any>; body: string } {
+  private extractFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
     
     if (!frontmatterMatch) {
@@ -191,27 +194,15 @@ export class MarkdownSource implements KnowledgeSource {
 
     const frontmatterStr = frontmatterMatch[1];
     const body = content.slice(frontmatterMatch[0].length);
-    const frontmatter: Record<string, any> = {};
+    const frontmatter: Frontmatter = {};
 
     for (const line of frontmatterStr.split('\n')) {
       const colonIndex = line.indexOf(':');
       if (colonIndex > 0) {
         const key = line.slice(0, colonIndex).trim();
-        let value: any = line.slice(colonIndex + 1).trim();
-        
-        if (value.startsWith('[') && value.endsWith(']')) {
-          value = value.slice(1, -1).split(',').map((s: string) => s.trim().replace(/^["']|["']$/g, ''));
-        } else if (value === 'true') {
-          value = true;
-        } else if (value === 'false') {
-          value = false;
-        } else if (!isNaN(Number(value)) && value !== '') {
-          value = Number(value);
-        } else {
-          value = value.replace(/^["']|["']$/g, '');
-        }
-        
-        frontmatter[key] = value;
+        const rawValue = line.slice(colonIndex + 1).trim();
+        const parsedValue = this.parseFrontmatterValue(rawValue);
+        frontmatter[key] = parsedValue;
       }
     }
 
@@ -355,7 +346,7 @@ export class MarkdownSource implements KnowledgeSource {
   }
 
   private getOverlapText(chunks: string[], targetTokens: number): string {
-    let result: string[] = [];
+    const result: string[] = [];
     let tokens = 0;
 
     for (let i = chunks.length - 1; i >= 0 && tokens < targetTokens; i--) {
@@ -422,5 +413,28 @@ export class MarkdownSource implements KnowledgeSource {
 
   private hashContent(content: string): string {
     return crypto.createHash('md5').update(content).digest('hex');
+  }
+
+  private parseFrontmatterValue(value: string): FrontmatterValue {
+    if (value.startsWith('[') && value.endsWith(']')) {
+      return value
+        .slice(1, -1)
+        .split(',')
+        .map((segment) => segment.trim().replace(/^["']|["']$/g, ''));
+    }
+
+    if (value === 'true') {
+      return true;
+    }
+
+    if (value === 'false') {
+      return false;
+    }
+
+    if (!Number.isNaN(Number(value)) && value !== '') {
+      return Number(value);
+    }
+
+    return value.replace(/^["']|["']$/g, '');
   }
 }
