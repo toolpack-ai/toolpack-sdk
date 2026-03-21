@@ -14,9 +14,9 @@ import { AnthropicAdapter } from './providers/anthropic';
 import { GeminiAdapter } from './providers/gemini';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama';
 import { getOllamaBaseUrl } from './providers/config';
-import { initLogger } from './providers/provider-logger';
+import { initLogger, logWarn } from './providers/provider-logger';
 import { ToolRegistry } from './tools/registry';
-import { loadToolsConfig, ToolProject } from './tools';
+import { loadToolsConfig, loadFullConfig, ToolProject } from './tools';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
@@ -89,6 +89,12 @@ export interface ToolpackInitConfig {
      * If provided, the SDK will load configuration from this path instead of the default toolpack.config.json in the current working directory.
      */
     configPath?: string;
+
+    /**
+     * Knowledge base instance for RAG capabilities.
+     * When provided, registers a knowledge_search tool that the agent can use.
+     */
+    knowledge?: { toTool(): { name: string; description: string; parameters: any; execute: (args: any) => Promise<any> } };
 }
 
 export class Toolpack extends EventEmitter {
@@ -122,6 +128,10 @@ export class Toolpack extends EventEmitter {
      * @returns Ready-to-use Toolpack instance
      */
     static async init(config: ToolpackInitConfig): Promise<Toolpack> {
+        // 0. Load full config once and initialize logger first
+        const fullConfig = loadFullConfig(config.configPath);
+        initLogger(fullConfig.logging);
+        
         // 1. Setup Tool Registry
         const registry = new ToolRegistry();
         const toolsConfig = loadToolsConfig(config.configPath);
@@ -134,37 +144,26 @@ export class Toolpack extends EventEmitter {
             await registry.loadProjects(config.customTools);
         }
 
-        // 1b. Load root config overrides (systemPrompt, baseContext, modeOverrides, logging)
-        let systemPrompt: string | undefined;
-        let disableBaseContext: boolean = config.disableBaseContext || false;
-        let configModeOverrides: Record<string, Partial<ModeConfig>> = {};
-        try {
-            const path = await import('path');
-            const fs = await import('fs');
-            const configPath = config.configPath || path.resolve(process.cwd(), 'toolpack.config.json');
-            if (fs.existsSync(configPath)) {
-                const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-                systemPrompt = parsed.systemPrompt;
-                // Support both legacy disableBaseContext and new baseContext
-                if (parsed.disableBaseContext || parsed.baseContext === false) {
-                    disableBaseContext = true;
-                }
-                if (parsed.modeOverrides) {
-                    configModeOverrides = parsed.modeOverrides;
-                }
-                // Initialize logger from config (opt-in, disabled by default)
-                if (parsed.logging) {
-                    initLogger(parsed.logging);
-                } else {
-                    initLogger(); // Still call to allow env-var overrides
-                }
-            } else {
-                initLogger(); // No config file — still allow env-var overrides
-            }
-        } catch {
-            // Ignore if config doesn't exist or is invalid
-            initLogger(); // Still call to allow env-var overrides
+        // Register knowledge tool if provided
+        if (config.knowledge) {
+            const knowledgeTool = config.knowledge.toTool();
+            registry.register({
+                name: knowledgeTool.name,
+                displayName: 'Knowledge Search',
+                description: knowledgeTool.description,
+                parameters: knowledgeTool.parameters,
+                category: 'knowledge',
+                execute: async (args: Record<string, any>) => {
+                    const results = await knowledgeTool.execute(args);
+                    return JSON.stringify(results, null, 2);
+                },
+            });
         }
+
+        // 1b. Extract config overrides (systemPrompt, baseContext, modeOverrides)
+        const systemPrompt = fullConfig.systemPrompt;
+        const disableBaseContext = config.disableBaseContext || fullConfig.disableBaseContext || fullConfig.baseContext === false || false;
+        const configModeOverrides = fullConfig.modeOverrides || {};
 
         // 2. Resolve Providers
         const providers: Record<string, ProviderAdapter> = {};
@@ -275,6 +274,21 @@ export class Toolpack extends EventEmitter {
                     if (key !== 'systemPrompt' && key !== 'toolSearch') {
                         (mode as any)[key] = value;
                     }
+                }
+            }
+        }
+
+        // If knowledge is provided, add knowledge_search to alwaysLoadedTools for all modes
+        if (config.knowledge) {
+            for (const mode of modeRegistry.getAll()) {
+                if (!mode.toolSearch) {
+                    mode.toolSearch = {};
+                }
+                if (!mode.toolSearch.alwaysLoadedTools) {
+                    mode.toolSearch.alwaysLoadedTools = [];
+                }
+                if (!mode.toolSearch.alwaysLoadedTools.includes('knowledge_search')) {
+                    mode.toolSearch.alwaysLoadedTools.push('knowledge_search');
                 }
             }
         }
@@ -507,7 +521,7 @@ export class Toolpack extends EventEmitter {
                 models = await adapter.getModels();
             } catch (err) {
                 // Skip fetching models if the provider throws (e.g. API down, missing credentials)
-                console.warn(`[Toolpack] Failed to fetch models for provider '${name}':`, err);
+                logWarn(`[Toolpack] Failed to fetch models for provider '${name}': ${err}`);
             }
 
             results.push({

@@ -1,11 +1,13 @@
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 const MAX_RESPONSE_LENGTH = 100_000;
 
 async function execute(args: Record<string, any>): Promise<string> {
     const url = args.url as string;
     const headers = args.headers as Record<string, string> | undefined;
+    logDebug(`[http.delete] execute url="${url}"`);
 
     if (!url) {
         throw new Error('url is required');

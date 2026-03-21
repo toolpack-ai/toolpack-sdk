@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
@@ -15,6 +16,7 @@ async function execute(args: Record<string, any>): Promise<string> {
     const format = (args.format || 'text') as 'text' | 'tables';
     const maxLength = (args.max_length || 6000) as number;
     const timeout = (args.timeout || 30000) as number;
+    logDebug(`[web.scrape] execute url="${url}" format=${format} selector=${selector ?? 'none'} section=${section ?? 'none'} timeout=${timeout}ms`);
 
     if (!url) {
         throw new Error('url is required');

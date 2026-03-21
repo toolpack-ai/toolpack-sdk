@@ -123,6 +123,7 @@ export interface ToolsConfig {
     autoExecute: boolean;
     maxToolRounds: number;
     toolChoicePolicy?: 'auto' | 'required' | 'required_for_actions';
+    resultMaxChars?: number;
     /**
      * @deprecated This feature is deprecated and will be removed in a future version. Use `toolSearch` instead.
      */
@@ -153,6 +154,7 @@ export const DEFAULT_TOOLS_CONFIG: ToolsConfig = {
     autoExecute: true,
     maxToolRounds: 5,
     toolChoicePolicy: 'auto',
+    resultMaxChars: 20_000,
     enabledTools: [],
     enabledToolCategories: [],
     toolSearch: DEFAULT_TOOL_SEARCH_CONFIG,

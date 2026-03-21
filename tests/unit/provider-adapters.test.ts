@@ -37,10 +37,16 @@ describe('AnthropicAdapter', () => {
         // Mock the provider-logger to avoid file writes during tests
         vi.doMock('../../src/providers/provider-logger', () => ({
             log: vi.fn(),
+            logError: vi.fn(),
+            logWarn: vi.fn(),
+            logInfo: vi.fn(),
+            logDebug: vi.fn(),
+            logTrace: vi.fn(),
             safePreview: vi.fn((v: any) => String(v).slice(0, 50)),
             logMessagePreview: vi.fn(),
             isVerbose: vi.fn(() => false),
-            LOG_VERBOSE: false,
+            shouldLog: vi.fn(() => true),
+            getLogLevel: vi.fn(() => 3), // 3 corresponds to 'debug' level
         }));
 
         const mod = await import('../../src/providers/anthropic/index');
@@ -341,10 +347,16 @@ describe('GeminiAdapter', () => {
 
         vi.doMock('../../src/providers/provider-logger', () => ({
             log: vi.fn(),
+            logError: vi.fn(),
+            logWarn: vi.fn(),
+            logInfo: vi.fn(),
+            logDebug: vi.fn(),
+            logTrace: vi.fn(),
             safePreview: vi.fn((v: any) => String(v).slice(0, 50)),
             logMessagePreview: vi.fn(),
             isVerbose: vi.fn(() => false),
-            LOG_VERBOSE: false,
+            shouldLog: vi.fn(() => true),
+            getLogLevel: vi.fn(() => 3), // 3 corresponds to 'debug' level
         }));
 
         const mod = await import('../../src/providers/gemini/index');

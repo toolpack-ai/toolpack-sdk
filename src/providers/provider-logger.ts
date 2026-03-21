@@ -1,64 +1,109 @@
 import { appendFileSync } from 'fs';
 import { join } from 'path';
 
-// ── Internal state (opt-in, off by default) ──────────────────────
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
+
+export const LEVEL_VALUES: Record<LogLevel, number> = {
+    error: 0,
+    warn: 1,
+    info: 2,
+    debug: 3,
+    trace: 4,
+};
+
+// ── Internal state ──────────────────────
 let _enabled = false;
+let _level: LogLevel = 'info';
 let _logFile = join(process.cwd(), 'toolpack-sdk.log');
-let _verbose = false;
 
 export interface LoggingConfig {
     /** Enable file logging.  Default: false */
     enabled?: boolean;
     /** Log file path.  Default: '<cwd>/toolpack-sdk.log' */
     filePath?: string;
-    /** Enable verbose logging (message previews).  Default: false */
-    verbose?: boolean;
+    /** Log level. Default: 'info' */
+    level?: LogLevel;
+}
+
+function parseLevel(value: string | undefined): LogLevel | undefined {
+    if (!value) return undefined;
+    const lower = value.toLowerCase();
+    if (lower in LEVEL_VALUES) {
+        return lower as LogLevel;
+    }
+    console.warn(`[Toolpack Warning] Invalid log level "${value}". Falling back to "info".`);
+    return undefined;
 }
 
 /**
  * Initialise the logger.  Call once at SDK start-up.
  *
  * Resolution order (highest wins):
- *   1. Environment variables  (TOOLPACK_SDK_LOG_FILE / TOOLPACK_SDK_LOG_VERBOSE)
+ *   1. Environment variables  (TOOLPACK_SDK_LOG_ENABLED, TOOLPACK_SDK_LOG_LEVEL, TOOLPACK_SDK_LOG_FILE)
  *   2. `config` argument      (from toolpack.config.json → logging section)
- *   3. Defaults               (disabled)
+ *   3. Defaults               (disabled, info)
  */
 export function initLogger(config?: LoggingConfig): void {
-    // Config values (only when explicitly provided)
+    // 1. Config values (only when explicitly provided)
     if (config?.enabled !== undefined) _enabled = config.enabled;
     if (config?.filePath) _logFile = config.filePath;
-    if (config?.verbose !== undefined) _verbose = config.verbose;
+    
+    if (config?.level) {
+        _level = parseLevel(config.level) || 'info';
+    }
 
-    // Env-var overrides always win
+    // 2. Env-var overrides always win
+    if (process.env.TOOLPACK_SDK_LOG_ENABLED !== undefined) {
+        _enabled = process.env.TOOLPACK_SDK_LOG_ENABLED === 'true';
+    }
     if (process.env.TOOLPACK_SDK_LOG_FILE) {
         _logFile = process.env.TOOLPACK_SDK_LOG_FILE;
-        _enabled = true;                       // setting a file path implies enabled
+        _enabled = true; // setting a file path implies enabled
     }
-    if (process.env.TOOLPACK_SDK_LOG_VERBOSE === 'true') {
-        _verbose = true;
-        _enabled = true;                       // verbose implies enabled
+    if (process.env.TOOLPACK_SDK_LOG_LEVEL) {
+        _level = parseLevel(process.env.TOOLPACK_SDK_LOG_LEVEL) || _level;
     }
 }
 
 // ── Public API (unchanged signatures) ────────────────────────────
 
-/** Whether verbose logging is active. */
-export function isVerbose(): boolean {
-    return _verbose;
+/** Get the currently configured log level. */
+export function getLogLevel(): LogLevel {
+    return _level;
 }
 
-/**
- * @deprecated Use `isVerbose()` instead. This is kept for backward compatibility
- * but will always return the current dynamic value.
- */
-export const LOG_VERBOSE = false; // Static false; adapters should migrate to isVerbose()
+/** Check if a given level should be logged based on current config. */
+export function shouldLog(level: LogLevel): boolean {
+    if (!_enabled) return false;
+    return LEVEL_VALUES[level] <= LEVEL_VALUES[_level];
+}
 
-export function log(message: string): void {
-    if (!_enabled) return;
+// ── Shared write function ────────────────────────────────────────
+
+function writeLog(level: LogLevel, message: string): void {
+    if (!shouldLog(level)) return;
     const timestamp = new Date().toISOString();
-    const entry = `[${timestamp}] ${message}\n`;
+    const entry = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
     appendFileSync(_logFile, entry);
 }
+
+// ── Level API ────────────────────────────────────────────────────
+
+export function logError(message: string): void { writeLog('error', message); }
+export function logWarn(message: string): void { writeLog('warn', message); }
+export function logInfo(message: string): void { writeLog('info', message); }
+export function logDebug(message: string): void { writeLog('debug', message); }
+export function logTrace(message: string): void { writeLog('trace', message); }
+
+/**
+ * Log an info message.
+ * @deprecated Use `logInfo()`, `logDebug()`, etc. instead. Kept for backward compatibility.
+ */
+export function log(message: string): void {
+    logInfo(message);
+}
+
+// ── Formatting Utilities ─────────────────────────────────────────
 
 export function redact(text: string): string {
     return text
@@ -80,9 +125,9 @@ export function safePreview(value: unknown, maxLen = 200): string {
 }
 
 export function logMessagePreview(requestId: string, provider: string, messages: any[]): void {
-    if (!_verbose) return;
-    log(`[${provider}][${requestId}] Messages (${messages.length}):`);
+    if (!shouldLog('debug')) return;
+    logDebug(`[${provider}][${requestId}] Messages (${messages.length}):`);
     messages.forEach((m, i) => {
-        log(`[${provider}][${requestId}]  #${i} role=${m?.role} content=${safePreview(m?.content, 300)}`);
+        logDebug(`[${provider}][${requestId}]  #${i} role=${m?.role} content=${safePreview(m?.content, 300)}`);
     });
 }

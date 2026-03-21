@@ -9,7 +9,7 @@
  */
 
 import http from 'http';
-import { log } from '../provider-logger';
+import { logError, logWarn, logInfo, logDebug } from '../provider-logger';
 
 export type HealerRole = 'input' | 'submit' | 'response';
 
@@ -218,17 +218,17 @@ export async function healWithSlm(
     const compressed = compressDom(domHtml);
     const prompt = buildPrompt(role, compressed);
 
-    log(`SLM DOM compressed: ${domHtml.length} -> ${compressed.length}`);
-    log(`SLM self-healing attempt: role=${role}, model=${config.model}, domLength=${compressed.length}`);
+    logDebug(`SLM DOM compressed: ${domHtml.length} -> ${compressed.length}`);
+    logInfo(`SLM self-healing attempt: role=${role}, model=${config.model}, domLength=${compressed.length}`);
 
     try {
         const raw = await ollamaGenerate(baseUrl, config.model, prompt);
         const response = raw.trim();
-        log(`SLM raw response (role=${role}): ${response}`);
+        logDebug(`SLM raw response (role=${role}): ${response}`);
 
         // Parse the response — should be a CSS selector or "NONE"
         if (!response || response.toUpperCase() === 'NONE') {
-            log(`SLM could not identify selector (role=${role}): ${response}`);
+            logWarn(`SLM could not identify selector (role=${role}): ${response}`);
             return null;
         }
 
@@ -244,11 +244,11 @@ export async function healWithSlm(
 
         // Basic validation: must look like a CSS selector
         if (!selector || selector.length > 200 || /[{}]/.test(selector)) {
-            log(`SLM invalid selector rejected (role=${role}): ${selector}`);
+            logWarn(`SLM invalid selector rejected (role=${role}): ${selector}`);
             return null;
         }
 
-        log(`SLM healed selector (role=${role}, model=${config.model}): ${selector}`);
+        logInfo(`SLM healed selector (role=${role}, model=${config.model}): ${selector}`);
 
         return {
             selector,
@@ -256,7 +256,7 @@ export async function healWithSlm(
             reasoning: `Identified by ${config.model} SLM from DOM snapshot`,
         };
     } catch (err: any) {
-        log(`SLM self-healing failed (role=${role}): ${err.message}`);
+        logError(`SLM self-healing failed (role=${role}): ${err.message}`);
         return null;
     }
 }

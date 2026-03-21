@@ -1,28 +1,48 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ToolsConfig, DEFAULT_TOOLS_CONFIG } from './types.js';
+import { logDebug } from '../providers/provider-logger.js';
 
 const CONFIG_FILENAME = 'toolpack.config.json';
+
+export interface FullConfig {
+    tools?: Partial<ToolsConfig>;
+    logging?: any;
+    systemPrompt?: string;
+    disableBaseContext?: boolean;
+    baseContext?: boolean;
+    modeOverrides?: Record<string, any>;
+}
+
+/**
+ * Load the full config from toolpack.config.json.
+ * Returns the entire parsed config object.
+ */
+export function loadFullConfig(basePath?: string): FullConfig {
+    const configPath = resolveConfigPath(basePath);
+
+    if (!fs.existsSync(configPath)) {
+        return {};
+    }
+
+    try {
+        const raw = fs.readFileSync(configPath, 'utf-8');
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+}
 
 /**
  * Load tools config from toolpack.config.json (tools section).
  * Falls back to defaults if the file doesn't exist or tools section is missing.
  */
 export function loadToolsConfig(basePath?: string): ToolsConfig {
-    const configPath = resolveConfigPath(basePath);
-
-    if (!fs.existsSync(configPath)) {
-        return { ...DEFAULT_TOOLS_CONFIG };
-    }
-
-    try {
-        const raw = fs.readFileSync(configPath, 'utf-8');
-        const parsed = JSON.parse(raw);
-        // Read from tools section, or fall back to root-level for backward compat
-        return mergeWithDefaults(parsed.tools || parsed);
-    } catch {
-        return { ...DEFAULT_TOOLS_CONFIG };
-    }
+    const fullConfig = loadFullConfig(basePath);
+    // Read from tools section, or fall back to root-level for backward compat
+    const mergedConfig = mergeWithDefaults(fullConfig.tools || fullConfig as any);
+    logDebug(JSON.stringify(mergedConfig ?? {}));
+    return mergedConfig;
 }
 
 /**
@@ -71,6 +91,7 @@ function mergeWithDefaults(partial: Partial<ToolsConfig>): ToolsConfig {
         autoExecute: partial.autoExecute ?? DEFAULT_TOOLS_CONFIG.autoExecute,
         maxToolRounds: partial.maxToolRounds ?? DEFAULT_TOOLS_CONFIG.maxToolRounds,
         toolChoicePolicy: partial.toolChoicePolicy ?? DEFAULT_TOOLS_CONFIG.toolChoicePolicy,
+        resultMaxChars: partial.resultMaxChars ?? DEFAULT_TOOLS_CONFIG.resultMaxChars,
         intelligentToolDetection: partial.intelligentToolDetection,
         enabledTools: partial.enabledTools ?? DEFAULT_TOOLS_CONFIG.enabledTools,
         enabledToolCategories: partial.enabledToolCategories ?? DEFAULT_TOOLS_CONFIG.enabledToolCategories,

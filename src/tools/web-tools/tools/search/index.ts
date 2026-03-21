@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { loadToolsConfig } from '../../../config-loader.js';
+import { logDebug, logError, logWarn } from '../../../../providers/provider-logger.js';
 
 const SEARCH_URL = 'https://lite.duckduckgo.com/lite/';
 const USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1';
@@ -13,6 +14,7 @@ interface SearchResult {
 }
 
 function parseDuckDuckGoLite(html: string, maxResults: number): SearchResult[] {
+    logDebug('[web.search] Parsing DuckDuckGo Lite response');
     const $ = cheerio.load(html);
     const results: SearchResult[] = [];
 
@@ -41,11 +43,36 @@ function parseDuckDuckGoLite(html: string, maxResults: number): SearchResult[] {
     return results;
 }
 
+// Map freshness string to numeric days for Tavily API
+function mapFreshnessToDays(freshness?: string): number | undefined {
+    if (!freshness) return undefined;
+    switch (freshness) {
+        case 'day': return 1;
+        case 'week': return 7;
+        case 'month': return 31;
+        case 'year': return 365;
+        default: return undefined;
+    }
+}
+
+// Map freshness to Brave API format
+function mapFreshnessToBrave(freshness?: string): string {
+    if (!freshness) return '';
+    switch (freshness) {
+        case 'day': return 'pd';
+        case 'week': return 'pw';
+        case 'month': return 'pm';
+        case 'year': return 'py';
+        default: return '';
+    }
+}
+
 async function execute(args: Record<string, any>): Promise<string> {
     const query = args.query as string;
     const maxResults = (args.max_results || 5) as number;
     const includeAnswer = (args.include_answer || false) as boolean;
-    const freshness = args.freshness as 'day' | 'week' | 'month' | 'year' | undefined;
+    const freshness = args.freshness as string | undefined;
+    logDebug(`[web.search] execute query="${query}" max_results=${maxResults} includeAnswer=${includeAnswer} freshness=${freshness ?? 'none'}`);
     const timeoutMsg = `Request timed out after ${args.timeout || 30000}ms`;
 
     const getSignal = () => {
@@ -59,11 +86,14 @@ async function execute(args: Record<string, any>): Promise<string> {
     }
 
     const config = loadToolsConfig();
+    logDebug(`[web.search] config=${JSON.stringify(config)}`);
 
     if (config.additionalConfigurations?.webSearch?.tavilyApiKey) {
+        logDebug(`[web.search] using Tavily API`);
         try {
             const { signal, clear } = getSignal();
-            const response = await fetch('https://api.tavily.com/search', {
+            const freshnessInDays = mapFreshnessToDays(freshness);
+            const tavilyRequest = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -73,10 +103,12 @@ async function execute(args: Record<string, any>): Promise<string> {
                     query: query,
                     max_results: maxResults,
                     include_answer: includeAnswer,
-                    ...(freshness && { days: freshness }),
+                    ...(freshnessInDays && { days: freshnessInDays }),
                 }),
                 signal,
-            }).finally(clear);
+            };
+            logDebug(`[web.search] Tavily request=${JSON.stringify(tavilyRequest)}`);
+            const response = await fetch('https://api.tavily.com/search', tavilyRequest).finally(clear);
 
             if (response.ok) {
                 const data = await response.json() as any;
@@ -97,9 +129,11 @@ async function execute(args: Record<string, any>): Promise<string> {
                     
                     return JSON.stringify(results, null, 2);
                 }
+            } else {
+                logError(`[web.search] Tavily search failed with status ${response.status}`);
             }
         } catch (e) {
-            console.error('Tavily search failed, falling back...', e);
+            logError(`[web.search] Tavily search failed, falling back: ${e}`);
         }
     }
 
@@ -110,7 +144,8 @@ async function execute(args: Record<string, any>): Promise<string> {
             // If answer is requested, use 2-step Brave Summarizer flow
             if (includeAnswer) {
                 // Map freshness to Brave format
-                const freshnessParam = freshness ? `&freshness=${freshness === 'day' ? 'pd' : freshness === 'week' ? 'pw' : freshness === 'month' ? 'pm' : 'py'}` : '';
+                const braveFormat = mapFreshnessToBrave(freshness);
+                const freshnessParam = braveFormat ? `&freshness=${braveFormat}` : '';
                 
                 // Step 1: Get web search results with summary flag
                 const searchResponse = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.min(maxResults, 20)}&summary=1${freshnessParam}`, {
@@ -167,7 +202,8 @@ async function execute(args: Record<string, any>): Promise<string> {
                 }
             } else {
                 // Map freshness to Brave format
-                const freshnessParam = freshness ? `&freshness=${freshness === 'day' ? 'pd' : freshness === 'week' ? 'pw' : freshness === 'month' ? 'pm' : 'py'}` : '';
+                const braveFormat = mapFreshnessToBrave(freshness);
+                const freshnessParam = braveFormat ? `&freshness=${braveFormat}` : '';
                 
                 // Standard search without answer
                 const response = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.min(maxResults, 20)}${freshnessParam}`, {
@@ -192,7 +228,7 @@ async function execute(args: Record<string, any>): Promise<string> {
                 }
             }
         } catch (e) {
-            console.error('Brave search failed, falling back...', e);
+            logWarn(`[web.search] Brave search failed, falling back: ${e}`);
         }
     }
 

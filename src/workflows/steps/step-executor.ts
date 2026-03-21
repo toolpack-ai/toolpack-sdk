@@ -3,6 +3,7 @@ import { CompletionRequest, Message, Role } from '../../types/index.js';
 import { Plan, PlanStep } from '../planning/plan-types.js';
 import { WorkflowConfig } from '../workflow-types.js';
 import { StepTracker } from './step-tracker.js';
+import { logDebug, logInfo, logWarn } from '../../providers/provider-logger.js';
 
 const STEP_EXECUTION_PROMPT = `
 You are executing step {stepNumber} of a plan.
@@ -28,8 +29,9 @@ Just provide the actual answer or result naturally.
 
 const DYNAMIC_STEPS_PROMPT = `
 Based on the result of the previous step, do we need to add any new steps to our plan before continuing?
-If YES, respond with a JSON object containing the new steps.
-If NO, respond with {"steps": []}.
+Only add steps if they are absolutely necessary to complete the user's request.
+If additional steps are truly required, respond with a JSON object containing the new steps.
+If not necessary or if the plan is sufficient, respond with {"steps": []}.
 
 JSON Schema:
 {
@@ -58,6 +60,7 @@ export class StepExecutor {
         providerName?: string
     ): Promise<NonNullable<PlanStep['result']>> {
         const startTime = Date.now();
+        logDebug(`[StepExecutor] executeStep() step=${step.number} "${step.description}" expectedTools=${step.expectedTools?.join(',') || 'none'}`);
 
         const stepRequest = this.buildStepRequest(step, plan, baseRequest);
 
@@ -73,18 +76,23 @@ export class StepExecutor {
                 response.tool_calls.forEach(tc => uniqueTools.add(tc.name));
             }
 
+            const duration = Date.now() - startTime;
+            logInfo(`[StepExecutor] Step ${step.number} completed in ${duration}ms toolsUsed=[${Array.from(uniqueTools).join(', ') || 'none'}] output_len=${response.content?.length ?? 0}`);
+
             return {
                 success: true,
                 output: response.content || 'Step completed successfully.',
                 toolsUsed: Array.from(uniqueTools),
-                duration: Date.now() - startTime,
-                response: response, // Store full response for metadata
+                duration,
+                response,
             };
         } catch (error) {
+            const duration = Date.now() - startTime;
+            logWarn(`[StepExecutor] Step ${step.number} failed in ${duration}ms: ${(error as Error).message}`);
             return {
                 success: false,
                 error: (error as Error).message || 'Unknown execution error',
-                duration: Date.now() - startTime,
+                duration,
             };
         }
     }
@@ -98,6 +106,7 @@ export class StepExecutor {
         baseRequest: CompletionRequest,
         providerName?: string
     ): AsyncGenerator<import('../../types/index.js').CompletionChunk> {
+        logDebug(`[StepExecutor] streamStep() step=${step.number} "${step.description}"`);
         const stepRequest = this.buildStepRequest(step, plan, baseRequest);
 
         // Stream via AIClient
@@ -173,8 +182,11 @@ export class StepExecutor {
         const currentTotal = plan.steps.length;
         const max = this.config.maxTotalSteps ?? 50;
         if (currentTotal >= max) {
+            logDebug(`[StepExecutor] checkForDynamicSteps() skipped — already at maxTotalSteps=${max}`);
             return []; // Reached limit
         }
+
+        logDebug(`[StepExecutor] checkForDynamicSteps() after step=${step.number} currentTotal=${currentTotal} max=${max}`);
 
         const prompt = DYNAMIC_STEPS_PROMPT;
         // Use full conversation history for dynamic step check
@@ -217,8 +229,11 @@ export class StepExecutor {
                 });
 
                 if (filteredSteps.length === 0) {
+                    logDebug('[StepExecutor] checkForDynamicSteps() all proposed steps were duplicates — skipping');
                     return []; // All proposed steps are duplicates
                 }
+
+                logInfo(`[StepExecutor] checkForDynamicSteps() adding ${filteredSteps.length} dynamic step(s) after step ${step.number}`);
 
                 return filteredSteps.map((s: any, idx: number) => ({
                     id: `step-${Date.now()}-dyn-${idx}`,

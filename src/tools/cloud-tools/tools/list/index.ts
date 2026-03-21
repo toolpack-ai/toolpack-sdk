@@ -1,6 +1,7 @@
 import { ToolDefinition } from '../../../types.js';
 import { cloudListSchema } from './schema.js';
 import { NetlifyProvider } from '../../providers/netlify.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 export const cloudListTool: ToolDefinition = {
     name: 'cloud.list',
@@ -11,6 +12,7 @@ export const cloudListTool: ToolDefinition = {
     execute: async (args: Record<string, unknown>) => {
         const siteId = args.siteId as string;
         const limit = (args.limit as number) || 5;
+        logDebug(`[cloud.list] execute siteId="${siteId}" limit=${limit}`);
 
         try {
             const client = NetlifyProvider.getClient();

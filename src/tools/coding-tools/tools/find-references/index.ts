@@ -3,6 +3,7 @@ import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { sharedParserFactory, sharedFileIndex } from '../../parsers/shared.js';
 import { ReferenceInfo } from '../../parsers/types.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 async function findReferencesInFile(filePath: string, symbolName: string, includeDeclaration: boolean): Promise<ReferenceInfo[]> {
     try {
@@ -41,6 +42,7 @@ async function execute(args: Record<string, any>): Promise<string> {
     const symbolName = args.symbol as string;
     const path = args.path as string;
     const includeDeclaration = args.includeDeclaration === true;
+    logDebug(`[coding.find-references] execute symbol="${symbolName}" path="${path}" includeDecl=${includeDeclaration}`);
 
     if (!symbolName) {
         throw new Error('symbol is required');

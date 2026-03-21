@@ -1,8 +1,10 @@
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 async function execute(args: Record<string, any>): Promise<string> {
     const key = args.key as string | undefined;
+    logDebug(`[system.env] execute key=${key ?? 'all'}`);
 
     if (key) {
         const value = process.env[key];

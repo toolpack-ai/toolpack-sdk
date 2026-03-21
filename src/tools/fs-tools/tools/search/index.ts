@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 interface SearchMatch {
     file: string;
@@ -50,6 +51,7 @@ async function execute(args: Record<string, unknown>): Promise<string> {
     const maxResults = (args.max_results || 50) as number;
     const isRegex = !!args.regex;
     const isCaseSensitive = !!args.case_sensitive;
+    logDebug(`[fs.search] execute path="${dirPath}" query="${rawQuery}" recursive=${recursive} regex=${isRegex} caseSensitive=${isCaseSensitive}`);
 
     if (!dirPath) {
         throw new Error('path is required');

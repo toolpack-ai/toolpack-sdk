@@ -4,6 +4,7 @@ import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { sharedParserFactory } from '../../parsers/shared.js';
 import { SymbolLocation } from '../../parsers/types.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 const SUPPORTED_EXTENSIONS = [
     '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
@@ -56,6 +57,7 @@ async function execute(args: Record<string, any>): Promise<string> {
     const symbolName = args.symbol as string;
     const path = args.path as string;
     const kindFilter = args.kind as string | undefined;
+    logDebug(`[coding.find-symbol] execute symbol="${symbolName}" path="${path}" kind=${kindFilter ?? 'all'}`);
 
     if (!symbolName) {
         throw new Error('symbol is required');

@@ -1,6 +1,7 @@
 import { ToolDefinition } from '../../../types.js';
 import { cloudDeploySchema } from './schema.js';
 import { NetlifyProvider } from '../../providers/netlify.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 export const cloudDeployTool: ToolDefinition = {
     name: 'cloud.deploy',
@@ -12,6 +13,7 @@ export const cloudDeployTool: ToolDefinition = {
         const siteId = args.siteId as string;
         const dir = args.dir as string;
         const message = args.message as string | undefined;
+        logDebug(`[cloud.deploy] execute siteId="${siteId}" dir="${dir}" message="${message ?? 'none'}"`);
 
         try {
             const client = NetlifyProvider.getClient();

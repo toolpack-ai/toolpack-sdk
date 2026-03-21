@@ -2,6 +2,7 @@ import { AIClient } from '../../client/index.js';
 import { CompletionRequest } from '../../types/index.js';
 import { Plan, PlanStep } from './plan-types.js';
 import { WorkflowConfig } from '../workflow-types.js';
+import { logDebug, logInfo, logWarn } from '../../providers/provider-logger.js';
 
 const DEFAULT_PLANNING_PROMPT = `
 You are a planning assistant. Given a user request, create a detailed step-by-step plan.
@@ -15,7 +16,9 @@ Rules:
 6. If the user's request is ambiguous, make reasonable assumptions and proceed - do NOT create steps that ask for clarification
 7. Steps should produce concrete outputs, not ask questions or wait for user input
 8. ALWAYS include at least one step, even for simple questions. For simple factual questions, create a single step like "Provide the answer to [question]"
-9. The exact result MUST be valid JSON matching this schema:
+9. When a step uses information gathered by a previous step, set "dependsOn" to that step's number and phrase the description as "Using the [data] from step N, [do something]" instead of gathering it again
+10. The final step must synthesize the workflow's results into a concise deliverable, avoiding redundant word-for-word repetition of earlier step outputs
+11. The exact result MUST be valid JSON matching this schema:
 {
   "summary": "Brief description of the overall goal",
   "steps": [
@@ -43,6 +46,8 @@ export class Planner {
      */
     async createPlan(request: CompletionRequest, providerName?: string): Promise<Plan> {
         const systemPrompt = this.config?.planningPrompt || DEFAULT_PLANNING_PROMPT;
+        const userText = request.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : '[obj]').join(' ').substring(0, 100);
+        logDebug(`[Planner] createPlan() provider=${providerName ?? 'default'} maxSteps=${this.config?.maxSteps ?? 20} request="${userText}..."`);
 
         // We use the AIClient to generate the plan, but WITHOUT tools available
         // to force a JSON response instead of arbitrary tool calls.
@@ -65,8 +70,11 @@ export class Planner {
 
         try {
             const response = await this.client.generate(planningRequest, providerName);
-            return this.parsePlan(response.content || '', request, response);
+            const plan = this.parsePlan(response.content || '', request, response);
+            logInfo(`[Planner] createPlan() succeeded plan.id=${plan.id} steps=${plan.steps.length}`);
+            return plan;
         } catch (error) {
+            logWarn(`[Planner] createPlan() failed, using fallback: ${(error as Error).message}`);
             return this.createFallbackPlan(request);
         }
     }
@@ -90,6 +98,10 @@ export class Planner {
 
             const maxSteps = this.config?.maxSteps ?? 20;
             const limitedSteps = parsed.steps.slice(0, maxSteps);
+            if (parsed.steps.length > maxSteps) {
+                logWarn(`[Planner] parsePlan() truncated ${parsed.steps.length} steps to maxSteps=${maxSteps}`);
+            }
+            logDebug(`[Planner] parsePlan() parsed ${limitedSteps.length} steps successfully`);
 
             const steps: PlanStep[] = limitedSteps.map((s: any, i: number) => ({
                 id: `step-${Date.now()}-${i}`,
@@ -116,11 +128,13 @@ export class Planner {
                 planningResponse,
             };
         } catch (error) {
+            logWarn(`[Planner] parsePlan() failed: ${(error as Error).message} — using fallback`);
             return this.createFallbackPlan(originalRequest);
         }
     }
 
     private createFallbackPlan(request: CompletionRequest): Plan {
+        logWarn('[Planner] createFallbackPlan() — creating single-step fallback due to plan generation failure');
         const userText = request.messages
             .filter(m => m.role === 'user')
             .map(m => typeof m.content === 'string' ? m.content : '[Complex Object]')

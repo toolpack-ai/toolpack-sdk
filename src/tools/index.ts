@@ -1,7 +1,7 @@
 export * from './types.js';
 export { ToolRegistry } from './registry.js';
 export { ToolRouter } from './router.js';
-export { loadToolsConfig, saveToolsConfig } from './config-loader.js';
+export { loadToolsConfig, saveToolsConfig, loadFullConfig } from './config-loader.js';
 export { createToolProject } from './create-tool-project.js';
 
 // Tool Search Module

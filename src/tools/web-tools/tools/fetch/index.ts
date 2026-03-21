@@ -1,12 +1,14 @@
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { extractStructured, extractMinimal, formatStructured, formatMinimal } from './extractor.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 async function execute(args: Record<string, any>): Promise<string> {
     const url = args.url as string;
     const extractionMode = (args.extractionMode as string) || 'full';
     const headers = args.headers as Record<string, string> | undefined;
     const timeout = (args.timeout || 30000) as number;
+    logDebug(`[web.fetch] execute url="${url}" mode=${extractionMode} timeout=${timeout}ms`);
 
     if (!url) {
         throw new Error('url is required');

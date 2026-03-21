@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { ProviderAdapter } from '../base';
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { log, safePreview, logMessagePreview, isVerbose } from '../provider-logger';
+import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
 
 export class OpenAIAdapter extends ProviderAdapter {
     private client: OpenAI;
@@ -160,13 +160,11 @@ export class OpenAIAdapter extends ProviderAdapter {
                     };
                 });
                 params.tool_choice = request.tool_choice || 'auto';
-                log(`[OpenAI][${requestId}] Sending ${params.tools.length} tools with tool_choice: ${params.tool_choice}`);
-                if (isVerbose()) {
-                    log(`[OpenAI][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
-                }
+                logDebug(`[OpenAI][${requestId}] Sending ${params.tools.length} tools with tool_choice: ${params.tool_choice}`);
+                logDebug(`[OpenAI][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
             }
 
-            log(`[OpenAI][${requestId}] Request params: ${safePreview({
+            logDebug(`[OpenAI][${requestId}] Request params: ${safePreview({
                 model: params.model,
                 messages_count: params.messages.length,
                 has_tools: !!params.tools,
@@ -180,13 +178,13 @@ export class OpenAIAdapter extends ProviderAdapter {
                 request.signal ? { signal: request.signal } : undefined,
             );
 
-            log(`[OpenAI][${requestId}] Raw completion: ${JSON.stringify(completion)}`);
+            logTrace(`[OpenAI][${requestId}] Raw completion: ${JSON.stringify(completion)}`);
             const responseMsg = completion.choices[0].message as any;
-            log(`[OpenAI][${requestId}] Response: finish_reason=${completion.choices[0].finish_reason}`);
-            log(`[OpenAI][${requestId}] Response has tool_calls: ${!!responseMsg.tool_calls}, count: ${responseMsg.tool_calls?.length || 0}`);
-            log(`[OpenAI][${requestId}] Response content: ${JSON.stringify(responseMsg.content)}`);
+            logDebug(`[OpenAI][${requestId}] Response: finish_reason=${completion.choices[0].finish_reason}`);
+            logDebug(`[OpenAI][${requestId}] Response has tool_calls: ${!!responseMsg.tool_calls}, count: ${responseMsg.tool_calls?.length || 0}`);
+            logDebug(`[OpenAI][${requestId}] Response content: ${JSON.stringify(responseMsg.content)}`);
             if (responseMsg.content) {
-                log(`[OpenAI][${requestId}] Response content preview: ${safePreview(responseMsg.content, 200)}`);
+                logDebug(`[OpenAI][${requestId}] Response content preview: ${safePreview(responseMsg.content, 200)}`);
             }
 
             const choice = completion.choices[0];
@@ -246,15 +244,13 @@ export class OpenAIAdapter extends ProviderAdapter {
                     };
                 });
                 params.tool_choice = request.tool_choice || 'auto';
-                log(`[OpenAI][${requestId}] Sending ${params.tools.length} tools with tool_choice: ${params.tool_choice}`);
-                if (isVerbose()) {
-                    log(`[OpenAI][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
-                }
+                logDebug(`[OpenAI][${requestId}] Sending ${params.tools.length} tools with tool_choice: ${params.tool_choice}`);
+                logDebug(`[OpenAI][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
             } else {
-                log(`[OpenAI][${requestId}] NO TOOLS in request`);
+                logDebug(`[OpenAI][${requestId}] NO TOOLS in request`);
             }
 
-            log(`[OpenAI][${requestId}] Stream request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice ?? 'unset'}`);
+            logDebug(`[OpenAI][${requestId}] Stream request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice ?? 'unset'}`);
             logMessagePreview(requestId, 'OpenAI', params.messages);
 
             const stream = await this.client.chat.completions.create(
@@ -269,7 +265,7 @@ export class OpenAIAdapter extends ProviderAdapter {
                 const choice = (chunk as any).choices[0];
 
                 if (choice.finish_reason) {
-                    log(`[OpenAI][${requestId}] Stream chunk finish_reason=${choice.finish_reason}`);
+                    logTrace(`[OpenAI][${requestId}] Stream chunk finish_reason=${choice.finish_reason}`);
                 }
 
                 // Accumulate tool call deltas
@@ -284,9 +280,7 @@ export class OpenAIAdapter extends ProviderAdapter {
                         if (tc.function?.name) acc.name = tc.function.name;
                         if (tc.function?.arguments) acc.args += tc.function.arguments;
 
-                        if (isVerbose()) {
-                            log(`[OpenAI][${requestId}] tool_call_delta idx=${idx} id=${tc.id || acc.id || ''} name=${tc.function?.name || acc.name || ''} args_delta=${safePreview(tc.function?.arguments || '', 200)}`);
-                        }
+                        logTrace(`[OpenAI][${requestId}] tool_call_delta idx=${idx} id=${tc.id || acc.id || ''} name=${tc.function?.name || acc.name || ''} args_delta=${safePreview(tc.function?.arguments || '', 200)}`);
                     }
                 }
 
@@ -314,7 +308,7 @@ export class OpenAIAdapter extends ProviderAdapter {
                         arguments: JSON.parse(acc.args || '{}'),
                     }));
 
-                    log(`[OpenAI][${requestId}] Stream finish_reason=tool_calls accumulated_calls=${toolCalls.length} names=${toolCalls.map(tc => tc.name).join(', ')}`);
+                    logDebug(`[OpenAI][${requestId}] Stream finish_reason=tool_calls accumulated_calls=${toolCalls.length} names=${toolCalls.map(tc => tc.name).join(', ')}`);
                     yield {
                         delta: '',
                         finish_reason: 'tool_calls',

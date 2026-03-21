@@ -10,7 +10,7 @@ import { BM25SearchEngine, isToolSearchTool, generateToolCategoriesPrompt } from
 import { generateBaseAgentContext } from './base-agent-context.js';
 import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
-import { log, safePreview, isVerbose } from '../providers/provider-logger';
+import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from '../providers/provider-logger';
 
 let REQUEST_SEQ = 0;
 
@@ -20,11 +20,11 @@ function newRequestId(): string {
 }
 
 function logRequestMessages(requestId: string, messages: CompletionRequest['messages']): void {
-    if (!isVerbose()) return;
-    log(`[AIClient][${requestId}] Messages (${messages.length}):`);
+    if (!shouldLog('debug')) return;
+    logDebug(`[AIClient][${requestId}] Messages (${messages.length}):`);
     messages.forEach((m, i) => {
         const preview = safePreview((m as any).content, 300);
-        log(`[AIClient][${requestId}]  #${i} role=${(m as any).role} content=${preview}`);
+        logDebug(`[AIClient][${requestId}]  #${i} role=${(m as any).role} content=${preview}`);
     });
 }
 
@@ -136,7 +136,7 @@ async function inferNeedsToolsWithAI(
     fastModel: string
 ): Promise<boolean> {
     const requestId = newRequestId();
-    log(`[AIClient][${requestId}] inferNeedsToolsWithAI() provider=${providerName} model=${fastModel}`);
+    logDebug(`[AIClient][${requestId}] inferNeedsToolsWithAI() provider=${providerName} model=${fastModel}`);
 
     // Extract tool context from recent tool calls
     const toolContext = extractToolContext(messages);
@@ -169,10 +169,10 @@ Answer only: YES or NO`;
 
         const answer = (response.content || '').trim().toUpperCase();
         const needsTools = answer.startsWith('YES');
-        log(`[AIClient][${requestId}] inferNeedsToolsWithAI() context="${toolContext}" message="${userMessage.substring(0, 50)}" result=${needsTools} (raw: ${answer})`);
+        logDebug(`[AIClient][${requestId}] inferNeedsToolsWithAI() context="${toolContext}" message="${userMessage.substring(0, 50)}" result=${needsTools} (raw: ${answer})`);
         return needsTools;
     } catch (error) {
-        log(`[AIClient][${requestId}] inferNeedsToolsWithAI() error=${error} - falling back to false`);
+        logWarn(`[AIClient][${requestId}] inferNeedsToolsWithAI() error=${error} - falling back to false`);
         return false;
     }
 }
@@ -197,12 +197,6 @@ function inferLookupOnly(messages: CompletionRequest['messages']): boolean {
     return lookupPatterns.some(r => r.test(text)) && !mutatingPatterns.some(r => r.test(text));
 }
 
-const TOOL_RESULT_MAX_CHARS = (() => {
-    const raw = process.env.TOOLPACK_SDK_TOOL_RESULT_MAX_CHARS;
-    const n = raw ? Number(raw) : NaN;
-    return Number.isFinite(n) && n > 0 ? n : 20_000;
-})();
-
 export interface AIClientConfig {
     providers: Record<string, ProviderAdapter>;
     defaultProvider?: string;
@@ -224,6 +218,7 @@ export class AIClient extends EventEmitter {
     private activeMode: ModeConfig | null = null;
     private overrideSystemPrompt?: string;
     private disableBaseContext: boolean;
+    private toolResultMaxChars: number;
 
     constructor(config: AIClientConfig) {
         super();
@@ -237,6 +232,8 @@ export class AIClient extends EventEmitter {
         this.toolOrchestrator = new ToolOrchestrator();
         this.overrideSystemPrompt = config.systemPrompt;
         this.disableBaseContext = config.disableBaseContext || false;
+        const configuredMax = this.toolsConfig.resultMaxChars ?? DEFAULT_TOOLS_CONFIG.resultMaxChars ?? 20_000;
+        this.toolResultMaxChars = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 20_000;
 
         // Index tools for BM25 search if registry is provided
         if (this.toolRegistry) {
@@ -317,7 +314,7 @@ export class AIClient extends EventEmitter {
      */
     setMode(mode: ModeConfig | null): void {
         this.activeMode = mode;
-        log(`[AIClient] Mode set to: ${mode ? mode.displayName : 'none (cleared)'}`);
+        logInfo(`[AIClient] Mode set to: ${mode ? mode.displayName : 'none (cleared)'}`);
     }
 
     /**
@@ -334,7 +331,7 @@ export class AIClient extends EventEmitter {
     reindexTools(): void {
         if (this.toolRegistry) {
             this.bm25Engine.index(this.toolRegistry.getAll());
-            log(`[AIClient] Re-indexed ${this.bm25Engine.getIndexedCount()} tools for BM25 search`);
+            logInfo(`[AIClient] Re-indexed ${this.bm25Engine.getIndexedCount()} tools for BM25 search`);
         }
     }
 
@@ -376,7 +373,7 @@ export class AIClient extends EventEmitter {
             if (!needsTools && intelligentDetection?.enabled && hasTools) {
                 const afterToolCall = isAfterToolCall(enrichedRequest.messages, intelligentDetection.maxFollowUpMessages);
                 if (afterToolCall) {
-                    log(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
+                    logInfo(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
                     const fastModel = getFastModelForProvider(resolvedProviderName || 'openai');
                     needsTools = await inferNeedsToolsWithAI(provider, resolvedProviderName || 'openai', enrichedRequest.messages, fastModel);
                     aiInferenceUsed = true;
@@ -395,18 +392,18 @@ export class AIClient extends EventEmitter {
                 (enrichedRequest as any).tool_choice = 'required';
             } else if (shouldForceNone) {
                 (enrichedRequest as any).tool_choice = 'none';
-                log(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
+                logInfo(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
             const outboundReq: any = { ...enrichedRequest, __toolpack_request_id: requestId };
 
-            log(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
+            logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
             let response = await provider.generate(outboundReq);
 
-            log(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
+            logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
 
             // Auto-execute tool call loop
             if (this.toolsConfig.enabled && this.toolsConfig.autoExecute && this.toolRegistry) {
@@ -417,21 +414,21 @@ export class AIClient extends EventEmitter {
                 const maxRounds = this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
 
                 if (maxRounds !== baseMaxRounds) {
-                    log(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
+                    logInfo(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
                 } else {
-                    log(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), keeping maxToolRounds: ${maxRounds}`);
+                    logDebug(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), keeping maxToolRounds: ${maxRounds}`);
                 }
 
                 let rounds = 0;
                 const messages = [...enrichedRequest.messages];
 
                 if (response.tool_calls && response.tool_calls.length > 0) {
-                    log(`[AIClient] Received ${response.tool_calls.length} tool call(s): ${response.tool_calls.map(tc => tc.name).join(', ')}`);
+                    logInfo(`[AIClient] Received ${response.tool_calls.length} tool call(s): ${response.tool_calls.map(tc => tc.name).join(', ')}`);
                 }
 
                 while (response.tool_calls && response.tool_calls.length > 0 && rounds < maxRounds) {
                     rounds++;
-                    log(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
+                    logInfo(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
 
                     // Add assistant message with tool calls to conversation
                     messages.push({
@@ -455,7 +452,7 @@ export class AIClient extends EventEmitter {
                     let toolCallsToExecute = response.tool_calls;
                     const webFetchCalls = response.tool_calls.filter(tc => tc.name === 'web.fetch');
                     if (webFetchCalls.length > MAX_WEB_FETCH_CALLS) {
-                        log(`[AIClient][${requestId}] Limiting web.fetch calls from ${webFetchCalls.length} → ${MAX_WEB_FETCH_CALLS} to prevent context overflow`);
+                        logInfo(`[AIClient][${requestId}] Limiting web.fetch calls from ${webFetchCalls.length} → ${MAX_WEB_FETCH_CALLS} to prevent context overflow`);
                         const limitedWebFetch = webFetchCalls.slice(0, MAX_WEB_FETCH_CALLS);
                         const otherCalls = response.tool_calls.filter(tc => tc.name !== 'web.fetch');
                         toolCallsToExecute = [...otherCalls, ...limitedWebFetch];
@@ -476,7 +473,7 @@ export class AIClient extends EventEmitter {
                     let roundOutputSize = 0;
 
                     if (useParallel) {
-                        log(`[AIClient][${requestId}] Using parallel execution for ${toolCallsToExecute.length} tools`);
+                        logInfo(`[AIClient][${requestId}] Using parallel execution for ${toolCallsToExecute.length} tools`);
                         const toolResults = await this.toolOrchestrator.executeWithDependencies(
                             toolCallsToExecute,
                             (toolCall) => this.executeTool(toolCall),
@@ -500,7 +497,7 @@ export class AIClient extends EventEmitter {
 
                             // Check budget before adding
                             if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                                log(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
+                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
                                 messages.push({
                                     role: 'tool',
                                     tool_call_id: toolCall.id,
@@ -510,8 +507,8 @@ export class AIClient extends EventEmitter {
                                 continue;
                             }
 
-                            const content = typeof result === 'string' && result.length > TOOL_RESULT_MAX_CHARS
-                                ? `${result.slice(0, TOOL_RESULT_MAX_CHARS)}\n[TRUNCATED tool result: ${result.length} chars]`
+                            const content = typeof result === 'string' && result.length > this.toolResultMaxChars
+                                ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
                                 : result;
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
@@ -523,9 +520,9 @@ export class AIClient extends EventEmitter {
                                 content,
                             });
                         }
-                        log(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
+                        logDebug(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
                     } else {
-                        log(`[AIClient][${requestId}] Using sequential execution for ${toolCallsToExecute.length} tools`);
+                        logInfo(`[AIClient][${requestId}] Using sequential execution for ${toolCallsToExecute.length} tools`);
                         // Sequential execution with budget tracking
                         let seqBudgetExceeded = false;
                         for (const toolCall of toolCallsToExecute) {
@@ -543,7 +540,7 @@ export class AIClient extends EventEmitter {
 
                             // Check budget before adding
                             if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                                log(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
+                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
                                 messages.push({
                                     role: 'tool',
                                     tool_call_id: toolCall.id,
@@ -553,8 +550,8 @@ export class AIClient extends EventEmitter {
                                 continue;
                             }
 
-                            const content = typeof result === 'string' && result.length > TOOL_RESULT_MAX_CHARS
-                                ? `${result.slice(0, TOOL_RESULT_MAX_CHARS)}\n[TRUNCATED tool result: ${result.length} chars]`
+                            const content = typeof result === 'string' && result.length > this.toolResultMaxChars
+                                ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
                                 : result;
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
@@ -566,7 +563,7 @@ export class AIClient extends EventEmitter {
                                 content,
                             });
                         }
-                        log(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
+                        logDebug(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
                     }
 
                     // Call the model again with updated messages
@@ -576,14 +573,14 @@ export class AIClient extends EventEmitter {
 
                     if ((followupReq as any).tool_choice === 'required') {
                         (followupReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
-                        log(`[AIClient][${requestId}] generate() followup tool_choice override required->${(followupReq as any).tool_choice}`);
+                        logInfo(`[AIClient][${requestId}] generate() followup tool_choice override required->${(followupReq as any).tool_choice}`);
                     }
-                    if (isVerbose()) {
-                        log(`[AIClient][${requestId}] generate() followup request messages=${messages.length}`);
+                    if (shouldLog('debug')) {
+                        logDebug(`[AIClient][${requestId}] generate() followup request messages=${messages.length}`);
                         logRequestMessages(requestId, messages);
                     }
                     response = await provider.generate(followupReq);
-                    log(`[AIClient][${requestId}] generate() followup response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
+                    logDebug(`[AIClient][${requestId}] generate() followup response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
                 }
             }
 
@@ -623,7 +620,7 @@ export class AIClient extends EventEmitter {
             if (!needsTools && intelligentDetection?.enabled && hasTools) {
                 const afterToolCall = isAfterToolCall(enrichedRequest.messages, intelligentDetection.maxFollowUpMessages);
                 if (afterToolCall) {
-                    log(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
+                    logInfo(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
                     const fastModel = getFastModelForProvider(resolvedProviderName || 'openai');
                     needsTools = await inferNeedsToolsWithAI(provider, resolvedProviderName || 'openai', enrichedRequest.messages, fastModel);
                     aiInferenceUsed = true;
@@ -642,13 +639,13 @@ export class AIClient extends EventEmitter {
                 (enrichedRequest as any).tool_choice = 'required';
             } else if (shouldForceNone) {
                 (enrichedRequest as any).tool_choice = 'none';
-                log(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
+                logInfo(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
             const baseReq: any = { ...enrichedRequest, __toolpack_request_id: requestId };
 
-            log(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
+            logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
             if (!this.toolsConfig.enabled || !this.toolsConfig.autoExecute || !this.toolRegistry) {
@@ -666,20 +663,20 @@ export class AIClient extends EventEmitter {
             const maxRounds = this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
 
             if (maxRounds !== baseMaxRounds) {
-                log(`[AIClient][${requestId}] stream() Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
+                logInfo(`[AIClient][${requestId}] stream() Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
             }
 
             while (rounds <= maxRounds) {
                 // Check for abort signal at start of each round
                 if (request.signal?.aborted) {
-                    log(`[AIClient][${requestId}] stream() aborted by signal`);
+                    logInfo(`[AIClient][${requestId}] stream() aborted by signal`);
                     return;
                 }
 
                 let accumulatedContent = '';
                 const pendingToolCalls: ToolCallResult[] = [];
 
-                log(`[AIClient][${requestId}] stream() round_start ${rounds + 1}/${maxRounds}`);
+                logInfo(`[AIClient][${requestId}] stream() round_start ${rounds + 1}/${maxRounds}`);
                 let lastFinishReason: string | null = null;
 
                 const rawRoundReq: any = { ...baseReq, messages };
@@ -688,19 +685,19 @@ export class AIClient extends EventEmitter {
 
                 if (rounds > 0 && (roundReq as any).tool_choice === 'required') {
                     (roundReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
-                    log(`[AIClient][${requestId}] stream() round_${rounds + 1} tool_choice override required->${(roundReq as any).tool_choice}`);
+                    logInfo(`[AIClient][${requestId}] stream() round_${rounds + 1} tool_choice override required->${(roundReq as any).tool_choice}`);
                 }
 
                 for await (const chunk of provider.stream(roundReq)) {
                     // Check for abort signal during streaming
                     if (request.signal?.aborted) {
-                        log(`[AIClient][${requestId}] stream() aborted by signal during chunk processing`);
+                        logInfo(`[AIClient][${requestId}] stream() aborted by signal during chunk processing`);
                         return;
                     }
 
                     if (chunk.tool_calls && chunk.tool_calls.length > 0) {
                         pendingToolCalls.push(...chunk.tool_calls);
-                        log(`[AIClient][${requestId}] stream() tool_calls_chunk count=${chunk.tool_calls.length} names=${chunk.tool_calls.map(tc => tc.name).join(', ')}`);
+                        logDebug(`[AIClient][${requestId}] stream() tool_calls_chunk count=${chunk.tool_calls.length} names=${chunk.tool_calls.map(tc => tc.name).join(', ')}`);
                         // Yield tool calls in the chunk so consumers can track them
                         yield chunk;
                     }
@@ -716,21 +713,21 @@ export class AIClient extends EventEmitter {
                     }
                 }
 
-                log(`[AIClient][${requestId}] stream() round_end finish_reason=${lastFinishReason ?? 'unknown'} accumulated_len=${accumulatedContent.length} tool_calls_total=${pendingToolCalls.length} content_preview=${safePreview(accumulatedContent, 200)}`);
+                logDebug(`[AIClient][${requestId}] stream() round_end finish_reason=${lastFinishReason ?? 'unknown'} accumulated_len=${accumulatedContent.length} tool_calls_total=${pendingToolCalls.length} content_preview=${safePreview(accumulatedContent, 200)}`);
 
                 // If no tool calls, we're done
                 if (pendingToolCalls.length === 0) {
                     break;
                 }
 
-                log(`[AIClient][${requestId}] stream() received ${pendingToolCalls.length} tool call(s): ${pendingToolCalls.map(tc => tc.name).join(', ')}`);
+                logInfo(`[AIClient][${requestId}] stream() received ${pendingToolCalls.length} tool call(s): ${pendingToolCalls.map(tc => tc.name).join(', ')}`);
 
                 rounds++;
                 if (rounds > maxRounds) {
-                    log(`[AIClient][${requestId}] stream() max tool rounds (${maxRounds}) reached`);
+                    logInfo(`[AIClient][${requestId}] stream() max tool rounds (${maxRounds}) reached`);
                     break;
                 }
-                log(`[AIClient][${requestId}] stream() tool round ${rounds}/${maxRounds}`);
+                logInfo(`[AIClient][${requestId}] stream() tool round ${rounds}/${maxRounds}`);
 
                 // Add assistant message and tool results to conversation
                 messages.push({
@@ -751,7 +748,7 @@ export class AIClient extends EventEmitter {
                 let toolCallsToExecute = pendingToolCalls;
                 const webFetchCalls = pendingToolCalls.filter(tc => tc.name === 'web.fetch');
                 if (webFetchCalls.length > MAX_WEB_FETCH_CALLS) {
-                    log(`[AIClient][${requestId}] Limiting web.fetch calls from ${webFetchCalls.length} → ${MAX_WEB_FETCH_CALLS} to prevent context overflow`);
+                    logInfo(`[AIClient][${requestId}] Limiting web.fetch calls from ${webFetchCalls.length} → ${MAX_WEB_FETCH_CALLS} to prevent context overflow`);
                     const limitedWebFetch = webFetchCalls.slice(0, MAX_WEB_FETCH_CALLS);
                     const otherCalls = pendingToolCalls.filter(tc => tc.name !== 'web.fetch');
                     toolCallsToExecute = [...otherCalls, ...limitedWebFetch];
@@ -810,7 +807,7 @@ export class AIClient extends EventEmitter {
 
                     // Check budget before adding
                     if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                        log(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
+                        logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
                         messages.push({
                             role: 'tool',
                             tool_call_id: toolCall.id,
@@ -820,8 +817,8 @@ export class AIClient extends EventEmitter {
                         continue;
                     }
 
-                    const content = typeof result === 'string' && result.length > TOOL_RESULT_MAX_CHARS
-                        ? `${result.slice(0, TOOL_RESULT_MAX_CHARS)}\n[TRUNCATED tool result: ${result.length} chars]`
+                    const content = typeof result === 'string' && result.length > this.toolResultMaxChars
+                        ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
                         : result;
 
                     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
@@ -844,11 +841,11 @@ export class AIClient extends EventEmitter {
                     };
                 }
 
-                log(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
+                logDebug(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
 
 
-                if (isVerbose()) {
-                    log(`[AIClient][${requestId}] stream() after_tools messages=${messages.length}`);
+                if (shouldLog('debug')) {
+                    logDebug(`[AIClient][${requestId}] stream() after_tools messages=${messages.length}`);
                     logRequestMessages(requestId, messages);
                 }
             }
@@ -876,12 +873,12 @@ export class AIClient extends EventEmitter {
     private async enrichRequestWithTools(request: CompletionRequest): Promise<CompletionRequest> {
         // If mode blocks ALL tools, return request with no tools
         if (this.activeMode?.blockAllTools) {
-            log(`[AIClient] Mode "${this.activeMode.displayName}" blocks all tools`);
+            logInfo(`[AIClient] Mode "${this.activeMode.displayName}" blocks all tools`);
             return request;
         }
 
-        if (!this.toolsConfig.enabled || !this.toolRegistry) {
-            log(`[AIClient] Tools disabled or no registry`);
+        if (!this.toolsConfig.enabled || (!this.toolRegistry && (request.tools?.length || 0) === 0)) {
+            logDebug(`[AIClient] Tools disabled or no registry`);
             return request;
         }
 
@@ -897,13 +894,13 @@ export class AIClient extends EventEmitter {
                     ...(this.activeMode.toolSearch.alwaysLoadedCategories ? { alwaysLoadedCategories: this.activeMode.toolSearch.alwaysLoadedCategories } : {}),
                 }
             };
-            log(`[AIClient] Merged mode toolSearch config: enabled=${resolvedToolsConfig.toolSearch?.enabled}, alwaysLoadedTools=${resolvedToolsConfig.toolSearch?.alwaysLoadedTools?.length || 0}`);
+            logDebug(`[AIClient] Merged mode toolSearch config: enabled=${resolvedToolsConfig.toolSearch?.enabled}, alwaysLoadedTools=${resolvedToolsConfig.toolSearch?.alwaysLoadedTools?.length || 0}`);
         }
 
         // If the request already has tools, only add newly discovered tools when tool.search mode is enabled
         if (request.tools && request.tools.length > 0) {
             if (!resolvedToolsConfig.toolSearch?.enabled || !this.toolRegistry) {
-                log(`[AIClient] Request already has ${request.tools.length} tools`);
+                logDebug(`[AIClient] Request already has ${request.tools.length} tools`);
                 return request;
             }
 
@@ -913,14 +910,14 @@ export class AIClient extends EventEmitter {
                 resolvedToolsConfig,
             );
 
-            log(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
+            logDebug(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
 
             if (this.activeMode && schemas.length > 0) {
                 const beforeCount = schemas.length;
                 schemas = this.filterSchemasByMode(schemas, this.activeMode);
                 const filteredCount = beforeCount - schemas.length;
                 if (filteredCount > 0) {
-                    log(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
+                    logInfo(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
                 }
             }
 
@@ -937,7 +934,7 @@ export class AIClient extends EventEmitter {
                 }));
 
             if (newTools.length === 0) {
-                log(`[AIClient] Request already has ${request.tools.length} tools (no new discoveries)`);
+                logDebug(`[AIClient] Request already has ${request.tools.length} tools (no new discoveries)`);
                 return request;
             }
 
@@ -953,13 +950,20 @@ export class AIClient extends EventEmitter {
             return enrichedRequest;
         }
 
+        if (!this.toolRegistry) {
+            logDebug('[AIClient] Tool registry not configured, skipping tool resolution');
+            return request;
+        }
+
+        const activeRegistry = this.toolRegistry;
+
         let schemas = await this.toolRouter.resolve(
             request.messages,
-            this.toolRegistry,
+            activeRegistry,
             resolvedToolsConfig,
         );
 
-        log(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
+        logDebug(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
 
         // Apply mode-based filtering
         if (this.activeMode && schemas.length > 0) {
@@ -967,7 +971,7 @@ export class AIClient extends EventEmitter {
             schemas = this.filterSchemasByMode(schemas, this.activeMode);
             const filteredCount = beforeCount - schemas.length;
             if (filteredCount > 0) {
-                log(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
+                logInfo(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
             }
         }
 
@@ -987,7 +991,7 @@ export class AIClient extends EventEmitter {
         let enrichedRequest: CompletionRequest = { ...request, tools };
 
         // Inject Tool Search system prompt if enabled
-        if (this.toolsConfig.toolSearch?.enabled && this.toolRegistry) {
+        if (this.toolsConfig.toolSearch?.enabled && activeRegistry) {
             enrichedRequest = this.injectToolSearchPrompt(enrichedRequest);
         }
 
@@ -1025,12 +1029,12 @@ export class AIClient extends EventEmitter {
      */
     private injectModeSystemPrompt(request: CompletionRequest): CompletionRequest {
         if (!this.activeMode || !this.activeMode.systemPrompt) {
-            log(`[AIClient] injectModeSystemPrompt: No active mode or empty systemPrompt. activeMode=${this.activeMode?.name}, systemPrompt=${this.activeMode?.systemPrompt?.substring(0, 50)}`);
+            logDebug(`[AIClient] injectModeSystemPrompt: No active mode or empty systemPrompt. activeMode=${this.activeMode?.name}, systemPrompt=${this.activeMode?.systemPrompt?.substring(0, 50)}`);
             return request;
         }
 
         const modePrompt = this.activeMode.systemPrompt;
-        log(`[AIClient] injectModeSystemPrompt: Injecting mode prompt for ${this.activeMode.name}, length=${modePrompt.length}`);
+        logDebug(`[AIClient] injectModeSystemPrompt: Injecting mode prompt for ${this.activeMode.name}, length=${modePrompt.length}`);
         const hasSystemMessage = request.messages.some(m => m.role === 'system');
 
         if (hasSystemMessage) {
@@ -1207,7 +1211,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             args: toolCall.arguments,
         } as ToolProgressEvent);
 
-        log(`[AIClient] Executing tool: ${toolCall.name} with args: ${safePreview(toolCall.arguments, 500)}`);
+        logInfo(`[AIClient] Executing tool: ${toolCall.name} with args: ${safePreview(toolCall.arguments, 500)}`);
 
         if (!this.toolRegistry) {
             const error = 'No tool registry configured';
@@ -1248,7 +1252,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
 
         const tool = this.toolRegistry.get(toolCall.name);
         if (!tool) {
-            log(`[AIClient] Tool '${toolCall.name}' not found in registry`);
+            logWarn(`[AIClient] Tool '${toolCall.name}' not found in registry`);
 
             // Fuzzy match: detect common hallucination patterns
             const suggestion = this.findSimilarToolName(toolCall.name);
@@ -1271,7 +1275,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             const ctx: ToolContext = {
                 workspaceRoot: process.cwd(),
                 config: this.toolsConfig?.additionalConfigurations ?? {},
-                log: (msg) => log(`[Tool] ${msg}`),
+                log: (msg) => logInfo(`[Tool] ${msg}`),
             };
             const result = await tool.execute(toolCall.arguments, ctx);
             const duration = Date.now() - startTime;
@@ -1296,9 +1300,9 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 timestamp: Date.now(),
             } as ToolLogEvent);
 
-            log(`[AIClient] Tool ${toolCall.name} executed successfully in ${duration}ms result_len=${result?.length ?? 0}`);
-            if (isVerbose()) {
-                log(`[AIClient] Tool ${toolCall.name} result_preview=${safePreview(result, 400)}`);
+            logInfo(`[AIClient] Tool ${toolCall.name} executed successfully in ${duration}ms result_len=${result?.length ?? 0}`);
+            if (shouldLog('debug')) {
+                logDebug(`[AIClient] Tool ${toolCall.name} result_preview=${safePreview(result, 400)}`);
             }
             return result;
         } catch (error: any) {
@@ -1325,7 +1329,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 timestamp: Date.now(),
             } as ToolLogEvent);
 
-            log(`[AIClient] Tool ${toolCall.name} failed: ${safePreview(errorMsg, 300)}`);
+            logError(`[AIClient] Tool ${toolCall.name} failed: ${safePreview(errorMsg, 300)}`);
             return JSON.stringify({ error: errorMsg });
         }
     }
@@ -1414,7 +1418,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
         const { query, category } = args;
         const limit = this.toolsConfig.toolSearch?.searchResultLimit ?? 5;
 
-        log(`[AIClient] Executing tool.search: query="${query}" category=${category || 'all'} limit=${limit}`);
+        logInfo(`[AIClient] Executing tool.search: query="${query}" category=${category || 'all'} limit=${limit}`);
 
         const results = this.bm25Engine.search(query, { limit, category });
 
@@ -1422,7 +1426,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
         const toolNames = results.map(r => r.toolName);
         this.toolRouter.getDiscoveryCache().recordDiscovery(query, toolNames);
 
-        log(`[AIClient] tool.search found ${results.length} tools: ${toolNames.join(', ') || 'none'}`);
+        logDebug(`[AIClient] tool.search found ${results.length} tools: ${toolNames.join(', ') || 'none'}`);
 
         return JSON.stringify({
             query,

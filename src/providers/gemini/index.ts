@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { ProviderAdapter } from '../base';
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { log, safePreview, logMessagePreview, isVerbose } from '../provider-logger';
+import { logDebug, safePreview, logMessagePreview } from '../provider-logger';
 
 export class GeminiAdapter extends ProviderAdapter {
     private genAI: GoogleGenerativeAI;
@@ -146,15 +146,15 @@ export class GeminiAdapter extends ProviderAdapter {
                         parameters: t.function.parameters,
                     })),
                 }];
-                log(`[Gemini][${requestId}] Sending ${request.tools.length} tools`);
-                if (isVerbose() && request.tools.length > 0) {
-                    log(`[Gemini][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
+                logDebug(`[Gemini][${requestId}] Sending ${request.tools.length} tools`);
+                if (request.tools.length > 0) {
+                    logDebug(`[Gemini][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
                 }
             } else {
-                log(`[Gemini][${requestId}] NO TOOLS in request`);
+                logDebug(`[Gemini][${requestId}] NO TOOLS in request`);
             }
 
-            log(`[Gemini][${requestId}] generate() request: model=${request.model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
+            logDebug(`[Gemini][${requestId}] generate() request: model=${request.model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
             logMessagePreview(requestId, 'Gemini', request.messages);
 
             const model = this.genAI.getGenerativeModel(modelConfig);
@@ -194,7 +194,7 @@ export class GeminiAdapter extends ProviderAdapter {
                 }
             }
 
-            log(`[Gemini][${requestId}] Response finish_reason=${toolCalls.length > 0 ? 'tool_calls' : 'stop'} tool_calls=${toolCalls.length} content_preview=${safePreview(textContent, 200)}`);
+            logDebug(`[Gemini][${requestId}] Response finish_reason=${toolCalls.length > 0 ? 'tool_calls' : 'stop'} tool_calls=${toolCalls.length} content_preview=${safePreview(textContent, 200)}`);
 
             return {
                 content: textContent || null,
@@ -230,9 +230,9 @@ export class GeminiAdapter extends ProviderAdapter {
             }
 
             const requestId = (request as any).__toolpack_request_id || `str-${Date.now()}`;
-            log(`[Gemini][${requestId}] Stream request: model=${request.model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
-            if (isVerbose() && request.tools && request.tools.length > 0) {
-                log(`[Gemini][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
+            logDebug(`[Gemini][${requestId}] Stream request: model=${request.model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
+            if (request.tools && request.tools.length > 0) {
+                logDebug(`[Gemini][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
             }
             logMessagePreview(requestId, 'Gemini', request.messages);
 
@@ -256,7 +256,7 @@ export class GeminiAdapter extends ProviderAdapter {
                 // Check for function calls in the chunk
                 for (const part of (chunk as any).candidates?.[0]?.content?.parts || []) {
                     if (part.functionCall) {
-                        log(`[Gemini][${requestId}] Stream finish_reason=tool_calls name=${part.functionCall.name}`);
+                        logDebug(`[Gemini][${requestId}] Stream finish_reason=tool_calls name=${part.functionCall.name}`);
                         yield {
                             delta: '',
                             finish_reason: 'tool_calls',

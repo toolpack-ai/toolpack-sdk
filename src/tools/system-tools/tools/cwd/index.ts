@@ -1,7 +1,9 @@
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 async function execute(_args: Record<string, any>): Promise<string> {
+    logDebug('[system.cwd] execute');
     return JSON.stringify({ cwd: process.cwd() });
 }
 

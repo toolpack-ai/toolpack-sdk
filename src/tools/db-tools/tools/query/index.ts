@@ -1,6 +1,7 @@
 import { ToolDefinition } from '../../../types.js';
 import { dbQuerySchema } from './schema.js';
 import { DatabaseAdapterFactory } from '../../adapters/factory.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 export const dbQueryTool: ToolDefinition = {
     name: 'db.query',
@@ -12,6 +13,7 @@ export const dbQueryTool: ToolDefinition = {
         const dbPath = args.db as string;
         const sql = args.sql as string;
         const params = (args.params as unknown[]) || [];
+        logDebug(`[db.query] execute db="${dbPath}" sql="${sql.substring(0, 80)}..." params=${params.length}`);
 
         try {
             // Note: Use execute for mutating queries or query for read-only.

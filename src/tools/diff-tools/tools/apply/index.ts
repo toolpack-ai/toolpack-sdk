@@ -2,6 +2,7 @@ import { ToolDefinition } from '../../../types.js';
 import { diffApplySchema } from './schema.js';
 import * as diff from 'diff';
 import { promises as fs } from 'fs';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 export const diffApplyTool: ToolDefinition = {
     name: 'diff.apply',
@@ -12,6 +13,7 @@ export const diffApplyTool: ToolDefinition = {
     execute: async (args: Record<string, unknown>) => {
         const path = args.path as string;
         const patch = args.patch as string;
+        logDebug(`[diff.apply] execute path="${path}"`);
 
         try {
             const fileContent = await fs.readFile(path, 'utf8');

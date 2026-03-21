@@ -6,6 +6,7 @@ import { Plan } from './planning/plan-types.js';
 import { Planner } from './planning/planner.js';
 import { StepExecutor } from './steps/step-executor.js';
 import { StepTracker } from './steps/step-tracker.js';
+import { logDebug, logInfo, logWarn } from '../providers/provider-logger.js';
 
 export class WorkflowExecutor extends EventEmitter {
     private client: AIClient;
@@ -47,24 +48,30 @@ export class WorkflowExecutor extends EventEmitter {
         const planningEnabled = this.config.planning?.enabled;
         const stepsEnabled = this.config.steps?.enabled;
 
+        logDebug(`[Workflow] execute() planningEnabled=${planningEnabled} stepsEnabled=${stepsEnabled} provider=${providerName ?? 'default'}`);
+
         // Case 1: No workflow — direct execution
         if (!planningEnabled && !stepsEnabled) {
+            logDebug('[Workflow] execute() mode=direct');
             return this.executeDirect(request, providerName);
         }
 
         // Case 2: Planning enabled
         let plan: Plan | null = null;
         if (planningEnabled) {
+            logDebug('[Workflow] execute() mode=planning — creating plan');
             plan = await this.createPlan(request, providerName);
             this.emit('workflow:plan_created', plan);
 
             // If approval required, pause and wait
             if (this.config.planning?.requireApproval) {
+                logInfo(`[Workflow] Plan "${plan.id}" requires approval — waiting`);
                 this.emitProgress(plan, 'awaiting_approval', 'Waiting for plan approval');
                 const approved = await this.waitForApproval(plan.id);
                 this.emit('workflow:plan_decision', plan, approved);
 
                 if (!approved) {
+                    logInfo(`[Workflow] Plan "${plan.id}" rejected by user`);
                     plan.status = 'cancelled';
                     this.emitProgress(plan, 'failed', 'Plan rejected by user');
                     return {
@@ -74,6 +81,7 @@ export class WorkflowExecutor extends EventEmitter {
                         metrics: { totalDuration: 0, stepsCompleted: 0, stepsFailed: 0, retriesUsed: 0 },
                     };
                 }
+                logInfo(`[Workflow] Plan "${plan.id}" approved`);
             }
 
             plan.status = 'approved';
@@ -83,6 +91,7 @@ export class WorkflowExecutor extends EventEmitter {
         if (stepsEnabled) {
             // If no plan, create implicit steps from the request
             if (!plan) {
+                logDebug('[Workflow] execute() mode=steps-only — creating implicit plan');
                 plan = await this.planner.createImplicitPlan(request, providerName);
                 this.emit('workflow:plan_created', plan);
                 plan.status = 'approved';
@@ -93,6 +102,7 @@ export class WorkflowExecutor extends EventEmitter {
 
         // Case 4: Planning without steps — execute plan as single request
         if (plan) {
+            logDebug('[Workflow] execute() mode=plan-direct (planning only, no steps)');
             return this.executePlanDirect(plan, request, providerName);
         }
 
@@ -106,6 +116,7 @@ export class WorkflowExecutor extends EventEmitter {
     private async executeDirect(request: CompletionRequest, providerName?: string): Promise<WorkflowResult> {
         const startTime = Date.now();
         const plan = this.createDummyPlan(request);
+        logDebug(`[Workflow] executeDirect() provider=${providerName ?? 'default'}`);
 
         try {
             this.emitProgress(plan, 'executing', 'Direct execution');
@@ -115,6 +126,9 @@ export class WorkflowExecutor extends EventEmitter {
             plan.status = 'completed';
             plan.completedAt = new Date();
             plan.steps[0]!.status = 'completed';
+
+            const duration = Date.now() - startTime;
+            logDebug(`[Workflow] executeDirect() completed in ${duration}ms content_len=${response.content?.length ?? 0}`);
 
             const result: WorkflowResult = {
                 success: true,
@@ -135,6 +149,8 @@ export class WorkflowExecutor extends EventEmitter {
             plan.status = 'failed';
             plan.completedAt = new Date();
             plan.steps[0]!.status = 'failed';
+
+            logWarn(`[Workflow] executeDirect() failed: ${(error as Error).message}`);
 
             const result: WorkflowResult = {
                 success: false,
@@ -159,11 +175,14 @@ export class WorkflowExecutor extends EventEmitter {
      */
     private async createPlan(request: CompletionRequest, providerName?: string): Promise<Plan> {
         // Emit a dummy plan for initial planning progress state
+        logDebug(`[Workflow] createPlan() provider=${providerName ?? 'default'}`);
         const draft = this.createDummyPlan(request);
         draft.status = 'draft';
         this.emitProgress(draft, 'planning', 'Creating plan...');
 
-        return this.planner.createPlan(request, providerName);
+        const plan = await this.planner.createPlan(request, providerName);
+        logInfo(`[Workflow] createPlan() completed plan.id=${plan.id} steps=${plan.steps.length}`);
+        return plan;
     }
 
     /**
@@ -173,6 +192,8 @@ export class WorkflowExecutor extends EventEmitter {
         plan.status = 'in_progress';
         plan.startedAt = new Date();
         this.emit('workflow:started', plan);
+
+        logInfo(`[Workflow] executeStepByStep() plan.id=${plan.id} steps=${plan.steps.length} maxRetries=${this.config.steps?.maxRetries ?? 3}`);
 
         const startTime = Date.now();
         let retriesUsed = 0;
@@ -199,6 +220,7 @@ export class WorkflowExecutor extends EventEmitter {
                 });
 
                 if (unmetDeps.length > 0) {
+                    logDebug(`[Workflow] Step ${step.number} skipped — unmet deps: ${unmetDeps.join(', ')}`);
                     step.status = 'skipped';
                     step.result = { success: false, error: `Unmet dependencies: ${unmetDeps.join(', ')}` };
                     continue;
@@ -209,6 +231,8 @@ export class WorkflowExecutor extends EventEmitter {
             step.status = 'in_progress';
             this.emit('workflow:step_start', step, plan);
             this.emitProgress(plan, 'executing', step.description);
+
+            logInfo(`[Workflow] Step ${step.number}/${plan.steps.length} starting: "${step.description}"`);
 
             let attempt = 0;
             const maxRetries = this.config.steps?.maxRetries ?? 3;
@@ -223,6 +247,7 @@ export class WorkflowExecutor extends EventEmitter {
                         step.status = 'completed';
                         step.result = result;
                         this.emit('workflow:step_complete', step, plan);
+                        logDebug(`[Workflow] Step ${step.number} completed in ${result.duration ?? 0}ms toolsUsed=${(result.toolsUsed ?? []).join(',') || 'none'}`);
                         success = true;
                         break;
                     } else {
@@ -235,9 +260,11 @@ export class WorkflowExecutor extends EventEmitter {
 
                     if (attempt <= maxRetries && this.config.steps?.retryOnFailure) {
                         retriesUsed++;
+                        logWarn(`[Workflow] Step ${step.number} failed (attempt ${attempt}/${maxRetries}), retrying: ${lastError.message}`);
                         this.emit('workflow:step_retry', step, attempt, plan);
                         this.emitProgress(plan, 'executing', `[Retry ${attempt}] ${step.description}`);
                     } else {
+                        logWarn(`[Workflow] Step ${step.number} failed permanently: ${lastError.message}`);
                         step.status = 'failed';
                         step.result = { success: false, error: lastError.message };
                         this.emit('workflow:step_failed', step, lastError, plan);
@@ -249,6 +276,7 @@ export class WorkflowExecutor extends EventEmitter {
             // Handle failure strategy if step failed completely
             if (!success) {
                 const strategy = this.config.onFailure?.strategy || 'abort';
+                logDebug(`[Workflow] Step ${step.number} failed — applying strategy="${strategy}"`);
 
                 if (strategy === 'abort') {
                     plan.status = 'failed';
@@ -313,9 +341,12 @@ export class WorkflowExecutor extends EventEmitter {
         }
 
         // All steps completed or skipped
+        const metrics = this.computeMetrics(plan, startTime, retriesUsed);
         plan.status = 'completed';
         plan.completedAt = new Date();
-        plan.metrics = this.computeMetrics(plan, startTime, retriesUsed);
+        plan.metrics = metrics;
+
+        logInfo(`[Workflow] executeStepByStep() completed plan.id=${plan.id} duration=${metrics.totalDuration}ms stepsCompleted=${metrics.stepsCompleted} stepsFailed=${metrics.stepsFailed} retriesUsed=${retriesUsed}`);
 
         const result: WorkflowResult = {
             success: true,
@@ -340,6 +371,7 @@ export class WorkflowExecutor extends EventEmitter {
         plan.startedAt = new Date();
         this.emit('workflow:started', plan);
         this.emitProgress(plan, 'executing', 'Executing plan');
+        logDebug(`[Workflow] executePlanDirect() plan.id=${plan.id} steps=${plan.steps.length} provider=${providerName ?? 'default'}`);
 
         // Inject the plan into the system prompt for execution
         const planContext = `
@@ -373,6 +405,8 @@ Execute this plan now.
             plan.completedAt = new Date();
             plan.metrics = this.computeMetrics(plan, startTime, 0);
 
+            logDebug(`[Workflow] executePlanDirect() completed plan.id=${plan.id} duration=${Date.now() - startTime}ms`);
+
             const result: WorkflowResult = {
                 success: true,
                 plan,
@@ -387,6 +421,8 @@ Execute this plan now.
         } catch (error) {
             plan.status = 'failed';
             plan.completedAt = new Date();
+
+            logWarn(`[Workflow] executePlanDirect() failed plan.id=${plan.id}: ${(error as Error).message}`);
 
             const result: WorkflowResult = {
                 success: false,
@@ -513,8 +549,11 @@ Execute this plan now.
         const planningEnabled = this.config.planning?.enabled;
         const stepsEnabled = this.config.steps?.enabled;
 
+        logDebug(`[Workflow] stream() planningEnabled=${planningEnabled} stepsEnabled=${stepsEnabled} provider=${providerName ?? 'default'}`);
+
         // Case 1: No workflow — direct streaming
         if (!planningEnabled && !stepsEnabled) {
+            logDebug('[Workflow] stream() mode=direct');
             yield* this.streamDirect(request, providerName);
             return;
         }

@@ -29,7 +29,7 @@ export const parameters: ToolParameters = {
         },
         freshness: {
             type: 'string',
-            description: 'Time range for results: "day" (24h), "week" (7d), "month" (31d), "year" (1y). Ensures real-time/recent results. Works with Tavily and Brave.',
+            description: 'Time range for fresh/recent results: "day" (last 24h), "week" (last 7 days), "month" (last 31 days), "year" (last 365 days). Ensures latest real-time data. Supported by Tavily and Brave APIs; DuckDuckGo returns general results.',
             enum: ['day', 'week', 'month', 'year'],
         },
     },

@@ -1,4 +1,5 @@
 import { ToolDefinition, ToolProject, ToolProjectDependencies } from './types.js';
+import { logWarn } from '../providers/provider-logger.js';
 
 export function createToolProject(config: {
     key: string;
@@ -32,7 +33,7 @@ export function createToolProject(config: {
         if (typeof tool.execute !== 'function') throw new Error(`Tool "${tool.name}" is missing an execute function.`);
 
         if (tool.category !== config.category) {
-            console.warn(`[Toolpack] Warning: Tool "${tool.name}" has category "${tool.category}" which does not match project category "${config.category}".`);
+            logWarn(`[Toolpack] Tool "${tool.name}" has category "${tool.category}" which does not match project category "${config.category}".`);
         }
     }
 

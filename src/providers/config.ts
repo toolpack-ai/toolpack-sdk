@@ -39,8 +39,6 @@ export interface ToolpackConfig {
         enabled?: boolean;
         /** Log file path. Default: 'toolpack-sdk.log' in CWD */
         filePath?: string;
-        /** Enable verbose logging (message previews, tool details). Default: false */
-        verbose?: boolean;
     };
 }
 

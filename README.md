@@ -443,6 +443,117 @@ const sdk = await Toolpack.init({
 | `tools` | ToolDefinition[] | ✓ | Array of tool definitions |
 | `dependencies` | Record<string, string> | | npm dependencies (validated at load) |
 
+## Knowledge Module (RAG)
+
+The Knowledge module provides **Retrieval-Augmented Generation (RAG)** capabilities, enabling AI agents to search and retrieve relevant information from your documents during conversations.
+
+### Quick Start
+
+```typescript
+import {
+  Toolpack,
+  Knowledge,
+  MemoryProvider,
+  MarkdownSource,
+} from 'toolpack-sdk';
+
+// 1. Create a knowledge base from your documents
+const kb = await Knowledge.create({
+  provider: new MemoryProvider(),
+  source: new MarkdownSource('./docs'),  // Directory or glob pattern
+});
+
+// 2. Initialize Toolpack with knowledge
+const toolpack = await Toolpack.init({
+  provider: 'openai',
+  knowledge: kb,
+});
+
+// 3. AI automatically searches the knowledge base when needed
+const response = await toolpack.generate({
+  messages: [{ role: 'user', content: 'What does the documentation say about authentication?' }]
+});
+```
+
+When you provide a `knowledge` option, the SDK automatically:
+- Registers a `knowledge_search` tool
+- Adds it to `alwaysLoadedTools` for all modes
+- The AI calls it whenever it needs to retrieve information
+
+### Components
+
+| Component | Purpose | Options |
+|-----------|---------|---------|
+| **Sources** | Load and chunk content | `MarkdownSource`, `JSONSource`, `SQLiteTextSource` |
+| **Embedders** | Convert text to vectors | `OllamaEmbedder`, `OpenAIEmbedder`, `GeminiEmbedder` |
+| **Providers** | Store and query vectors | `MemoryProvider` |
+
+### Sources
+
+```typescript
+// Markdown files (auto-appends **/*.md if directory)
+new MarkdownSource('./docs')
+new MarkdownSource('./docs/**/*.md', { namespace: 'docs', watch: true })
+
+// JSON files
+new JSONSource('./data/products.json', {
+  chunkBy: 'item',
+  contentFields: ['name', 'description'],
+  metadataFields: ['id', 'category'],
+})
+
+// SQLite databases
+new SQLiteTextSource('./data/articles.db', {
+  table: 'articles',
+  contentColumns: ['title', 'body'],
+  metadataColumns: ['id', 'author'],
+})
+```
+
+### Embedders
+
+By default, `Knowledge.create()` auto-detects an available embedder:
+1. **Ollama** (if running locally)
+2. **OpenAI** (if `TOOLPACK_OPENAI_KEY` or `OPENAI_API_KEY` is set)
+
+```typescript
+// Explicit embedder
+const kb = await Knowledge.create({
+  provider: new MemoryProvider(),
+  source: new MarkdownSource('./docs'),
+  embedder: new OpenAIEmbedder({ model: 'text-embedding-3-small' }),
+});
+```
+
+### Direct Query
+
+```typescript
+const results = await kb.query('authentication flow', {
+  limit: 5,
+  threshold: 0.3,  // Minimum similarity (0-1)
+  filter: { type: 'documentation' },
+});
+
+for (const result of results) {
+  console.log(`Score: ${result.score}`);
+  console.log(`Content: ${result.chunk.content}`);
+}
+```
+
+### Multiple Sources
+
+```typescript
+const kb = await Knowledge.create({
+  provider: new MemoryProvider(),
+  sources: [
+    new MarkdownSource('./docs', { namespace: 'docs' }),
+    new JSONSource('./data/faq.json', { namespace: 'faq' }),
+  ],
+});
+```
+
+For complete documentation, see the [Knowledge Module Guide](./documentation/docs/guides/knowledge.md).
+
 ## Multimodal Support
 
 The SDK supports multimodal inputs (text + images) across all vision-capable providers. Images can be provided in three formats:
@@ -504,8 +615,7 @@ export GOOGLE_GENERATIVE_AI_KEY="AIza..."
 
 # SDK logging (override — prefer toolpack.config.json instead)
 export TOOLPACK_SDK_LOG_FILE="./toolpack.log"    # Log file path (also enables logging)
-export TOOLPACK_SDK_LOG_VERBOSE="true"             # Verbose logging (also enables logging)
-export TOOLPACK_SDK_TOOL_RESULT_MAX_CHARS="20000"  # Max chars per tool result
+export TOOLPACK_SDK_LOG_LEVEL="debug"            # Log level override (error, warn, info, debug, trace)
 ```
 
 ## Configuration Architecture
@@ -551,7 +661,7 @@ Create a `toolpack.config.json` in your project root:
   "logging": {
     "enabled": true,
     "filePath": "./toolpack.log",
-    "verbose": true
+    "level": "info"
   }
 }
 ```
@@ -560,7 +670,7 @@ Create a `toolpack.config.json` in your project root:
 |--------|---------|-------------|
 | `enabled` | `false` | Enable file logging |
 | `filePath` | `toolpack-sdk.log` | Log file path (relative to CWD) |
-| `verbose` | `false` | Include message previews and tool details |
+| `level` | `info` | Log level (`error`, `warn`, `info`, `debug`, `trace`) |
 
 ### Tools Configuration
 
@@ -573,6 +683,7 @@ Create a `toolpack.config.json` in your project root:
     "autoExecute": true,
     "maxToolRounds": 5,
     "toolChoicePolicy": "auto",
+    "resultMaxChars": 20000,
     "enabledTools": [],
     "enabledToolCategories": [],
     "additionalConfigurations": {

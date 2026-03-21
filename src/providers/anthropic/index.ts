@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ProviderAdapter } from '../base';
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { log, safePreview, logMessagePreview, isVerbose } from '../provider-logger';
+import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
 
 export class AnthropicAdapter extends ProviderAdapter {
     private client: Anthropic;
@@ -149,15 +149,15 @@ export class AnthropicAdapter extends ProviderAdapter {
                     params.tool_choice = { type: 'auto' };
                 }
 
-                log(`[Anthropic][${requestId}] Sending ${params.tools?.length || 0} tools with tool_choice: ${params.tool_choice?.type || 'unset'}`);
-                if (isVerbose() && params.tools && params.tools.length > 0) {
-                    log(`[Anthropic][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
+                logDebug(`[Anthropic][${requestId}] Sending ${params.tools?.length || 0} tools with tool_choice: ${params.tool_choice?.type || 'unset'}`);
+                if (params.tools && params.tools.length > 0) {
+                    logDebug(`[Anthropic][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
                 }
             } else {
-                log(`[Anthropic][${requestId}] NO TOOLS in request`);
+                logDebug(`[Anthropic][${requestId}] NO TOOLS in request`);
             }
 
-            log(`[Anthropic][${requestId}] generate() request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice?.type ?? 'unset'}`);
+            logDebug(`[Anthropic][${requestId}] generate() request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice?.type ?? 'unset'}`);
             logMessagePreview(requestId, 'Anthropic', params.messages);
 
             const response = await this.client.messages.create(
@@ -180,7 +180,7 @@ export class AnthropicAdapter extends ProviderAdapter {
                 }
             }
 
-            log(`[Anthropic][${requestId}] Response finish_reason=${response.stop_reason} tool_calls=${toolCalls.length} content_preview=${safePreview(textParts.join(''), 200)}`);
+            logDebug(`[Anthropic][${requestId}] Response finish_reason=${response.stop_reason} tool_calls=${toolCalls.length} content_preview=${safePreview(textParts.join(''), 200)}`);
 
             return {
                 content: textParts.length > 0 ? textParts.join('') : null,
@@ -227,15 +227,15 @@ export class AnthropicAdapter extends ProviderAdapter {
                     params.tool_choice = { type: 'auto' };
                 }
 
-                log(`[Anthropic][${requestId}] Sending ${params.tools?.length || 0} tools with tool_choice: ${params.tool_choice?.type || 'unset'}`);
-                if (isVerbose() && params.tools && params.tools.length > 0) {
-                    log(`[Anthropic][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
+                logDebug(`[Anthropic][${requestId}] Sending ${params.tools?.length || 0} tools with tool_choice: ${params.tool_choice?.type || 'unset'}`);
+                if (params.tools && params.tools.length > 0) {
+                    logDebug(`[Anthropic][${requestId}] First tool: ${safePreview(params.tools[0], 800)}`);
                 }
             } else {
-                log(`[Anthropic][${requestId}] NO TOOLS in request`);
+                logDebug(`[Anthropic][${requestId}] NO TOOLS in request`);
             }
 
-            log(`[Anthropic][${requestId}] Stream request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice?.type ?? 'unset'}`);
+            logDebug(`[Anthropic][${requestId}] Stream request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice?.type ?? 'unset'}`);
             logMessagePreview(requestId, 'Anthropic', params.messages);
 
             const stream = await this.client.messages.create(
@@ -266,7 +266,7 @@ export class AnthropicAdapter extends ProviderAdapter {
                 }
 
                 if (chunk.type === 'content_block_stop' && inToolUse) {
-                    log(`[Anthropic][${requestId}] Stream finish_reason=tool_calls accumulated_call=${currentToolName}`);
+                    logDebug(`[Anthropic][${requestId}] Stream finish_reason=tool_calls accumulated_call=${currentToolName}`);
                     yield {
                         delta: '',
                         finish_reason: 'tool_calls',
@@ -280,7 +280,7 @@ export class AnthropicAdapter extends ProviderAdapter {
                 }
 
                 if (chunk.type === 'message_stop') {
-                    log(`[Anthropic][${requestId}] Stream chunk finish_reason=stop`);
+                    logTrace(`[Anthropic][${requestId}] Stream chunk finish_reason=stop`);
                     yield { delta: '', finish_reason: 'stop' };
                 }
             }

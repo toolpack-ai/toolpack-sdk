@@ -22,7 +22,7 @@ import {
     ProviderError,
     InvalidRequestError,
 } from '../../errors';
-import { log, safePreview, logMessagePreview, isVerbose } from '../provider-logger';
+import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
 import { ollamaRequest, ollamaStream } from './http';
 
 // ============================================================================
@@ -201,15 +201,14 @@ export class OllamaAdapter extends ProviderAdapter {
                     parameters: t.function.parameters,
                 }
             }));
-            log(`[Ollama][${requestId}] Sending ${request.tools.length} tools with tool_choice: ${request.tool_choice || 'unset'}`);
-            if (isVerbose() && request.tools.length > 0) {
-                log(`[Ollama][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
+            logDebug(`[Ollama][${requestId}] Sending ${request.tools.length} tools with tool_choice: ${request.tool_choice || 'unset'}`);
+            if (request.tools.length > 0) {
+                logDebug(`[Ollama][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
             }
-        } else {
-            log(`[Ollama][${requestId}] NO TOOLS in request`);
+            logDebug(`[Ollama][${requestId}] NO TOOLS in request`);
         }
 
-        log(`[Ollama][${requestId}] generate() request: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
+        logDebug(`[Ollama][${requestId}] generate() request: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
         logMessagePreview(requestId, 'Ollama', request.messages);
 
         try {
@@ -250,7 +249,7 @@ export class OllamaAdapter extends ProviderAdapter {
                 raw: data,
             };
 
-            log(`[Ollama][${requestId}] Response finish_reason=${response.finish_reason} tool_calls=${toolCalls.length} content_preview=${safePreview(response.content, 200)}`);
+            logDebug(`[Ollama][${requestId}] Response finish_reason=${response.finish_reason} tool_calls=${toolCalls.length} content_preview=${safePreview(response.content, 200)}`);
 
             return response;
         } catch (err: any) {
@@ -286,15 +285,14 @@ export class OllamaAdapter extends ProviderAdapter {
                     parameters: t.function.parameters,
                 }
             }));
-            log(`[Ollama][${requestId}] Sending ${request.tools.length} tools with tool_choice: ${request.tool_choice || 'unset'}`);
-            if (isVerbose() && request.tools.length > 0) {
-                log(`[Ollama][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
+            logDebug(`[Ollama][${requestId}] Sending ${request.tools.length} tools with tool_choice: ${request.tool_choice || 'unset'}`);
+            if (request.tools.length > 0) {
+                logDebug(`[Ollama][${requestId}] First tool: ${safePreview(request.tools[0], 800)}`);
             }
-        } else {
-            log(`[Ollama][${requestId}] NO TOOLS in request`);
+            logDebug(`[Ollama][${requestId}] NO TOOLS in request`);
         }
 
-        log(`[Ollama][${requestId}] Stream request: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
+        logDebug(`[Ollama][${requestId}] Stream request: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length || 0}`);
         logMessagePreview(requestId, 'Ollama', request.messages);
 
         const { stream } = ollamaStream(
@@ -331,7 +329,7 @@ export class OllamaAdapter extends ProviderAdapter {
                             name: this.restoreToolName(tc.function.name, request.tools),
                             arguments: tc.function.arguments || {},
                         }));
-                        log(`[Ollama][${requestId}] Stream finish_reason=tool_calls name=${toolCalls[0]?.name}`);
+                        logDebug(`[Ollama][${requestId}] Stream finish_reason=tool_calls name=${toolCalls[0]?.name}`);
                         yield {
                             delta: '',
                             finish_reason: 'tool_calls',
@@ -341,7 +339,7 @@ export class OllamaAdapter extends ProviderAdapter {
 
                     // If done but no content was yielded above (e.g. only tool calls)
                     if (data.done && !data.message?.content && !data.message?.tool_calls) {
-                        log(`[Ollama][${requestId}] Stream chunk finish_reason=stop`);
+                        logTrace(`[Ollama][${requestId}] Stream chunk finish_reason=stop`);
                         yield { delta: '', finish_reason: 'stop' };
                         return;
                     }
@@ -362,7 +360,7 @@ export class OllamaAdapter extends ProviderAdapter {
         const input = typeof request.input === 'string' ? [request.input] : request.input;
         const model = request.model || this.config.model;
 
-        log(`[Ollama][${requestId}] Embedding request: model=${model}, inputs=${input.length}`);
+        logDebug(`[Ollama][${requestId}] Embedding request: model=${model}, inputs=${input.length}`);
 
         try {
             const res = await ollamaRequest(

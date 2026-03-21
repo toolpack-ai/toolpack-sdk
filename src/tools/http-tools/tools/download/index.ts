@@ -2,11 +2,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 async function execute(args: Record<string, any>): Promise<string> {
     const url = args.url as string;
     const filePath = args.path as string;
     const headers = args.headers as Record<string, string> | undefined;
+    logDebug(`[http.download] execute url="${url}" path="${filePath}"`);
 
     if (!url) {
         throw new Error('url is required');

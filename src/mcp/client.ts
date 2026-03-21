@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { JsonRpcRequest } from './types.js';
-import { log } from '../providers/provider-logger.js';
+import { logWarn } from '../providers/provider-logger.js';
 
 // ============================================================================
 // Configuration
@@ -108,7 +108,7 @@ export class McpClient extends EventEmitter {
                 // (inherited stderr corrupts Ink TUI rendering)
                 if (this.process.stderr) {
                     this.process.stderr.on('data', (data: Buffer) => {
-                        log(`MCP server stderr: ${data.toString().trim()}`);
+                        logWarn(`[MCP server stderr] ${data.toString().trim()}`);
                     });
                 }
 

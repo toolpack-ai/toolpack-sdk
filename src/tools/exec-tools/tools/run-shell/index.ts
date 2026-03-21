@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
+import { logDebug } from '../../../../providers/provider-logger.js';
 
 function getDefaultShell(): string {
     const platform = process.platform;
@@ -18,6 +19,7 @@ async function execute(args: Record<string, any>): Promise<string> {
     if (!command) {
         throw new Error('command is required');
     }
+    logDebug(`[exec.run-shell] execute command="${command.substring(0, 100)}" cwd=${cwd ?? 'default'} timeout=${timeout}ms`);
 
     try {
         const output = execSync(command, {
