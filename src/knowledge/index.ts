@@ -2,6 +2,7 @@ export { Knowledge } from './knowledge.js';
 export type { KnowledgeTool } from './knowledge.js';
 
 export { MemoryProvider } from './providers/memory-provider.js';
+export { PersistentKnowledgeProvider } from './providers/persistent-provider.js';
 
 export { MarkdownSource } from './sources/markdown-source.js';
 export { JSONSource } from './sources/json-source.js';
@@ -39,6 +40,7 @@ export type {
   JSONSourceOptions,
   SQLiteTextSourceOptions,
   MemoryProviderOptions,
+  PersistentKnowledgeProviderOptions,
   OllamaEmbedderOptions,
   OpenAIEmbedderOptions,
   GeminiEmbedderOptions,

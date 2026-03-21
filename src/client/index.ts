@@ -1156,10 +1156,27 @@ export class AIClient extends EventEmitter {
         // Check if system message already exists
         const hasSystemMessage = request.messages.some(m => m.role === 'system');
 
+        // Build list of always-loaded tools for context
+        const alwaysLoadedTools = this.toolsConfig.toolSearch?.alwaysLoadedTools ?? [];
+        let alwaysLoadedSection = '';
+        if (alwaysLoadedTools.length > 0) {
+            const toolDescriptions = alwaysLoadedTools
+                .map(name => {
+                    const tool = this.toolRegistry?.get(name);
+                    return tool ? `  - **${tool.name}**: ${tool.description}` : null;
+                })
+                .filter(Boolean)
+                .join('\n');
+            
+            if (toolDescriptions) {
+                alwaysLoadedSection = `\n\nYou have these tools always available:\n${toolDescriptions}\n\nUse these tools directly when appropriate for the task.`;
+            }
+        }
+
         const toolSearchInstructions = `
 IMPORTANT: Tool Discovery Instructions
 
-You have access to a limited set of tools. If you need a tool that is not in your current list, you MUST use the 'tool.search' tool to discover it.
+You have access to a limited set of tools. If you need a tool that is not in your current list, you MUST use the 'tool.search' tool to discover it.${alwaysLoadedSection}
 
 ${generateToolCategoriesPrompt(this.toolRegistry)}
 

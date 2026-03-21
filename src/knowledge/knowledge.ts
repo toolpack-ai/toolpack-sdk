@@ -61,7 +61,19 @@ export class Knowledge {
       options.onError
     );
 
-    await knowledge.sync();
+    const shouldResync = options.reSync ?? true;
+    if (shouldResync) {
+      await knowledge.sync();
+    } else {
+      const providerHasChunks =
+        typeof options.provider.hasStoredChunks === 'function'
+          ? await options.provider.hasStoredChunks()
+          : false;
+
+      if (!providerHasChunks) {
+        await knowledge.sync();
+      }
+    }
 
     return knowledge;
   }
@@ -223,7 +235,7 @@ export class Knowledge {
   toTool(): KnowledgeTool {
     return {
       name: 'knowledge_search',
-      description: 'Search the knowledge base for relevant information. Use this when you need to find documentation, articles, or other stored knowledge.',
+      description: 'Search the internal knowledge base for relevant information from your local documentation, guides, and stored content. Use this for finding information in your own knowledge base, NOT for searching the web.',
       parameters: {
         type: 'object',
         properties: {

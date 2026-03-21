@@ -43,6 +43,7 @@ export interface KnowledgeProvider {
   query(text: string, options?: QueryOptions): Promise<QueryResult[]>;
   delete(ids: string[]): Promise<void>;
   clear(): Promise<void>;
+  hasStoredChunks?(): Promise<boolean>;
 }
 
 export interface KnowledgeSource {
@@ -88,6 +89,7 @@ export interface KnowledgeOptions {
   source?: KnowledgeSource;
   sources?: KnowledgeSource[];
   embedder?: Embedder;
+  reSync?: boolean;
   onSync?: (event: SyncEvent) => void;
   onEmbeddingProgress?: (event: EmbeddingProgressEvent) => void;
   onError?: (error: Error, context: ErrorContext) => ErrorAction;
@@ -124,6 +126,11 @@ export interface SQLiteTextSourceOptions {
 
 export interface MemoryProviderOptions {
   maxChunks?: number;
+}
+
+export interface PersistentKnowledgeProviderOptions {
+  storagePath?: string;
+  namespace?: string;
 }
 
 export interface OllamaEmbedderOptions {

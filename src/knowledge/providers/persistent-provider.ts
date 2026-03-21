@@ -1,3 +1,5 @@
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import type {
   KnowledgeProvider,
   Chunk,
@@ -5,40 +7,101 @@ import type {
   QueryResult,
   MetadataFilter,
   MetadataFilterValue,
-  MemoryProviderOptions,
 } from '../types.js';
+import { getGlobalToolpackDir } from '../../utils/home-config.js';
+
+export interface PersistentKnowledgeProviderOptions {
+  storagePath?: string;
+  namespace?: string;
+}
 
 interface StoredChunk {
   chunk: Chunk;
   vector: number[];
 }
 
-export class MemoryProvider implements KnowledgeProvider {
-  private store: Map<string, StoredChunk> = new Map();
-  private maxChunks?: number;
+export class PersistentKnowledgeProvider implements KnowledgeProvider {
+  private storagePath: string;
+  private cache: Map<string, StoredChunk> = new Map();
+  private initialized = false;
 
-  constructor(options: MemoryProviderOptions = {}) {
-    this.maxChunks = options.maxChunks;
+  constructor(options: PersistentKnowledgeProviderOptions = {}) {
+    const namespace = options.namespace || 'default';
+    this.storagePath = options.storagePath || path.join(getGlobalToolpackDir(), 'knowledge', namespace);
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
+
+    await fs.mkdir(this.storagePath, { recursive: true });
+    await this.loadFromDisk();
+    this.initialized = true;
+  }
+
+  private async loadFromDisk(): Promise<void> {
+    try {
+      const files = await fs.readdir(this.storagePath);
+      
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        
+        const filePath = path.join(this.storagePath, file);
+        const content = await fs.readFile(filePath, 'utf-8');
+        const stored: StoredChunk = JSON.parse(content);
+        
+        this.cache.set(stored.chunk.id, stored);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  private async saveChunk(stored: StoredChunk): Promise<void> {
+    const fileName = `${this.sanitizeId(stored.chunk.id)}.json`;
+    const filePath = path.join(this.storagePath, fileName);
+    await fs.writeFile(filePath, JSON.stringify(stored, null, 2), 'utf-8');
+  }
+
+  private async deleteChunkFile(id: string): Promise<void> {
+    const fileName = `${this.sanitizeId(id)}.json`;
+    const filePath = path.join(this.storagePath, fileName);
+    
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  private sanitizeId(id: string): string {
+    return id.replace(/[^a-zA-Z0-9-_]/g, '_');
   }
 
   async add(chunks: Chunk[]): Promise<void> {
+    await this.ensureInitialized();
+
     for (const chunk of chunks) {
       if (!chunk.vector) {
         throw new Error(`Chunk ${chunk.id} has no vector. Ensure embedder is configured.`);
       }
 
-      if (this.maxChunks && this.store.size >= this.maxChunks) {
-        throw new Error(`Maximum chunk limit (${this.maxChunks}) reached`);
-      }
-
-      this.store.set(chunk.id, {
+      const stored: StoredChunk = {
         chunk: { ...chunk },
         vector: chunk.vector,
-      });
+      };
+
+      this.cache.set(chunk.id, stored);
+      await this.saveChunk(stored);
     }
   }
 
   async query(_text: string, options: QueryOptions = {}): Promise<QueryResult[]> {
+    await this.ensureInitialized();
+
     const {
       limit = 10,
       threshold = 0.3,
@@ -47,9 +110,6 @@ export class MemoryProvider implements KnowledgeProvider {
       includeVectors = false,
     } = options;
 
-    // We need the query vector to be passed in via a special mechanism
-    // since MemoryProvider doesn't have access to the embedder directly.
-    // The Knowledge class will handle embedding the query and passing the vector.
     const queryVector = (options as any)._queryVector as number[] | undefined;
     if (!queryVector) {
       throw new Error('Query vector not provided. Use Knowledge.query() instead of provider.query() directly.');
@@ -57,7 +117,7 @@ export class MemoryProvider implements KnowledgeProvider {
 
     const results: QueryResult[] = [];
 
-    for (const [, stored] of this.store) {
+    for (const [, stored] of this.cache) {
       if (filter && !this.matchesFilter(stored.chunk.metadata, filter)) {
         continue;
       }
@@ -84,21 +144,40 @@ export class MemoryProvider implements KnowledgeProvider {
   }
 
   async delete(ids: string[]): Promise<void> {
+    await this.ensureInitialized();
+
     for (const id of ids) {
-      this.store.delete(id);
+      this.cache.delete(id);
+      await this.deleteChunkFile(id);
     }
   }
 
   async clear(): Promise<void> {
-    this.store.clear();
+    await this.ensureInitialized();
+
+    this.cache.clear();
+
+    try {
+      const files = await fs.readdir(this.storagePath);
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          await fs.unlink(path.join(this.storagePath, file));
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
   }
 
   get size(): number {
-    return this.store.size;
+    return this.cache.size;
   }
 
   async hasStoredChunks(): Promise<boolean> {
-    return this.store.size > 0;
+    await this.ensureInitialized();
+    return this.cache.size > 0;
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
