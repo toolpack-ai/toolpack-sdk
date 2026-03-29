@@ -19,6 +19,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Persistent Knowledge** — File-system provider with cached embeddings under `~/.toolpack/knowledge/<namespace>`
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
 - **77 Built-in Tools** across 10 categories:
+- **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
 |----------|-------|-------------|
