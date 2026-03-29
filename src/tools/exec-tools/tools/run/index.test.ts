@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execRunTool } from './index.js';
+import * as os from 'os';
 
 describe('exec.run tool', () => {
     it('should have correct metadata', () => {
@@ -13,8 +14,14 @@ describe('exec.run tool', () => {
     });
 
     it('should execute with cwd', async () => {
-        const result = await execRunTool.execute({ command: 'pwd', cwd: '/tmp' });
-        expect(result.trim()).toMatch(/\/tmp|\/private\/tmp/);
+        const tmpDir = os.tmpdir();
+        const isWindows = process.platform === 'win32';
+        const command = isWindows ? 'cd' : 'pwd';
+        const result = await execRunTool.execute({ command, cwd: tmpDir });
+        // Normalize paths for comparison (Windows uses backslashes)
+        const normalizedResult = result.trim().replace(/\\/g, '/');
+        const normalizedTmpDir = tmpDir.replace(/\\/g, '/');
+        expect(normalizedResult).toContain(normalizedTmpDir);
     });
 
     it('should handle failing commands gracefully', async () => {

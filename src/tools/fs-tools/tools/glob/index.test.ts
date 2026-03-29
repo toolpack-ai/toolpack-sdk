@@ -51,7 +51,10 @@ describe('fs.glob', () => {
         });
         const parsed = JSON.parse(result);
         
-        expect(parsed.files[0]).toContain(testDir);
+        // Normalize paths for cross-platform comparison (Windows uses backslashes)
+        const normalizedFile = parsed.files[0].replace(/\\/g, '/');
+        const normalizedTestDir = testDir.replace(/\\/g, '/');
+        expect(normalizedFile).toContain(normalizedTestDir);
     });
 
     it('should find only files by default', async () => {

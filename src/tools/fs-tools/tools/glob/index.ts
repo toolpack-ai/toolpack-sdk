@@ -14,8 +14,11 @@ async function execute(args: Record<string, any>): Promise<string> {
         throw new Error('pattern is required');
     }
 
+    // Normalize pattern to use forward slashes (fast-glob requires this on Windows)
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+
     try {
-        const files = await fg(pattern, {
+        const files = await fg(normalizedPattern, {
             cwd: cwd || process.cwd(),
             ignore: ignore || ['node_modules/**', '.git/**'],
             onlyFiles,

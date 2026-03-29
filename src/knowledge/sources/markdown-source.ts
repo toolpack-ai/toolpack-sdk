@@ -41,7 +41,9 @@ export class MarkdownSource implements KnowledgeSource {
   }
 
   async *load(): AsyncIterable<Chunk> {
-    const files = await fg(this.pattern, { absolute: true });
+    // Normalize pattern to use forward slashes (fast-glob requires this on Windows)
+    const normalizedPattern = this.pattern.replace(/\\/g, '/');
+    const files = await fg(normalizedPattern, { absolute: true });
 
     for (const filePath of files) {
       try {

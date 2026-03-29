@@ -13,14 +13,21 @@ describe('exec.run_shell tool', () => {
     });
 
     it('should support pipes', async () => {
-        const result = await execRunShellTool.execute({ command: 'echo "hello world" | tr " " "_"' });
+        const isWindows = process.platform === 'win32';
+        const command = isWindows 
+            ? 'echo "hello world" | ForEach-Object { $_ -replace " ", "_" }'
+            : 'echo "hello world" | tr " " "_"';
+        const result = await execRunShellTool.execute({ command });
         expect(result.trim()).toBe('hello_world');
     });
 
     it('should support environment variable expansion', async () => {
-        const result = await execRunShellTool.execute({ command: 'echo $HOME' });
+        const isWindows = process.platform === 'win32';
+        const command = isWindows ? 'echo $env:TEMP' : 'echo $HOME';
+        const envVar = isWindows ? '$env:TEMP' : '$HOME';
+        const result = await execRunShellTool.execute({ command });
         expect(result.trim()).toBeTruthy();
-        expect(result.trim()).not.toBe('$HOME');
+        expect(result.trim()).not.toBe(envVar);
     });
 
     it('should handle failing commands gracefully', async () => {

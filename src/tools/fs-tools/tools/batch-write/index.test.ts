@@ -47,9 +47,14 @@ describe('fs.batch_write', () => {
         const file1 = join(testDir, 'existing.txt');
         writeFileSync(file1, 'original');
         
+        // Use a path that's guaranteed to fail on all platforms
+        const invalidPath = process.platform === 'win32'
+            ? 'Z:\\nonexistent\\deeply\\nested\\invalid\\path\\file.txt'
+            : '/root/nonexistent/deeply/nested/invalid/path/file.txt';
+        
         const files = [
             { path: file1, content: 'modified' },
-            { path: '/invalid/path/file.txt', content: 'will fail' },
+            { path: invalidPath, content: 'will fail' },
         ];
         
         await expect(fsBatchWriteTool.execute({ files, atomic: true }))
