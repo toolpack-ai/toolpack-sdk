@@ -1,11 +1,7 @@
 # Source files (compiled output is in dist/)
 src/
 
-# Source maps (reduce package size)
-*.map
-*.js.map
-*.d.ts.map
-dist/**/*.map
+# Source maps (reduce package size) - must be explicit for npm
 dist/**/*.js.map
 dist/**/*.d.ts.map
 
