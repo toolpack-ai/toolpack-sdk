@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
 import { systemDiskUsageTool } from './index.js';
 
 describe('system.disk_usage tool', () => {
@@ -7,7 +9,7 @@ describe('system.disk_usage tool', () => {
         expect(systemDiskUsageTool.category).toBe('system');
     });
 
-    it('should return disk usage for root', async () => {
+    it('should return disk usage for root or temp directory', async () => {
         const result = JSON.parse(await systemDiskUsageTool.execute({}));
         expect(result.filesystem).toBeDefined();
         expect(result.size).toBeDefined();
