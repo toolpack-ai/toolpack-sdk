@@ -6,6 +6,11 @@ yarn-error.log*
 pnpm-debug.log*
 package-lock.json
 
+# Nested git repos (standalone repos, not submodules)
+documentation/
+samples/toolpack-cli/
+samples/toolpack-sdk-integrations/
+
 # Build outputs
 dist/
 build/
