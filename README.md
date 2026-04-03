@@ -118,6 +118,47 @@ const sdk = await Toolpack.init({
 
 - **OpenAI**: Supports `reasoningTier` and `costTier` on model info for GPT-5.x reasoning models. API key read from `OPENAI_API_KEY` or `TOOLPACK_OPENAI_KEY`.
 - **Anthropic**: Does not support embeddings. Tool results are converted to `tool_result` content blocks automatically. `tool_choice: none` is handled by omitting tools from the request. `max_tokens` defaults to `4096` if not specified. API key read from `ANTHROPIC_API_KEY` or `TOOLPACK_ANTHROPIC_KEY`.
+
+## MCP Tool Server Support
+
+Toolpack now includes first-class support for Model Context Protocol (MCP) adapters and server tool discovery.
+
+### Quick MCP Setup
+
+```typescript
+import { Toolpack } from 'toolpack-sdk';
+import { createMcpToolProject } from './tools/mcp-tools';
+
+const mcpToolProject = await createMcpToolProject({
+  servers: [
+    {
+      name: 'filesystem',
+      displayName: 'MCP Filesystem',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+      autoConnect: true,
+    },
+    {
+      name: 'custom',
+      displayName: 'Custom MCP',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-tools'],
+      autoConnect: true,
+    },
+  ],
+});
+
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+  customTools: [mcpToolProject],
+});
+
+// On shutdown/cold path:
+// await disconnectMcpToolProject(mcpToolProject);
+```
+
+See `docs/MCP_INTEGRATION.md` and `docs/examples/mcp-integration-example.ts` for full instructions and best practices.
 - **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GOOGLE_GENERATIVE_AI_KEY` or `TOOLPACK_GEMINI_KEY`.
 - **Ollama**: Auto-discovers all locally pulled models when registered as `{ ollama: {} }`. Uses `/api/show` and tool probing to detect capabilities (tool calling, vision, embeddings) per model. Models without tool support are automatically stripped of tools and given a system instruction to prevent hallucinated tool usage. Uses synthetic tool call IDs (`ollama_<timestamp>_<random>`). Embeddings use the modern `/api/embed` batch endpoint. Legacy per-model registration (`{ 'ollama-llama3': {} }`) is also supported.
 
