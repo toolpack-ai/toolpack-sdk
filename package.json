@@ -8,10 +8,16 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md"
   ],
+  "sideEffects": false,
   "scripts": {
-    "build": "rimraf dist && tsc",
+    "build": "rimraf dist && tsc && npm run minify",
+    "build:dev": "rimraf dist && tsc",
+    "minify": "node scripts/minify.js",
     "watch": "tsc -w",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -69,6 +75,7 @@
     "@types/node": "^25.3.2",
     "@types/pg": "^8.18.0",
     "@vitest/coverage-v8": "^4.0.18",
+    "esbuild": "^0.27.5",
     "eslint": "^9.39.2",
     "globals": "^17.3.0",
     "tree-sitter-wasms": "^0.1.13",
@@ -92,12 +99,10 @@
     "netlify": "^24.0.1",
     "openai": "^6.18.0",
     "pg": "^8.19.0",
-    "simple-git": "^3.32.3",
-    "web-tree-sitter": "^0.22.6",
     "puppeteer": "^24.39.0",
-    "rss-parser": "^3.13.0"
-  },
-  "optionalDependencies": {
+    "rss-parser": "^3.13.0",
+    "simple-git": "^3.32.3",
+    "web-tree-sitter": "^0.22.6"
   },
   "directories": {
     "doc": "docs",
