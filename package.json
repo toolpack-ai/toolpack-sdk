@@ -15,8 +15,8 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist && tsc && npm run minify",
-    "build:dev": "rm -rf dist && tsc",
+    "build": "rimraf dist && tsc && npm run minify",
+    "build:dev": "rimraf dist && tsc",
     "minify": "node scripts/minify.js",
     "watch": "tsc -w",
     "test": "vitest run",
@@ -82,7 +82,8 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "rimraf": "^5.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",

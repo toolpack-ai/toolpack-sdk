@@ -73,3 +73,6 @@ export {
     cloudToolsProject,
     cloudDeployTool, cloudStatusTool, cloudListTool,
 } from './cloud-tools/index.js';
+
+export{ McpToolManager,createMcpToolProject,disconnectMcpToolProject } from './mcp-tools/index.js';
+export type { McpToolsConfig, McpServerConfig } from './mcp-tools/index.js';

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ToolsConfig, DEFAULT_TOOLS_CONFIG } from './types.js';
 import { logDebug } from '../providers/provider-logger.js';
+import { McpToolsConfig } from './mcp-tools/index.js';
 
 const CONFIG_FILENAME = 'toolpack.config.json';
 
@@ -12,6 +13,7 @@ export interface FullConfig {
     disableBaseContext?: boolean;
     baseContext?: boolean;
     modeOverrides?: Record<string, any>;
+    mcp?: McpToolsConfig;
 }
 
 /**
