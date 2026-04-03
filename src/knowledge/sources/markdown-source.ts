@@ -26,12 +26,16 @@ export class MarkdownSource implements KnowledgeSource {
   private fileHashes: Map<string, string> = new Map();
 
   constructor(pattern: string, options: MarkdownSourceOptions = {}) {
-    // Auto-append **/*.md if pattern looks like a directory (no glob chars and no .md extension)
-    if (!pattern.includes('*') && !pattern.includes('?') && !pattern.endsWith('.md')) {
-      this.pattern = pattern.endsWith('/') ? `${pattern}**/*.md` : `${pattern}/**/*.md`;
-    } else {
-      this.pattern = pattern;
-    }
+    const normalizePattern = (rawPattern: string): string => {
+      // fast-glob expects POSIX-style separators; convert Windows paths
+      let fixed = rawPattern.replace(/\\/g, '/');
+      if (!fixed.includes('*') && !fixed.includes('?') && !fixed.endsWith('.md')) {
+        fixed = fixed.endsWith('/') ? `${fixed}**/*.md` : `${fixed}/**/*.md`;
+      }
+      return fixed;
+    };
+
+    this.pattern = normalizePattern(pattern);
     this.options = {
       maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
       chunkOverlap: DEFAULT_CHUNK_OVERLAP,
