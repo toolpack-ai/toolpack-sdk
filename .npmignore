@@ -1,0 +1,99 @@
+# Source files (compiled output is in dist/)
+src/
+
+# Source maps (reduce package size) - must be explicit for npm
+dist/**/*.js.map
+dist/**/*.d.ts.map
+
+# Tests
+tests/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Documentation and development
+documentation/
+development/
+*.md
+!README.md
+!CHANGELOG.md
+!LICENSE.md
+
+# Configuration files
+tsconfig.json
+tsconfig.*.json
+.eslintrc*
+.eslintignore
+.prettierrc*
+.prettierignore
+jest.config.*
+vitest.config.*
+webpack.config.*
+rollup.config.*
+.eslintrc.js
+.babelrc
+
+# Git and CI/CD
+.github/
+.gitignore
+.gitattributes
+.husky/
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Build and dependency management
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.npmrc
+.yarnrc
+.pnpm-debug.log*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Coverage and test reports
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.cache/
+.parcel-cache/
+
+# Development environment
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Build artifacts (other than dist/)
+build/
+out/
+lib/
+
+# Misc
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md

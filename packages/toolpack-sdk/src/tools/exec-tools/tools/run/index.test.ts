@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { execRunTool } from './index.js';
 import * as os from 'os';
+import * as path from 'path';
+import { execRunTool } from './index.js';
 
 describe('exec.run tool', () => {
     it('should have correct metadata', () => {
@@ -25,7 +26,11 @@ describe('exec.run tool', () => {
     });
 
     it('should handle failing commands gracefully', async () => {
-        const result = await execRunTool.execute({ command: 'ls /nonexistent_path_xyz' });
+        const failCommand = process.platform === 'win32'
+            ? `"${process.execPath}" -e "process.exit(1)"`
+            : 'false';
+
+        const result = await execRunTool.execute({ command: failCommand });
         expect(result).toContain('Command failed');
     });
 
@@ -34,7 +39,11 @@ describe('exec.run tool', () => {
     });
 
     it('should handle commands with no output', async () => {
-        const result = await execRunTool.execute({ command: 'true' });
+        const noOutputCommand = process.platform === 'win32'
+            ? `"${process.execPath}" -e "process.exit(0)"`
+            : 'true';
+
+        const result = await execRunTool.execute({ command: noOutputCommand });
         expect(result).toBe('(command completed with no output)');
     });
 });

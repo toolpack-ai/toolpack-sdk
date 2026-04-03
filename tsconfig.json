@@ -10,8 +10,8 @@
             "node"
         ],
         "declaration": true,
-        "declarationMap": true,
-        "sourceMap": true,
+        "declarationMap": false,
+        "sourceMap": false,
         "strict": true,
         "noImplicitAny": true,
         "strictNullChecks": true,
