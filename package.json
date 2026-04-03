@@ -1,5 +1,5 @@
 {
-  "name": "toolpack-monorepo",
+  "name": "toolpack-sdk",
   "private": true,
   "workspaces": [
     "packages/*"
