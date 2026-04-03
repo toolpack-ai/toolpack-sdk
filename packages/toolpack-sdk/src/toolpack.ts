@@ -91,12 +91,6 @@ export interface ToolpackInitConfig {
      */
     configPath?: string;
 
-    /**
-     * Knowledge base instance for RAG capabilities.
-     * When provided, registers a knowledge_search tool that the agent can use.
-     */
-    knowledge?: { toTool(): { name: string; description: string; parameters: any; execute: (args: any) => Promise<any> } };
-
     /* MCP Tools configuration 
     * When provided. copnnects to MCP servers and register tools */
     mcp?: McpToolsConfig;
@@ -164,22 +158,6 @@ export class Toolpack extends EventEmitter {
                 logError(`[MCP] Failed to initialize MCP tools: ${error}`);
                 // Continue without MCP tools rather than failing completely
             }
-        }
-
-        // Register knowledge tool if provided
-        if (config.knowledge) {
-            const knowledgeTool = config.knowledge.toTool();
-            registry.register({
-                name: knowledgeTool.name,
-                displayName: 'Knowledge Search',
-                description: knowledgeTool.description,
-                parameters: knowledgeTool.parameters,
-                category: 'knowledge',
-                execute: async (args: Record<string, any>) => {
-                    const results = await knowledgeTool.execute(args);
-                    return JSON.stringify(results, null, 2);
-                },
-            });
         }
 
         // 1b. Extract config overrides (systemPrompt, baseContext, modeOverrides)
@@ -296,21 +274,6 @@ export class Toolpack extends EventEmitter {
                     if (key !== 'systemPrompt' && key !== 'toolSearch') {
                         (mode as any)[key] = value;
                     }
-                }
-            }
-        }
-
-        // If knowledge is provided, add knowledge_search to alwaysLoadedTools for all modes
-        if (config.knowledge) {
-            for (const mode of modeRegistry.getAll()) {
-                if (!mode.toolSearch) {
-                    mode.toolSearch = {};
-                }
-                if (!mode.toolSearch.alwaysLoadedTools) {
-                    mode.toolSearch.alwaysLoadedTools = [];
-                }
-                if (!mode.toolSearch.alwaysLoadedTools.includes('knowledge_search')) {
-                    mode.toolSearch.alwaysLoadedTools.push('knowledge_search');
                 }
             }
         }

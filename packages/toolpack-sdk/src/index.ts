@@ -8,5 +8,4 @@ export * from './workflows';
 export * from './toolpack';
 export * from './utils/home-config';
 export * from './utils/runtime-config-loader';
-export * from './knowledge';
 export * from './mcp';
