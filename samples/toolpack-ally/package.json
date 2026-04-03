@@ -1,0 +1,19 @@
+{
+  "name": "toolpack-ally",
+  "version": "1.0.0",
+  "description": "Desktop companion app for Toolpack Ally",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "dev": "tsc --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.8.7",
+    "electron": "^41.0.2",
+    "typescript": "^5.6.3"
+  }
+}

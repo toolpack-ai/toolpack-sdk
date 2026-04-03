@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Toolpack Ally</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">Desktop Companion</p>
+        <h1>Toolpack Ally</h1>
+        <p class="lede">
+          Stay close to your Toolpack workflows. Track environment info, shortcuts,
+          and quick links in one lightweight desktop window.
+        </p>
+      </header>
+
+      <section class="card system-info">
+        <h2>System snapshot</h2>
+        <dl>
+          <div>
+            <dt>App</dt>
+            <dd id="app-name">—</dd>
+          </div>
+          <div>
+            <dt>Version</dt>
+            <dd id="version">—</dd>
+          </div>
+          <div>
+            <dt>Platform</dt>
+            <dd id="platform">—</dd>
+          </div>
+          <div>
+            <dt>Details</dt>
+            <dd id="platform-friendly">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="card quick-actions">
+        <h2>Quick actions</h2>
+        <ul>
+          <li>
+            <button type="button" data-action="docs">Open Toolpack Docs</button>
+          </li>
+          <li>
+            <button type="button" data-action="support">Contact Support</button>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="dist/renderer.js" type="module"></script>
+  </body>
+</html>

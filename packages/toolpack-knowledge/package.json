@@ -5,10 +5,14 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rimraf dist && tsc",
     "watch": "tsc -w",
-    "test": "vitest run"
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
 }
