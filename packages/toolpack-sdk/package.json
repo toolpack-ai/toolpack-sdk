@@ -1,6 +1,6 @@
 {
   "name": "toolpack-sdk",
-  "version": "1.1.0",
+  "version": "1.2.0-SNAPSHOT.04032026",
   "description": "Unified TypeScript SDK for AI providers (OpenAI, Anthropic, Gemini, Ollama) with 72 built-in tools, workflow engine, and mode system for building AI-powered applications",
   "engines": {
     "node": ">=20"

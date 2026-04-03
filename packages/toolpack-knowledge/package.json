@@ -1,0 +1,39 @@
+{
+  "name": "toolpack-knowledge",
+  "version": "1.2.0-SNAPSHOT.04032026",
+  "description": "RAG (Retrieval-Augmented Generation) package for Toolpack SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc",
+    "build:dev": "rimraf dist && tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "rag",
+    "retrieval",
+    "embeddings",
+    "vector-search",
+    "knowledge-base",
+    "ai"
+  ],
+  "author": "Sajeer (https://sajeerzeji.com)",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "fast-glob": "^3.3.3",
+    "openai": "^6.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "rimraf": "^5.0.0"
+  }
+}

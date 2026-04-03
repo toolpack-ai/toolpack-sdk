@@ -94,6 +94,13 @@ export interface ToolpackInitConfig {
     /* MCP Tools configuration 
     * When provided. copnnects to MCP servers and register tools */
     mcp?: McpToolsConfig;
+
+    /**
+     * Optional Knowledge instance for RAG (Retrieval-Augmented Generation).
+     * When provided, the knowledge base will be registered as a tool that the AI can use to search documentation.
+     * Can be null if initialization fails - will be gracefully skipped.
+     */
+    knowledge?: any | null; // Using 'any' to avoid circular dependency with toolpack-knowledge
 }
 
 export class Toolpack extends EventEmitter {
@@ -142,6 +149,30 @@ export class Toolpack extends EventEmitter {
         }
         if (config.customTools) {
             await registry.loadProjects(config.customTools);
+        }
+
+        // Register knowledge base as a tool if provided
+        if (config.knowledge && typeof config.knowledge.toTool === 'function') {
+            try {
+                const knowledgeTool = config.knowledge.toTool();
+                const knowledgeProject: ToolProject = {
+                    manifest: {
+                        key: 'knowledge',
+                        name: 'knowledge',
+                        displayName: 'Knowledge Base',
+                        version: '1.0.0',
+                        description: 'RAG-powered knowledge base search',
+                        tools: ['knowledge_search'],
+                        category: 'search',
+                    },
+                    tools: [knowledgeTool],
+                };
+                await registry.loadProjects([knowledgeProject]);
+                logInfo('[Knowledge] Registered knowledge_search tool');
+            } catch (error) {
+                logError(`[Knowledge] Failed to register knowledge tool: ${error}`);
+                // Continue without knowledge tool rather than failing completely
+            }
         }
 
         // Load MCP tools from config if provided

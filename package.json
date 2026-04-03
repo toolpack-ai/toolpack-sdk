@@ -5,8 +5,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "lint": "eslint packages/*/src/**"
+    "build": "npm run build -w packages/toolpack-knowledge && npm run build -w packages/toolpack-sdk",
+    "test": "npm run test -w packages/toolpack-knowledge && npm run test -w packages/toolpack-sdk",
+    "lint": "eslint packages/*/src/**",
+    "version": "node scripts/update-version.js"
   }
 }
