@@ -249,7 +249,7 @@ const reviewMode = createMode({
   name: 'review',
   displayName: 'Code Review',
   systemPrompt: 'You are a senior code reviewer. Read files but NEVER modify them.',
-  allowedToolCategories: ['filesystem', 'coding', 'git'],
+  allowedToolCategories: ['filesystem', 'coding', 'version-control'],
   blockedTools: ['fs.write_file', 'fs.delete_file', 'fs.append_file'],
   baseContext: {
     includeWorkingDirectory: true,
