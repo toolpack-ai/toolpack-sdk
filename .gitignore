@@ -35,17 +35,11 @@ toolpack-sdk.log
 
 # OS
 Thumbs.db
-.DS_Store
 
 # Temporary files
 *.tmp
 .cache/
 .temp/
-
-# Custom development docs (internal planning)
-development/
-samples/
-documentation/
 
 # Docusaurus build artifacts
 .docusaurus/
