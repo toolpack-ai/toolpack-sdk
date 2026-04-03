@@ -14,7 +14,7 @@ import { AnthropicAdapter } from './providers/anthropic';
 import { GeminiAdapter } from './providers/gemini';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama';
 import { getOllamaBaseUrl } from './providers/config';
-import { initLogger, logWarn } from './providers/provider-logger';
+import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger';
 import { ToolRegistry } from './tools/registry';
 import { loadToolsConfig, loadFullConfig, ToolProject } from './tools';
 import { ModeConfig } from './modes/mode-types.js';
@@ -22,6 +22,7 @@ import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
 import { WorkflowExecutor } from './workflows/workflow-executor.js';
 import { DEFAULT_WORKFLOW_CONFIG } from './workflows/workflow-types.js';
+import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools';
 
 export interface ProviderOptions {
     /**
@@ -95,6 +96,10 @@ export interface ToolpackInitConfig {
      * When provided, registers a knowledge_search tool that the agent can use.
      */
     knowledge?: { toTool(): { name: string; description: string; parameters: any; execute: (args: any) => Promise<any> } };
+
+    /* MCP Tools configuration 
+    * When provided. copnnects to MCP servers and register tools */
+    mcp?: McpToolsConfig;
 }
 
 export class Toolpack extends EventEmitter {
@@ -103,6 +108,7 @@ export class Toolpack extends EventEmitter {
     private modeRegistry: ModeRegistry;
     private workflowExecutor: WorkflowExecutor;
     public customProviderNames: Set<string> = new Set();
+    private mcpToolProject: ToolProject | null = null;
 
     private constructor(client: AIClient, defaultProvider: string, modeRegistry: ModeRegistry) {
         super();
@@ -142,6 +148,22 @@ export class Toolpack extends EventEmitter {
         }
         if (config.customTools) {
             await registry.loadProjects(config.customTools);
+        }
+
+        // Load MCP tools from config if provided
+        let mcpToolProject: ToolProject | null = null;
+        const mcpConfig = config.mcp || fullConfig.mcp;
+        if (mcpConfig) {
+            try {
+                logInfo('[MCP] Initializing MCP tool integration');
+                const project = await createMcpToolProject(mcpConfig as McpToolsConfig);
+                mcpToolProject = project;
+                await registry.loadProjects([project]);
+                logInfo(`[MCP] Loaded ${project.tools.length} tools from MCP servers`);
+            } catch (error) {
+                logError(`[MCP] Failed to initialize MCP tools: ${error}`);
+                // Continue without MCP tools rather than failing completely
+            }
         }
 
         // Register knowledge tool if provided
@@ -305,7 +327,7 @@ export class Toolpack extends EventEmitter {
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);
         instance.customProviderNames = customProviderNames;
-
+        instance.mcpToolProject = mcpToolProject;
         // 5. Set default mode (and workflow config)
         const modeName = config.defaultMode || DEFAULT_MODE_NAME;
         const defaultMode = modeRegistry.get(modeName);
@@ -503,6 +525,11 @@ export class Toolpack extends EventEmitter {
         const provider = this.getProvider();
         if (provider && 'disconnect' in provider) {
             await (provider as unknown as { disconnect(): Promise<void> }).disconnect();
+        }
+        
+        //disconnect MCP tool project if exists
+        if(this.mcpToolProject){
+            await disconnectMcpToolProject(this.mcpToolProject);
         }
     }
 

@@ -16,6 +16,45 @@ export class GeminiAdapter extends ProviderAdapter {
         return true;
     }
 
+
+    /**
+     * Sanitize JSON schema for Gemini API compatibility.
+     * Gemini doesn't support: additionalProperties, exclusiveMinimum, exclusiveMaximum, etc.
+     */
+    private sanitizeSchema(schema: any): any {
+        if (!schema || typeof schema !== 'object') {
+            return schema;
+        }
+
+        const sanitized: any = {};
+
+        for (const [key, value] of Object.entries(schema)) {
+            // Skip unsupported properties
+            if (key === 'additionalProperties' ||
+                key === 'exclusiveMinimum' ||
+                key === 'exclusiveMaximum' ||
+                key === '$schema' ||
+                key === '$id' ||
+                key === 'definitions' ||
+                key === '$defs') {
+                continue;
+            }
+
+            // Recursively sanitize nested objects
+            if (typeof value === 'object' && value !== null) {
+                if (Array.isArray(value)) {
+                    sanitized[key] = value.map(item => this.sanitizeSchema(item));
+                } else {
+                    sanitized[key] = this.sanitizeSchema(value);
+                }
+            } else {
+                sanitized[key] = value;
+            }
+        }
+
+        return sanitized;
+    }
+
     /**
      * Upload a file to Gemini's File API.
      * Note: Gemini File API requires using the REST endpoint directly.
@@ -143,7 +182,7 @@ export class GeminiAdapter extends ProviderAdapter {
                     functionDeclarations: request.tools.map(t => ({
                         name: this.sanitizeToolName(t.function.name),
                         description: t.function.description,
-                        parameters: t.function.parameters,
+                        parameters: this.sanitizeSchema(t.function.parameters),
                     })),
                 }];
                 logDebug(`[Gemini][${requestId}] Sending ${request.tools.length} tools`);
@@ -224,7 +263,7 @@ export class GeminiAdapter extends ProviderAdapter {
                     functionDeclarations: request.tools.map(t => ({
                         name: this.sanitizeToolName(t.function.name),
                         description: t.function.description,
-                        parameters: t.function.parameters,
+                        parameters: this.sanitizeSchema(t.function.parameters),
                     })),
                 }];
             }

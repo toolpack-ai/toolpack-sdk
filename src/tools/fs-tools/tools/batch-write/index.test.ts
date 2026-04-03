@@ -57,7 +57,7 @@ describe('fs.batch_write', () => {
             { path: invalidPath, content: 'will fail' },
         ];
         
-        await expect(fsBatchWriteTool.execute({ files, atomic: true }))
+        await expect(fsBatchWriteTool.execute({ files, atomic: true, createDirs: false }))
             .rejects.toThrow('rolled back');
         
         expect(readFileSync(file1, 'utf-8')).toBe('original');
