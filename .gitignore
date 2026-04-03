@@ -6,11 +6,6 @@ yarn-error.log*
 pnpm-debug.log*
 package-lock.json
 
-# Nested git repos (standalone repos, not submodules)
-documentation/
-samples/toolpack-cli/
-samples/toolpack-sdk-integrations/
-
 # Build outputs
 dist/
 build/
@@ -40,11 +35,17 @@ toolpack-sdk.log
 
 # OS
 Thumbs.db
+.DS_Store
 
 # Temporary files
 *.tmp
 .cache/
 .temp/
+
+# Custom development docs (internal planning)
+development/
+samples/
+documentation/
 
 # Docusaurus build artifacts
 .docusaurus/
