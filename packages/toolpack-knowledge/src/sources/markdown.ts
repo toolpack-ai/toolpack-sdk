@@ -37,7 +37,9 @@ export class MarkdownSource implements KnowledgeSource {
   }
 
   async *load(): AsyncIterable<Chunk> {
-    const files = await fg(this.pattern, { absolute: true });
+    // Convert Windows backslashes to forward slashes for fast-glob compatibility
+    const normalizedPattern = this.pattern.replace(/\\/g, '/');
+    const files = await fg(normalizedPattern, { absolute: true });
     
     for (const file of files) {
       try {
