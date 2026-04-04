@@ -1,8 +1,10 @@
 {
   "name": "toolpack-sdk",
-  "version": "1.2.0-SNAPSHOT.04032026-2",
+  "version": "1.2.0",
   "description": "Unified TypeScript SDK for AI providers (OpenAI, Anthropic, Gemini, Ollama) with 72 built-in tools, workflow engine, and mode system for building AI-powered applications",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -12,7 +14,12 @@
     "require": "./dist/index.cjs"
   },
   "types": "dist/index.d.ts",
-  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md"
+  ],
   "sideEffects": [
     "./dist/tools/coding-tools/parsers/queries/*.js"
   ],
@@ -42,13 +49,71 @@
     "prepublishOnly": "npm run build",
     "publish:npm": "npm run build && npm run test && npm publish --access public"
   },
-  "keywords": ["ai", "llm", "openai", "anthropic", "claude", "gemini", "ai-agent", "coding-agent", "tools", "function-calling", "typescript", "sdk"],
+  "keywords": [
+    "ai",
+    "llm",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "ai-agent",
+    "coding-agent",
+    "tools",
+    "function-calling",
+    "typescript",
+    "sdk"
+  ],
   "author": "Sajeer (https://sajeerzeji.com)",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "git+https://github.com/toolpack-ai/toolpack-sdk.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toolpack-ai/toolpack-sdk.git"
+  },
   "homepage": "https://toolpacksdk.com",
-  "bugs": { "url": "https://github.com/toolpack-ai/toolpack-sdk/issues" },
-  "devDependencies": { "@eslint/js": "^9.39.2", "@types/babel__core": "^7.20.5", "@types/babel__traverse": "^7.28.0", "@types/better-sqlite3": "^7.6.13", "@types/diff": "^7.0.2", "@types/mysql": "^2.15.27", "@types/node": "^25.3.2", "@types/pg": "^8.18.0", "@vitest/coverage-v8": "^4.0.18", "esbuild": "^0.27.5", "eslint": "^9.39.2", "globals": "^17.3.0", "rimraf": "^5.0.10", "tree-sitter-wasms": "^0.1.13", "ts-node": "^10.9.2", "typescript": "^5.9.3", "typescript-eslint": "^8.54.0", "vitest": "^4.0.18" },
-  "dependencies": { "@anthropic-ai/sdk": "^0.73.0", "@babel/parser": "^7.29.0", "@babel/traverse": "^7.29.0", "@babel/types": "^7.29.0", "@google/generative-ai": "^0.24.1", "better-sqlite3": "^12.6.2", "cheerio": "^1.2.0", "diff": "^7.0.0", "fast-glob": "^3.3.3", "mysql2": "^3.18.2", "netlify": "^24.0.1", "openai": "^6.18.0", "pg": "^8.19.0", "puppeteer": "^24.39.0", "rss-parser": "^3.13.0", "simple-git": "^3.32.3", "web-tree-sitter": "^0.22.6" },
-  "directories": { "doc": "docs", "test": "tests" }
+  "bugs": {
+    "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__traverse": "^7.28.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^7.0.2",
+    "@types/mysql": "^2.15.27",
+    "@types/node": "^25.3.2",
+    "@types/pg": "^8.18.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "esbuild": "^0.27.5",
+    "eslint": "^9.39.2",
+    "globals": "^17.3.0",
+    "rimraf": "^5.0.10",
+    "tree-sitter-wasms": "^0.1.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.73.0",
+    "@babel/parser": "^7.29.0",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.6.2",
+    "cheerio": "^1.2.0",
+    "diff": "^7.0.0",
+    "fast-glob": "^3.3.3",
+    "mysql2": "^3.18.2",
+    "netlify": "^24.0.1",
+    "openai": "^6.18.0",
+    "pg": "^8.19.0",
+    "puppeteer": "^24.39.0",
+    "rss-parser": "^3.13.0",
+    "simple-git": "^3.32.3",
+    "web-tree-sitter": "^0.22.6"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  }
 }

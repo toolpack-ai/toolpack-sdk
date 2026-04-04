@@ -3,8 +3,8 @@
  * Update version across all Toolpack packages
  * 
  * Usage:
- *   node scripts/update-version.js 1.2.0
- *   node scripts/update-version.js 1.2.0-SNAPSHOT.04032026
+ *   node scripts/update-version.js
+ *   node scripts/update-version.js
  *   npm run version 1.3.0
  */
 
