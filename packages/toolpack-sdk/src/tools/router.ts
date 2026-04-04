@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolSchema, ToolsConfig } from './types.js';
+import { ToolDefinition, ToolSchema, ToolsConfig } from "./types.js";
 import { ToolRegistry } from './registry.js';
 import { Message } from '../types/index.js';
 import { ToolDiscoveryCache, getToolSearchSchema, TOOL_SEARCH_NAME } from './search/index.js';
@@ -93,7 +93,7 @@ export class ToolRouter {
             }
         }
 
-        // 4. Previously discovered tools (auto-cached)
+        // 4. Previously discovered tools (auto-cached, respecting cacheable flag)
         if (config.toolSearch?.cacheDiscoveredTools !== false) {
             // Merge any discoveries from messages into existing cache (don't overwrite)
             const messageCache = ToolDiscoveryCache.fromMessages(messages);
@@ -103,7 +103,8 @@ export class ToolRouter {
 
             for (const name of discovered) {
                 const tool = registry.get(name);
-                if (tool && !seen.has(name)) {
+                // Only cache tools where cacheable !== false (default is true)
+                if (tool && !seen.has(name) && tool.cacheable !== false) {
                     schemas.push(this.toSchema(tool));
                     seen.add(name);
                 }

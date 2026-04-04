@@ -1,10 +1,10 @@
 // MCP Client Module
 // Provides JSON-RPC transport for communicating with MCP servers (e.g., chrome-devtools-mcp)
 
-export { McpClient, McpClientConfig, McpTimeoutError, McpConnectionError } from './client';
+export { McpClient, McpClientConfig, McpTimeoutError, McpConnectionError } from './client.js';
 export {
     JsonRpcRequest,
     JsonRpcResponse,
     McpTool,
     McpServerCapabilities,
-} from './types';
+} from "./types.js";

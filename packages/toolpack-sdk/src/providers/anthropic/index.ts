@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { ProviderAdapter } from '../base';
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
-import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
+import { ProviderAdapter } from "../base/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
+import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
+import { logDebug, logTrace, safePreview, logMessagePreview } from "../provider-logger.js";
 
 export class AnthropicAdapter extends ProviderAdapter {
     private client: Anthropic;
@@ -293,7 +293,7 @@ export class AnthropicAdapter extends ProviderAdapter {
         throw new InvalidRequestError('Embeddings are not strictly supported by the Anthropic API currently.');
     }
 
-    private async toAnthropicMessages(messages: Message[], _options: import('../../types').MediaOptions = {}): Promise<{ system?: string; userMessages: any[] }> {
+    private async toAnthropicMessages(messages: Message[], _options: import('../../types/index.js').MediaOptions = {}): Promise<{ system?: string; userMessages: any[] }> {
         let system: string | undefined = undefined;
         const userMessages: any[] = [];
         

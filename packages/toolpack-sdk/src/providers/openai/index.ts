@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
-import { ProviderAdapter } from '../base';
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
-import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
+import { ProviderAdapter } from "../base/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
+import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
+import { logDebug, logTrace, safePreview, logMessagePreview } from "../provider-logger.js";
 
 export class OpenAIAdapter extends ProviderAdapter {
     private client: OpenAI;
@@ -338,7 +338,7 @@ export class OpenAIAdapter extends ProviderAdapter {
         }
     }
 
-    private async toOpenAIMessage(msg: Message, _options: import('../../types').MediaOptions = {}): Promise<any> {
+    private async toOpenAIMessage(msg: Message, _options: import('../../types/index.js').MediaOptions = {}): Promise<any> {
         // Tool result messages
         if (msg.role === 'tool' && msg.tool_call_id) {
             return {

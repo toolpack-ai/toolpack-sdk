@@ -9,7 +9,7 @@
  */
 
 import http from 'http';
-import { logError, logWarn, logInfo, logDebug } from '../provider-logger';
+import { logError, logWarn, logInfo, logDebug } from "../provider-logger.js";
 
 export type HealerRole = 'input' | 'submit' | 'response';
 

@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { ProviderAdapter } from '../base';
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from '../../types';
-import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors';
-import { logDebug, safePreview, logMessagePreview } from '../provider-logger';
+import { ProviderAdapter } from "../base/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
+import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
+import { logDebug, safePreview, logMessagePreview } from "../provider-logger.js";
 
 export class GeminiAdapter extends ProviderAdapter {
     private genAI: GoogleGenerativeAI;
@@ -360,7 +360,7 @@ export class GeminiAdapter extends ProviderAdapter {
         }).join('\n');
     }
 
-    private async formatHistory(messages: Message[], _options: import('../../types').MediaOptions = {}): Promise<{ history: any[], lastUserMessage: string | any[] }> {
+    private async formatHistory(messages: Message[], _options: import('../../types/index.js').MediaOptions = {}): Promise<{ history: any[], lastUserMessage: string | any[] }> {
         // Filter out system messages as they are handled via systemInstruction
         const conversation = messages.filter(m => m.role !== 'system');
 

@@ -1,15 +1,5 @@
 # Dependencies
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-package-lock.json
-
-# Nested git repos (standalone repos, not submodules)
-documentation/
-samples/toolpack-cli/
-samples/toolpack-sdk-integrations/
+**/node_modules/
 
 # Build outputs
 dist/
@@ -21,13 +11,23 @@ build/
 .env.local
 .env.*.local
 
+# Package manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # IDE
 .vscode/
 .idea/
+*.code-workspace
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
 # Testing
 coverage/
@@ -36,15 +36,16 @@ coverage/
 # Logs
 *.log
 logs/
-toolpack-sdk.log
-
-# OS
-Thumbs.db
 
 # Temporary files
 *.tmp
 .cache/
 .temp/
+
+# Custom development docs (internal planning only — not for contributors)
+development/
+documentation/
+samples/
 
 # Docusaurus build artifacts
 .docusaurus/

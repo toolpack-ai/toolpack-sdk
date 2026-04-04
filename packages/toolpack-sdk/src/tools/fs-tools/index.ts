@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { fsReadFileTool } from './tools/read-file/index.js';
 import { fsWriteFileTool } from './tools/write-file/index.js';
 import { fsAppendFileTool } from './tools/append-file/index.js';

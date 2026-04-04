@@ -1,11 +1,13 @@
 import { parse } from '@babel/parser';
-import traverse, { NodePath } from '@babel/traverse';
+import * as babelTraverse from '@babel/traverse';
+import type { NodePath } from '@babel/traverse';
+const traverse = (babelTraverse as any).default || babelTraverse;
 import * as t from '@babel/types';
 import {
     LanguageParser, ParserContext, SymbolLocation,
     SymbolInfo, ImportInfo, ReferenceInfo, OutlineNode,
     ExportInfo, Diagnostic, ExtractFunctionResult, CallHierarchyNode, CallHierarchyItem
-} from './types.js';
+} from "./types.js";
 
 export class BabelParser implements LanguageParser {
 

@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { diffCreateTool } from './tools/create/index.js';
 import { diffApplyTool } from './tools/apply/index.js';
 import { diffPreviewTool } from './tools/preview/index.js';

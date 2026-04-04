@@ -1,17 +1,37 @@
 {
-  "name": "toolpack-knowledge",
-  "version": "1.0.0",
-  "description": "Knowledge capabilities for the Toolpack SDK",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "rimraf dist && tsc",
-    "watch": "tsc -w",
-    "test": "vitest run --config vitest.config.ts"
+  "name": "@toolpack-sdk/knowledge",
+  "version": "1.2.0-SNAPSHOT.04032026-2",
+  "description": "RAG (Retrieval-Augmented Generation) package for Toolpack SDK",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "exports": {
+    "types": "./dist/index.d.ts",
+    "import": "./dist/index.js",
+    "require": "./dist/index.cjs"
   },
-  "dependencies": {},
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup",
+    "build:dev": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "watch": "tsup --watch"
+  },
+  "keywords": ["rag", "retrieval", "embeddings", "vector-search", "knowledge-base", "ai"],
+  "engines": { "node": ">=20" },
+  "author": "Sajeer (https://sajeerzeji.com)",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "fast-glob": "^3.3.3",
+    "openai": "^6.18.0"
+  },
   "devDependencies": {
-    "rimraf": "^5.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.2",
+    "rimraf": "^5.0.10",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolSchema, ToolProject, ToolsConfig, DEFAULT_TOOLS_CONFIG } from './types.js';
+import { ToolDefinition, ToolSchema, ToolProject, ToolsConfig, DEFAULT_TOOLS_CONFIG } from "./types.js";
 
 /**
  * Central registry for all tools (built-in + custom).

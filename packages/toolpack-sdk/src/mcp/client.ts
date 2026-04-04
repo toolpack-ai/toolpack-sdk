@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { JsonRpcRequest } from './types.js';
+import { JsonRpcRequest } from "./types.js";
 import { logWarn } from '../providers/provider-logger.js';
 
 // ============================================================================

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { AIClient } from './client';
+import { AIClient } from './client/index.js';
 import {
     ProviderAdapter,
     CompletionRequest,
@@ -7,22 +7,23 @@ import {
     CompletionChunk,
     EmbeddingRequest,
     EmbeddingResponse,
-} from './providers/base';
-import { ProviderInfo, ProviderModelInfo } from './types';
-import { OpenAIAdapter } from './providers/openai';
-import { AnthropicAdapter } from './providers/anthropic';
-import { GeminiAdapter } from './providers/gemini';
-import { OllamaAdapter, OllamaProvider } from './providers/ollama';
-import { getOllamaBaseUrl } from './providers/config';
-import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger';
-import { ToolRegistry } from './tools/registry';
-import { loadToolsConfig, loadFullConfig, ToolProject } from './tools';
+} from './providers/base/index.js';
+import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
+import { OpenAIAdapter } from './providers/openai/index.js';
+import { AnthropicAdapter } from './providers/anthropic/index.js';
+import { GeminiAdapter } from './providers/gemini/index.js';
+import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
+import { getOllamaBaseUrl } from './providers/config.js';
+import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger.js';
+import { ToolRegistry } from './tools/registry.js';
+import { loadToolsConfig, loadFullConfig, ToolProject } from './tools/index.js';
+import { ToolDefinition } from './tools/types.js';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
 import { WorkflowExecutor } from './workflows/workflow-executor.js';
 import { DEFAULT_WORKFLOW_CONFIG } from './workflows/workflow-types.js';
-import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools';
+import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools/index.js';
 
 export interface ProviderOptions {
     /**
@@ -91,15 +92,40 @@ export interface ToolpackInitConfig {
      */
     configPath?: string;
 
-    /**
-     * Knowledge base instance for RAG capabilities.
-     * When provided, registers a knowledge_search tool that the agent can use.
-     */
-    knowledge?: { toTool(): { name: string; description: string; parameters: any; execute: (args: any) => Promise<any> } };
-
     /* MCP Tools configuration 
     * When provided. copnnects to MCP servers and register tools */
     mcp?: McpToolsConfig;
+
+    /**
+     * Optional Knowledge instance for RAG (Retrieval-Augmented Generation).
+     * When provided, the knowledge base will be registered as a tool that the AI can use to search documentation.
+     * Can be null if initialization fails - will be gracefully skipped.
+     * 
+     * Accepts any object with a `toTool()` method (e.g. `Knowledge` from `@toolpack-sdk/knowledge`).
+     */
+    knowledge?: KnowledgeInstance | null;
+}
+
+/**
+ * Duck-typed interface for Knowledge instances to avoid circular dependency
+ * with the @toolpack-sdk/knowledge package.
+ */
+export interface KnowledgeInstance {
+    toTool(): {
+        name: string;
+        displayName: string;
+        description: string;
+        category: string;
+        cacheable?: boolean;
+        parameters: {
+            type: string;
+            properties: Record<string, unknown>;
+            required: string[];
+        };
+        execute: (params: { query: string; limit?: number; threshold?: number; filter?: Record<string, string | number | boolean | { $in: unknown[] } | { $gt: number } | { $lt: number }> }) => Promise<any>;
+    };
+    query(text: string, options?: Record<string, unknown>): Promise<any[]>;
+    stop(): Promise<void>;
 }
 
 export class Toolpack extends EventEmitter {
@@ -150,6 +176,30 @@ export class Toolpack extends EventEmitter {
             await registry.loadProjects(config.customTools);
         }
 
+        // Register knowledge base as a tool if provided
+        if (config.knowledge && typeof config.knowledge.toTool === 'function') {
+            try {
+                const knowledgeTool = config.knowledge.toTool();
+                const knowledgeProject: ToolProject = {
+                    manifest: {
+                        key: 'knowledge',
+                        name: 'knowledge',
+                        displayName: 'Knowledge Base',
+                        version: '1.0.0',
+                        description: 'RAG-powered knowledge base search',
+                        tools: ['knowledge_search'],
+                        category: 'search',
+                    },
+                    tools: [knowledgeTool as unknown as ToolDefinition],
+                };
+                await registry.loadProjects([knowledgeProject]);
+                logInfo('[Knowledge] Registered knowledge_search tool');
+            } catch (error) {
+                logError(`[Knowledge] Failed to register knowledge tool: ${error}`);
+                // Continue without knowledge tool rather than failing completely
+            }
+        }
+
         // Load MCP tools from config if provided
         let mcpToolProject: ToolProject | null = null;
         const mcpConfig = config.mcp || fullConfig.mcp;
@@ -164,22 +214,6 @@ export class Toolpack extends EventEmitter {
                 logError(`[MCP] Failed to initialize MCP tools: ${error}`);
                 // Continue without MCP tools rather than failing completely
             }
-        }
-
-        // Register knowledge tool if provided
-        if (config.knowledge) {
-            const knowledgeTool = config.knowledge.toTool();
-            registry.register({
-                name: knowledgeTool.name,
-                displayName: 'Knowledge Search',
-                description: knowledgeTool.description,
-                parameters: knowledgeTool.parameters,
-                category: 'knowledge',
-                execute: async (args: Record<string, any>) => {
-                    const results = await knowledgeTool.execute(args);
-                    return JSON.stringify(results, null, 2);
-                },
-            });
         }
 
         // 1b. Extract config overrides (systemPrompt, baseContext, modeOverrides)
@@ -296,21 +330,6 @@ export class Toolpack extends EventEmitter {
                     if (key !== 'systemPrompt' && key !== 'toolSearch') {
                         (mode as any)[key] = value;
                     }
-                }
-            }
-        }
-
-        // If knowledge is provided, add knowledge_search to alwaysLoadedTools for all modes
-        if (config.knowledge) {
-            for (const mode of modeRegistry.getAll()) {
-                if (!mode.toolSearch) {
-                    mode.toolSearch = {};
-                }
-                if (!mode.toolSearch.alwaysLoadedTools) {
-                    mode.toolSearch.alwaysLoadedTools = [];
-                }
-                if (!mode.toolSearch.alwaysLoadedTools.includes('knowledge_search')) {
-                    mode.toolSearch.alwaysLoadedTools.push('knowledge_search');
                 }
             }
         }

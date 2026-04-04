@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { codingFindSymbolTool } from './tools/find-symbol/index.js';
 import { codingGetSymbolsTool } from './tools/get-symbols/index.js';
 import { codingGetImportsTool } from './tools/get-imports/index.js';

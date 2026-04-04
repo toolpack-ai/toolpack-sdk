@@ -1,4 +1,4 @@
-import { ProviderAdapter } from '../base';
+import { ProviderAdapter } from "../base/index.js";
 import {
     CompletionRequest,
     CompletionResponse,
@@ -6,9 +6,9 @@ import {
     EmbeddingRequest,
     EmbeddingResponse,
     ProviderModelInfo,
-} from '../../types';
-import { OllamaAdapter, OllamaModelInfo } from './adapter';
-import { ollamaRequest } from './http';
+} from "../../types/index.js";
+import { OllamaAdapter, OllamaModelInfo } from "./adapter.js";
+import { ollamaRequest } from "./http.js";
 
 export class OllamaProvider extends ProviderAdapter {
     private baseUrl: string;

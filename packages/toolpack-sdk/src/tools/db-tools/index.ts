@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { dbQueryTool } from './tools/query/index.js';
 import { dbSchemaTool } from './tools/schema/index.js';
 import { dbTablesTool } from './tools/tables/index.js';

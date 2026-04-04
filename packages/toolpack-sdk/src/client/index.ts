@@ -1,16 +1,17 @@
 import { EventEmitter } from 'events';
-import { ProviderAdapter } from '../providers/base';
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent } from '../types';
-import { SDKError, ProviderError } from '../errors';
+import { ProviderAdapter } from "../providers/base/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent } from "../types/index.js";
+import { SDKError, ProviderError } from "../errors/index.js";
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolRouter } from '../tools/router.js';
-import { ToolsConfig, DEFAULT_TOOLS_CONFIG, ToolSchema, ToolContext } from '../tools/types.js';
+import type { ToolsConfig, ToolSchema, ToolContext } from "../tools/types.js";
+import { DEFAULT_TOOLS_CONFIG } from "../tools/types.js";
 import { ModeConfig } from '../modes/mode-types.js';
 import { BM25SearchEngine, isToolSearchTool, generateToolCategoriesPrompt } from '../tools/search/index.js';
 import { generateBaseAgentContext } from './base-agent-context.js';
 import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
-import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from '../providers/provider-logger';
+import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from "../providers/provider-logger.js";
 
 let REQUEST_SEQ = 0;
 

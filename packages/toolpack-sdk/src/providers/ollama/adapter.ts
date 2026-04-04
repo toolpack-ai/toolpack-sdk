@@ -6,7 +6,7 @@
  * Framework-agnostic — usable from CLI, web servers, Electron, etc.
  */
 
-import { ProviderAdapter } from '../base';
+import { ProviderAdapter } from "../base/index.js";
 import {
     CompletionRequest,
     CompletionResponse,
@@ -16,14 +16,14 @@ import {
     EmbeddingResponse,
     ProviderModelInfo,
     ToolCallResult,
-} from '../../types';
+} from "../../types/index.js";
 import {
     ConnectionError,
     ProviderError,
     InvalidRequestError,
-} from '../../errors';
-import { logDebug, logTrace, safePreview, logMessagePreview } from '../provider-logger';
-import { ollamaRequest, ollamaStream } from './http';
+} from "../../errors/index.js";
+import { logDebug, logTrace, safePreview, logMessagePreview } from "../provider-logger.js";
+import { ollamaRequest, ollamaStream } from "./http.js";
 
 // ============================================================================
 // Types
@@ -393,7 +393,7 @@ export class OllamaAdapter extends ProviderAdapter {
         // No-op
     }
 
-    private async toOllamaMessage(msg: Message, _options: import('../../types').MediaOptions = {}): Promise<any> {
+    private async toOllamaMessage(msg: Message, _options: import('../../types/index.js').MediaOptions = {}): Promise<any> {
         let content = '';
         const images: string[] = [];
         

@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join, extname } from 'path';
 import { parse } from '@babel/parser';
-import traverse, { NodePath } from '@babel/traverse';
+import * as babelTraverse from '@babel/traverse';
+import type { NodePath } from '@babel/traverse';
+const traverse = (babelTraverse as any).default || babelTraverse;
 import * as t from '@babel/types';
 import { ToolDefinition } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';

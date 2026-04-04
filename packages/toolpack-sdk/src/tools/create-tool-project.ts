@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolProject, ToolProjectDependencies } from './types.js';
+import { ToolDefinition, ToolProject, ToolProjectDependencies } from "./types.js";
 import { logWarn } from '../providers/provider-logger.js';
 
 export function createToolProject(config: {

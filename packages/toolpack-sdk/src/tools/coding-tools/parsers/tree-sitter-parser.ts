@@ -2,7 +2,7 @@ import {
     LanguageParser, ParserContext, SymbolLocation,
     SymbolInfo, ImportInfo, ReferenceInfo, OutlineNode,
     ExportInfo, Diagnostic, ExtractFunctionResult, CallHierarchyNode, CallHierarchyItem
-} from './types.js';
+} from "./types.js";
 import { ParsingContext } from './parsing-context.js';
 import { queries } from './queries/index.js';
 import './queries/python.js';

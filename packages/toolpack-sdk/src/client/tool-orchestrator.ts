@@ -5,7 +5,7 @@
  * while respecting dependencies for sequential execution.
  */
 
-import { ToolCallResult } from '../types';
+import { ToolCallResult } from "../types/index.js";
 
 export interface ToolDependency {
     toolCallId: string;

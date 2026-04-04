@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { execRunTool } from './tools/run/index.js';
 import { execRunShellTool } from './tools/run-shell/index.js';
 import { execRunBackgroundTool } from './tools/run-background/index.js';

@@ -1,4 +1,4 @@
-import { LanguageParser } from './types.js';
+import { LanguageParser } from "./types.js";
 import { detectLanguage } from './language-detector.js';
 import { BabelParser } from './babel-parser.js';
 import { TreeSitterParser } from './tree-sitter-parser.js';

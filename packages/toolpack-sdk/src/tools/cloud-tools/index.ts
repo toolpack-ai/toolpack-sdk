@@ -1,4 +1,4 @@
-import { ToolProject } from '../types.js';
+import type { ToolProject } from "../types.js";
 import { cloudDeployTool } from './tools/deploy/index.js';
 import { cloudStatusTool } from './tools/status/index.js';
 import { cloudListTool } from './tools/list/index.js';

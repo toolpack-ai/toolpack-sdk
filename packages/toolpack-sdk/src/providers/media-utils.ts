@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { ImagePart } from '../types';
-import { InvalidRequestError, ProviderError } from '../errors';
+import { ImagePart } from "../types/index.js";
+import { InvalidRequestError, ProviderError } from "../errors/index.js";
 
 const EXT_TO_MIME: Record<string, string> = {
     '.png': 'image/png',

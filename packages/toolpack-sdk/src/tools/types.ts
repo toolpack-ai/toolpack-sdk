@@ -36,6 +36,12 @@ export interface ToolDefinition {
     parameters: ToolParameters;
     category: string;
     execute: (args: Record<string, any>, ctx?: ToolContext) => Promise<string>;
+    /** 
+     * Whether this tool should be cached after discovery via tool.search.
+     * If false, the tool must be re-discovered each time it's needed.
+     * Default: true
+     */
+    cacheable?: boolean;
 }
 
 /**
@@ -48,6 +54,12 @@ export interface ToolSchema {
     description: string;
     parameters: ToolParameters;
     category: string;
+    /** 
+     * Whether this tool should be cached after discovery via tool.search.
+     * If false, the tool must be re-discovered each time it's needed.
+     * Default: true
+     */
+    cacheable?: boolean;
 }
 
 // ── Tool Project ──────────────────────────────────────────────
