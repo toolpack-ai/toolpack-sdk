@@ -1,4 +1,6 @@
 import { KnowledgeProvider, KnowledgeSource, Embedder, QueryOptions, QueryResult, Chunk } from './interfaces.js';
+import { keywordSearch, combineScores } from './utils/keyword.js';
+import { matchesFilter } from './utils/cosine.js';
 
 export interface KnowledgeOptions {
   provider: KnowledgeProvider;
@@ -9,6 +11,7 @@ export interface KnowledgeOptions {
   onError?: ErrorHandler;
   onSync?: SyncEventHandler;
   onEmbeddingProgress?: EmbeddingProgressHandler;
+  streamingBatchSize?: number;
 }
 
 export type ErrorHandler = (
@@ -71,8 +74,130 @@ export class Knowledge {
   }
 
   async query(text: string, options?: QueryOptions): Promise<QueryResult[]> {
+    const searchType = options?.searchType ?? 'semantic';
+    const semanticWeight = options?.semanticWeight ?? 0.7;
+
+    if (searchType === 'keyword') {
+      return this.keywordQuery(text, options);
+    } else if (searchType === 'hybrid') {
+      const [semanticResults, keywordResults] = await Promise.all([
+        this.semanticQuery(text, options),
+        this.keywordQuery(text, options)
+      ]);
+
+      return this.combineHybridResults(semanticResults, keywordResults, semanticWeight, options);
+    } else {
+      return this.semanticQuery(text, options);
+    }
+  }
+
+  private async semanticQuery(text: string, options?: QueryOptions): Promise<QueryResult[]> {
     const vector = await this.embedder.embed(text);
     return this.provider.query(vector, options);
+  }
+
+  private async keywordQuery(text: string, options?: QueryOptions): Promise<QueryResult[]> {
+    const {
+      limit = 10,
+      threshold = 0.1,
+      filter,
+      includeMetadata = true,
+      includeVectors = false,
+    } = options || {};
+
+    // For keyword search, we need to get all chunks and score them
+    // This is a limitation - in production, you'd want a full-text search index
+    const allChunks = await this.getAllChunks();
+
+    const results: QueryResult[] = [];
+
+    for (const chunk of allChunks) {
+      if (filter && !matchesFilter(chunk.metadata, filter)) {
+        continue;
+      }
+
+      const score = keywordSearch(chunk.content, text);
+
+      if (score >= threshold) {
+        results.push({
+          chunk: {
+            id: chunk.id,
+            content: chunk.content,
+            metadata: includeMetadata ? chunk.metadata : {},
+            vector: includeVectors ? chunk.vector : undefined,
+          },
+          score,
+          distance: 1 - score,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
+  private combineHybridResults(
+    semanticResults: QueryResult[],
+    keywordResults: QueryResult[],
+    semanticWeight: number,
+    options?: QueryOptions
+  ): QueryResult[] {
+    const {
+      limit = 10,
+      threshold = 0.5,
+      includeMetadata = true,
+      includeVectors = false,
+    } = options || {};
+
+    // Create a map of chunk IDs to results for efficient lookup
+    const semanticMap = new Map(semanticResults.map(r => [r.chunk.id, r]));
+    const keywordMap = new Map(keywordResults.map(r => [r.chunk.id, r]));
+
+    const combinedResults: QueryResult[] = [];
+
+    // Combine results from both searches
+    const allIds = new Set([...semanticMap.keys(), ...keywordMap.keys()]);
+
+    for (const id of allIds) {
+      const semanticResult = semanticMap.get(id);
+      const keywordResult = keywordMap.get(id);
+
+      if (!semanticResult && !keywordResult) continue;
+
+      const semanticScore = semanticResult?.score ?? 0;
+      const keywordScore = keywordResult?.score ?? 0;
+      const combinedScore = combineScores(semanticScore, keywordScore, semanticWeight);
+
+      if (combinedScore >= threshold) {
+        combinedResults.push({
+          chunk: {
+            id: id,
+            content: semanticResult?.chunk.content ?? keywordResult!.chunk.content,
+            metadata: includeMetadata ? (semanticResult?.chunk.metadata ?? keywordResult!.chunk.metadata) : {},
+            vector: includeVectors ? (semanticResult?.chunk.vector ?? keywordResult!.chunk.vector) : undefined,
+          },
+          score: combinedScore,
+          distance: 1 - combinedScore,
+        });
+      }
+    }
+
+    combinedResults.sort((a, b) => b.score - a.score);
+    return combinedResults.slice(0, limit);
+  }
+
+  private async getAllChunks(): Promise<Chunk[]> {
+    // This is a simplified implementation - in a real system, you'd want
+    // the provider to support efficient text search
+    if ('getAllChunks' in this.provider) {
+      return (this.provider as any).getAllChunks();
+    }
+
+    // Fallback: query with a dummy vector to get all chunks
+    // This won't work with all providers, but works with our current ones
+    const dummyVector = new Array(this.embedder.dimensions).fill(0);
+    return (await this.provider.query(dummyVector, { limit: 10000, threshold: 0 }))
+      .map(r => r.chunk);
   }
 
   async sync(): Promise<void> {
@@ -83,21 +208,35 @@ export class Knowledge {
       await this.provider.clear();
       await this.provider.validateDimensions(dimensions);
 
-      const allChunks: Chunk[] = [];
-      
+      const batchSize = this.options.streamingBatchSize ?? 100;
+      let totalChunks = 0;
+      const chunkBuffer: Chunk[] = [];
+
       for (const source of this.sources) {
         for await (const chunk of source.load()) {
-          allChunks.push(chunk);
+          chunkBuffer.push(chunk);
+
+          if (chunkBuffer.length >= batchSize) {
+            const embeddedBatch = await this.embedChunks(chunkBuffer);
+            if (embeddedBatch.length > 0) {
+              await this.provider.add(embeddedBatch);
+              totalChunks += embeddedBatch.length;
+            }
+            chunkBuffer.length = 0; // Clear buffer
+          }
         }
       }
 
-      const embeddedChunks = await this.embedChunks(allChunks);
-
-      if (embeddedChunks.length > 0) {
-        await this.provider.add(embeddedChunks);
+      // Process remaining chunks
+      if (chunkBuffer.length > 0) {
+        const embeddedBatch = await this.embedChunks(chunkBuffer);
+        if (embeddedBatch.length > 0) {
+          await this.provider.add(embeddedBatch);
+          totalChunks += embeddedBatch.length;
+        }
       }
 
-      this.options.onSync?.({ type: 'complete', chunksAffected: embeddedChunks.length });
+      this.options.onSync?.({ type: 'complete', chunksAffected: totalChunks });
     } catch (error) {
       this.options.onSync?.({ type: 'error', error: error as Error });
       throw error;

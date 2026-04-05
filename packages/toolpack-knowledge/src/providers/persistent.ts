@@ -155,6 +155,27 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
     this.dimensions = undefined;
   }
 
+  async getAllChunks(): Promise<Chunk[]> {
+    const rows = this.db.prepare('SELECT id, content, metadata, vector FROM chunks').all() as Array<{
+      id: string;
+      content: string;
+      metadata: string;
+      vector: Buffer;
+    }>;
+
+    return rows.map(row => {
+      const metadata = JSON.parse(row.metadata);
+      const vector = new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4);
+
+      return {
+        id: row.id,
+        content: row.content,
+        metadata,
+        vector: Array.from(vector),
+      };
+    });
+  }
+
   shouldReSync(): boolean {
     if (this.options.reSync === false) {
       const count = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get() as { count: number };
