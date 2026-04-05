@@ -6,6 +6,8 @@ import { Plan } from './planning/plan-types.js';
 import { Planner } from './planning/planner.js';
 import { StepExecutor } from './steps/step-executor.js';
 import { StepTracker } from './steps/step-tracker.js';
+import { QueryClassifier } from '../client/query-classifier.js';
+import { extractLastUserText } from '../utils/message-utils.js';
 import { logDebug, logInfo, logWarn } from '../providers/provider-logger.js';
 
 export class WorkflowExecutor extends EventEmitter {
@@ -13,14 +15,16 @@ export class WorkflowExecutor extends EventEmitter {
     private config: WorkflowConfig;
     private planner: Planner;
     private stepExecutor: StepExecutor;
+    private queryClassifier: QueryClassifier;
 
     // For approval flow
     private pendingApprovals = new Map<string, (approved: boolean) => void>();
 
-    constructor(client: AIClient, config: WorkflowConfig) {
+    constructor(client: AIClient, config: WorkflowConfig, queryClassifier?: QueryClassifier) {
         super();
         this.client = client;
         this.config = config;
+        this.queryClassifier = queryClassifier || new QueryClassifier();
         this.planner = new Planner(client, config.planning);
         this.stepExecutor = new StepExecutor(client, config.steps);
     }
@@ -42,9 +46,69 @@ export class WorkflowExecutor extends EventEmitter {
     }
 
     /**
+     * Determine if a query should bypass full workflow and use direct execution.
+     * Routes simple queries to single-step execution for performance optimization.
+     */
+    private shouldRouteSimpleQuery(request: CompletionRequest): boolean {
+        // Check if complexity routing is enabled
+        if (!this.config.complexityRouting?.enabled) {
+            return false;
+        }
+
+        // Strategy 'bypass' means always skip workflow when routing kicks in
+        // Strategy 'single-step' routes to executeDirect (which preserves workflow events)
+        const strategy = this.config.complexityRouting.strategy ?? 'single-step';
+        if (strategy === 'disabled') {
+            return false;
+        }
+
+        // Extract user message and classify
+        const userMessage = extractLastUserText(request.messages);
+        if (!userMessage) {
+            return false;
+        }
+
+        const classification = this.queryClassifier.classify(userMessage);
+        const threshold = this.config.complexityRouting.confidenceThreshold ?? 0.6;
+
+        // Routing logic: type-primary, confidence-secondary
+        // - action: always full workflow (high-stakes operations)
+        // - conversational: always single-step (definitionally simple Q&A)
+        // - analytical: confidence-based (≥threshold = single-step, <threshold = full workflow)
+
+        let shouldRoute = false;
+
+        switch (classification.type) {
+            case 'action':
+                // Action queries are high-stakes — never route
+                shouldRoute = false;
+                break;
+
+            case 'conversational':
+                // Conversational queries are simple by definition — always route
+                shouldRoute = true;
+                break;
+
+            case 'analytical':
+                // Analytical queries use confidence threshold
+                shouldRoute = classification.confidence >= threshold;
+                break;
+        }
+
+        logDebug(`[Workflow] shouldRouteSimpleQuery() type=${classification.type} confidence=${classification.confidence.toFixed(2)} threshold=${threshold} shouldRoute=${shouldRoute} strategy=${strategy}`);
+
+        return shouldRoute;
+    }
+
+    /**
      * Execute a request using the configured workflow.
      */
     async execute(request: CompletionRequest, providerName?: string): Promise<WorkflowResult> {
+        // Check query complexity routing first
+        if (this.shouldRouteSimpleQuery(request)) {
+            return this.executeDirect(request, providerName);
+        }
+
         const planningEnabled = this.config.planning?.enabled;
         const stepsEnabled = this.config.steps?.enabled;
 
@@ -92,7 +156,7 @@ export class WorkflowExecutor extends EventEmitter {
             // If no plan, create implicit steps from the request
             if (!plan) {
                 logDebug('[Workflow] execute() mode=steps-only — creating implicit plan');
-                plan = await this.planner.createImplicitPlan(request, providerName);
+                plan = await this.planner.createPlan(request, providerName);
                 this.emit('workflow:plan_created', plan);
                 plan.status = 'approved';
             }
@@ -314,7 +378,7 @@ export class WorkflowExecutor extends EventEmitter {
                     step.status = 'skipped';
                 }
                 else {
-                    // 'skip' or 'try_alternative' (not fully implemented yet, treating as skip)
+                    // 'skip' - step is marked as skipped and execution continues
                     step.status = 'skipped';
                 }
             }
@@ -477,22 +541,43 @@ Execute this plan now.
     }
 
     /**
-     * Extract the final output from the last completed step.
-     * Returns the actual AI response instead of a workflow summary.
+     * Extract the final output from the plan.
+     * For plans with synthesis step: returns last step output.
+     * For plans without synthesis: concatenates all step outputs.
      */
     private extractFinalOutput(plan: Plan): string | undefined {
-        // Find the last completed step with output
-        for (let i = plan.steps.length - 1; i >= 0; i--) {
-            const step = plan.steps[i];
-            if (step.status === 'completed' && step.result?.output) {
-                return step.result.output;
+        // Check if there's a synthesis step (last step mentions synthesizing)
+        const lastStep = plan.steps[plan.steps.length - 1];
+        const hasSynthesisStep = lastStep &&
+            /synthesize|summarize|consolidate|combine/i.test(lastStep.description) &&
+            plan.steps.length > 1;
+
+        if (hasSynthesisStep) {
+            // Return synthesis step output
+            for (let i = plan.steps.length - 1; i >= 0; i--) {
+                const step = plan.steps[i];
+                if (step.status === 'completed' && step.result?.output) {
+                    return step.result.output;
+                }
+            }
+        } else {
+            // No synthesis step - concatenate all completed step outputs
+            const outputs: string[] = [];
+            for (const step of plan.steps) {
+                if (step.status === 'completed' && step.result?.output) {
+                    outputs.push(step.result.output);
+                }
+            }
+            if (outputs.length > 0) {
+                return outputs.join('\n\n');
             }
         }
+
         // If no steps were executed, return the plan summary directly
-        // (not the verbose "Workflow completed..." format)
         if (plan.steps.length === 0 || plan.steps.every(s => s.status === 'pending')) {
             return plan.summary;
         }
+
         // Fallback to summary if no step output found
         return this.summarizePlanResult(plan);
     }
@@ -598,7 +683,7 @@ Execute this plan now.
         // Case 3: Step-based execution with streaming
         if (stepsEnabled) {
             if (!plan) {
-                plan = await this.planner.createImplicitPlan(request, providerName);
+                plan = await this.planner.createPlan(request, providerName);
                 this.emit('workflow:plan_created', plan);
                 plan.status = 'approved';
             }
@@ -822,9 +907,8 @@ Execute this plan now.
             ]
         };
 
-        yield {
-            delta: `**Plan:**\n${plan.summary}\n\n`,
-        };
+        // Step header is communicated via workflow:plan_created event
+        // (no delta content needed — CLI displays it via event listener)
 
         let fullContent = '';
         for await (const chunk of this.client.stream(request, providerName)) {

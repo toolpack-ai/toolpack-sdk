@@ -3,33 +3,20 @@ import { CompletionRequest, Message, Role } from '../../types/index.js';
 import { Plan, PlanStep } from '../planning/plan-types.js';
 import { WorkflowConfig } from '../workflow-types.js';
 import { StepTracker } from './step-tracker.js';
+import { AGENT_STEP_PROMPT } from '../presets.js';
 import { logDebug, logInfo, logWarn } from '../../providers/provider-logger.js';
 
-const STEP_EXECUTION_PROMPT = `
-You are executing step {stepNumber} of a plan.
-
-Plan summary: {planSummary}
-
-Current step: {stepDescription}
-
-Previous steps completed:
-{previousStepsResults}
-
-Execute this step now. Use the available tools as needed to accomplish this specific step.
-Make reasonable assumptions if any details are ambiguous - do NOT ask the user for clarification or additional input.
-Produce concrete results based on the information available.
-If you cannot complete this step, explain why.
-If you need to add additional steps to the plan, indicate that clearly in your response.
-
-IMPORTANT: Your response should be written as if you are directly answering the user.
-Do NOT mention steps, plans, workflow details, or internal process in your response.
-Do NOT say things like "Step 1 is complete" or "proceeding to the next step".
-Just provide the actual answer or result naturally.
-`;
+const STEP_EXECUTION_PROMPT = AGENT_STEP_PROMPT;
 
 const DYNAMIC_STEPS_PROMPT = `
 Based on the result of the previous step, do we need to add any new steps to our plan before continuing?
 Only add steps if they are absolutely necessary to complete the user's request.
+
+Already planned next steps:
+{{REMAINING_STEPS}}
+
+Only suggest steps if they are NOT covered by the above.
+
 If additional steps are truly required, respond with a JSON object containing the new steps.
 If not necessary or if the plan is sufficient, respond with {"steps": []}.
 
@@ -120,7 +107,10 @@ export class StepExecutor {
     private buildStepRequest(step: PlanStep, plan: Plan, baseRequest: CompletionRequest): CompletionRequest {
         const previousResults = StepTracker.summarizeCompletedSteps(plan, step.id);
 
-        const systemPrompt = STEP_EXECUTION_PROMPT
+        // Use custom stepPrompt if configured, otherwise use default
+        const promptTemplate = this.config?.stepPrompt || STEP_EXECUTION_PROMPT;
+
+        const systemPrompt = promptTemplate
             .replace('{stepNumber}', step.number.toString())
             .replace('{planSummary}', plan.summary)
             .replace('{stepDescription}', step.description)
@@ -146,7 +136,7 @@ export class StepExecutor {
                 }
                 conversationHistory.push({
                     role: 'assistant' as Role,
-                    content: `[Step ${prevStep.number}: ${prevStep.description}]\n${output}`,
+                    content: output,
                 });
                 conversationHistory.push({
                     role: 'user' as Role,
@@ -188,7 +178,13 @@ export class StepExecutor {
 
         logDebug(`[StepExecutor] checkForDynamicSteps() after step=${step.number} currentTotal=${currentTotal} max=${max}`);
 
-        const prompt = DYNAMIC_STEPS_PROMPT;
+        // Get remaining steps for context
+        const remainingSteps = plan.steps
+            .filter(s => s.status === 'pending' && s.number > step.number)
+            .map(s => `${s.number}. ${s.description}`)
+            .join('\n') || 'None';
+        
+        const prompt = DYNAMIC_STEPS_PROMPT.replace('{{REMAINING_STEPS}}', remainingSteps);
         // Use full conversation history for dynamic step check
         const checkSystemMessages = baseRequest.messages.filter(m => m.role === 'system');
         const checkHistoryMessages = baseRequest.messages.filter(m => m.role !== 'system');

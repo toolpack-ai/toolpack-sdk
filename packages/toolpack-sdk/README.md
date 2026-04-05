@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 77 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 79 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -17,7 +17,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **77 Built-in Tools** across 10 categories:
+- **79 Built-in Tools** across 10 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -32,6 +32,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
+| **`mcp-tools`** | 2 | MCP integration — createMcpToolProject, disconnectMcpToolProject |
 
 ## Quick Start
 
@@ -57,7 +58,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 77 built-in tools
+  tools: true,         // Load all 79 built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -229,13 +230,14 @@ const reasoningModels = allModels.filter(m => m.reasoningTier);
 
 ## Modes
 
-Modes control AI behavior by setting a system prompt, filtering available tools, and configuring the workflow engine. The SDK ships with two built-in modes and supports unlimited custom modes.
+Modes control AI behavior by setting a system prompt, filtering available tools, and configuring the workflow engine. The SDK ships with three built-in modes and supports unlimited custom modes.
 
 ### Built-in Modes
 
 | Mode | Tools | Workflow | Description |
 |------|-------|----------|-------------|
 | **Agent** | All tools | Planning + step execution + dynamic steps | Full autonomous access — read, write, execute, browse |
+| **Coding** | All tools | Concise planning + step execution | Optimized for coding tasks — minimal text, file operations |
 | **Chat** | Web/HTTP only | Direct execution (no planning) | Conversational assistant with web access |
 
 ### Custom Modes
@@ -402,10 +404,87 @@ interface WorkflowConfig {
   };
 
   onFailure?: {
-    strategy: 'abort' | 'skip' | 'ask_user' | 'try_alternative';
+    strategy: 'abort' | 'skip' | 'ask_user';
   };
 }
 ```
+
+### Custom Workflow Presets
+
+The SDK provides built-in workflow presets for common use cases:
+
+```typescript
+import { DEFAULT_WORKFLOW, AGENT_WORKFLOW, CODING_WORKFLOW, CHAT_WORKFLOW } from 'toolpack-sdk';
+```
+
+| Preset | Planning | Steps | Description |
+|--------|----------|-------|-------------|
+| `DEFAULT_WORKFLOW` | Disabled | Disabled | Direct execution, no planning |
+| `AGENT_WORKFLOW` | Enabled (detailed) | Enabled | Full autonomous agent with 11 planning rules |
+| `CODING_WORKFLOW` | Enabled (concise) | Enabled | Minimal prompts optimized for coding tasks |
+| `CHAT_WORKFLOW` | Disabled | Disabled | Simple conversational mode |
+
+### Creating Custom Workflows
+
+Define custom workflows by extending presets or creating from scratch:
+
+```typescript
+import { WorkflowConfig, AGENT_WORKFLOW } from 'toolpack-sdk';
+
+// Extend an existing preset
+const DOC_WORKFLOW: WorkflowConfig = {
+  ...AGENT_WORKFLOW,
+  name: 'Documentation',
+  planning: {
+    enabled: true,
+    planningPrompt: `Create a documentation plan.
+
+Rules:
+1. Read existing code files first
+2. Identify public APIs needing documentation
+3. Generate docs in consistent format
+4. Output JSON: {"summary": "...", "steps": [...]}`,
+  },
+  steps: {
+    ...AGENT_WORKFLOW.steps,
+    stepPrompt: `Execute step {stepNumber}: {stepDescription}
+
+Analyze code and write clear documentation.
+Focus on: purpose, parameters, return values, examples.
+
+Previous: {previousStepsResults}`,
+  },
+};
+
+// Use in a custom mode
+import { createMode } from 'toolpack-sdk';
+
+const docMode = createMode({
+  name: 'docs',
+  displayName: 'Documentation',
+  systemPrompt: 'Documentation assistant. Generate clear API docs.',
+  workflow: DOC_WORKFLOW,
+  allowedToolCategories: ['filesystem', 'coding'],
+});
+```
+
+### Step Prompt Template Variables
+
+When using custom `stepPrompt`, these variables are automatically substituted:
+
+| Variable | Description |
+|----------|-------------|
+| `{stepNumber}` | Current step number (1-indexed) |
+| `{planSummary}` | Summary of the overall plan |
+| `{stepDescription}` | Description of the current step |
+| `{previousStepsResults}` | Output from completed steps (truncated to 2000 chars) |
+
+### Workflow Prompt Tips
+
+- **Keep planning prompts concise** — LLMs perform better with 5-7 clear rules
+- **Use JSON schema examples** — Include the exact expected output format
+- **Avoid meta-commentary in step prompts** — The AI should just execute, not discuss
+- **Leverage previous results** — The `{previousStepsResults}` variable provides context
 
 ## Tool Call Events
 
@@ -429,7 +508,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 77 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 79 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -484,6 +563,48 @@ const sdk = await Toolpack.init({
 | `author` | string | | Author name |
 | `tools` | ToolDefinition[] | ✓ | Array of tool definitions |
 | `dependencies` | Record<string, string> | | npm dependencies (validated at load) |
+
+## Knowledge & RAG (Retrieval-Augmented Generation)
+
+For AI applications that need to search and reference documentation, use the companion `@toolpack-sdk/knowledge` package:
+
+```bash
+npm install @toolpack-sdk/knowledge
+```
+
+### Quick Start
+
+```typescript
+import { Knowledge, MemoryProvider, MarkdownSource, OllamaEmbedder } from '@toolpack-sdk/knowledge';
+import { Toolpack } from 'toolpack-sdk';
+
+// Create a knowledge base from markdown files
+const kb = await Knowledge.create({
+  provider: new MemoryProvider(),
+  sources: [new MarkdownSource('./docs/**/*.md')],
+  embedder: new OllamaEmbedder({ model: 'nomic-embed-text' }),
+  description: 'Search this for setup and configuration questions.',
+});
+
+// Integrate with Toolpack SDK
+const toolpack = await Toolpack.init({
+  provider: 'openai',
+  knowledge: kb,  // Registered as knowledge_search tool
+});
+
+// The AI can now search your documentation
+const response = await toolpack.chat('How do I configure authentication?');
+```
+
+### Features
+
+- **Multiple Providers**: In-memory (`MemoryProvider`) or persistent SQLite (`PersistentKnowledgeProvider`)
+- **Multiple Embedders**: OpenAI, Ollama (local), or custom embedders
+- **Multiple Sources**: Markdown, JSON, SQLite ingestion
+- **Progress Events**: Track embedding progress with `onEmbeddingProgress`
+- **Metadata Filtering**: Query with filters like `{ hasCode: true, category: 'api' }`
+
+See the [Knowledge package README](../toolpack-knowledge/README.md) for full documentation.
 
 ## Multimodal Support
 
@@ -807,7 +928,7 @@ toolpack-sdk/
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
-│   ├── tools/             # 72 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 79 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
 │   │   ├── git-tools/     # Git operations (9 tools)
@@ -833,9 +954,9 @@ toolpack-sdk/
 **Current Version:** 0.1.0
 
 - ✓ **4 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama (+ custom provider API)
-- ✓ **77 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system
+- ✓ **79 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system
 - ✓ **Workflow Engine** — AI-driven planning, step execution, retries, dynamic steps, progress events
-- ✓ **Mode System** — Agent, Chat, and custom modes via `createMode()` with `blockAllTools` support
+- ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support
 - ✓ **Tool Search** — BM25-based on-demand tool discovery for large tool libraries
 - ✓ **545 Tests** passing across 81 test files
 

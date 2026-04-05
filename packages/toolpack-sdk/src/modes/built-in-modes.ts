@@ -1,4 +1,5 @@
 import { ModeConfig } from './mode-types.js';
+import { AGENT_WORKFLOW, CODING_WORKFLOW, CHAT_WORKFLOW } from '../workflows/presets.js';
 
 /**
  * Built-in mode: Agent
@@ -28,15 +29,7 @@ export const AGENT_MODE: ModeConfig = {
         includeWorkingDirectory: true,
         includeToolCategories: true,
     },
-    workflow: {
-        planning: { enabled: true },
-        steps: {
-            enabled: true,
-            retryOnFailure: true,
-            allowDynamicSteps: true,
-        },
-        progress: { enabled: true },
-    },
+    workflow: AGENT_WORKFLOW,
     toolSearch: {
         alwaysLoadedTools: [
             'fs.read_file',
@@ -79,14 +72,55 @@ export const CHAT_MODE: ModeConfig = {
         includeWorkingDirectory: false,
         includeToolCategories: true,
     },
-    workflow: {
-        planning: { enabled: false },
-        steps: { enabled: false },
-    },
+    workflow: CHAT_WORKFLOW,
     toolSearch: {
         alwaysLoadedTools: [
             'web.search',
-            'web.fetch'
+            'web.fetch',
+            'fs.read_file',
+            'fs.list_dir',
+        ]
+    },
+};
+
+/**
+ * Built-in mode: Coding
+ *
+ * Optimized for software development tasks. Uses concise step outputs with
+ * minimal conversational text. Each step produces focused technical output,
+ * and only the final step provides a summary of execution. Ideal for coding,
+ refactoring, debugging, and file manipulation tasks where brevity matters.
+ */
+export const CODING_MODE: ModeConfig = {
+    name: 'coding',
+    displayName: 'Coding',
+    description: 'Concise coding mode — minimal text, focused on file operations and code changes',
+    systemPrompt: [
+        'Coding assistant. Use tools to modify code.',
+        'Be concise. No conversational filler.',
+        'Show code changes clearly.',
+    ].join(' '),
+    allowedToolCategories: [],
+    blockedToolCategories: [],
+    allowedTools: [],
+    blockedTools: [],
+    blockAllTools: false,
+    baseContext: {
+        includeWorkingDirectory: true,
+        includeToolCategories: true,
+    },
+    workflow: CODING_WORKFLOW,
+    toolSearch: {
+        alwaysLoadedTools: [
+            'coding.read_code',
+            'coding.search_code',
+            'fs.read_file',
+            'fs.write_file',
+            'fs.list_dir',
+            'skill.search',
+            'skill.read',
+            'web.search',
+            'web.fetch',
         ]
     },
 };
@@ -94,10 +128,14 @@ export const CHAT_MODE: ModeConfig = {
 /**
  * All built-in modes.
  *
- * Two modes: Agent (full access + workflow) and Chat (web access only)
+ * Three modes:
+ * - Agent (full access + workflow)
+ * - Coding (concise, coding-focused workflow)
+ * - Chat (web access only)
  */
 export const BUILT_IN_MODES: readonly ModeConfig[] = [
     AGENT_MODE,
+    CODING_MODE,
     CHAT_MODE,
 ];
 

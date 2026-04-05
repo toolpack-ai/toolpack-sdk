@@ -11,6 +11,7 @@ import { BM25SearchEngine, isToolSearchTool, generateToolCategoriesPrompt } from
 import { generateBaseAgentContext } from './base-agent-context.js';
 import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
+import { extractLastUserText } from '../utils/message-utils.js';
 import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from "../providers/provider-logger.js";
 
 let REQUEST_SEQ = 0;
@@ -27,23 +28,6 @@ function logRequestMessages(requestId: string, messages: CompletionRequest['mess
         const preview = safePreview((m as any).content, 300);
         logDebug(`[AIClient][${requestId}]  #${i} role=${(m as any).role} content=${preview}`);
     });
-}
-
-function extractLastUserText(messages: CompletionRequest['messages']): string {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const m: any = messages[i];
-        if (m?.role !== 'user') continue;
-        const c = m?.content;
-        if (typeof c === 'string') return c;
-        if (Array.isArray(c)) {
-            return c
-                .map((p: any) => (p?.type === 'text' ? p.text : ''))
-                .filter(Boolean)
-                .join('\n');
-        }
-        return '';
-    }
-    return '';
 }
 
 function inferNeedsTools(messages: CompletionRequest['messages']): boolean {
@@ -323,6 +307,13 @@ export class AIClient extends EventEmitter {
      */
     getMode(): ModeConfig | null {
         return this.activeMode;
+    }
+
+    /**
+     * Get the query classifier instance.
+     */
+    getQueryClassifier(): QueryClassifier {
+        return this.queryClassifier;
     }
 
     /**

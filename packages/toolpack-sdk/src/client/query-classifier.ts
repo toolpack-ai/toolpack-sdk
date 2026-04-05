@@ -57,10 +57,16 @@ export class QueryClassifier {
 
         // Determine type based on scores
         if (analyticalScore > actionScore && analyticalScore > 0) {
+            let confidence = Math.min(analyticalConfidence, 1.0);
+            // Guard: Cap confidence if action patterns also fired to prevent false routing
+            // of queries like "analyze this code and fix all the bugs"
+            if (actionScore > 0) {
+                confidence = Math.min(confidence, 0.5);
+            }
             return {
                 type: 'analytical',
-                confidence: Math.min(analyticalConfidence, 1.0),
-                reasoning: `Matched ${analyticalScore} analytical patterns`,
+                confidence,
+                reasoning: `Matched ${analyticalScore} analytical patterns${actionScore > 0 ? `, ${actionScore} action patterns (capped confidence)` : ''}`,
             };
         } else if (actionScore > analyticalScore && actionScore > 0) {
             return {

@@ -149,7 +149,7 @@ export class Toolpack extends EventEmitter {
         }
 
         // Initialize WorkflowExecutor
-        this.workflowExecutor = new WorkflowExecutor(this.client, DEFAULT_WORKFLOW_CONFIG);
+        this.workflowExecutor = new WorkflowExecutor(this.client, DEFAULT_WORKFLOW_CONFIG, this.client.getQueryClassifier());
         this.forwardWorkflowEvents();
     }
 

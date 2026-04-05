@@ -2,35 +2,10 @@ import { AIClient } from '../../client/index.js';
 import { CompletionRequest } from '../../types/index.js';
 import { Plan, PlanStep } from './plan-types.js';
 import { WorkflowConfig } from '../workflow-types.js';
+import { AGENT_PLANNING_PROMPT } from '../presets.js';
 import { logDebug, logInfo, logWarn } from '../../providers/provider-logger.js';
 
-const DEFAULT_PLANNING_PROMPT = `
-You are a planning assistant. Given a user request, create a detailed step-by-step plan.
-
-Rules:
-1. Break the task into clear, actionable steps
-2. Each step should be independently executable WITHOUT requiring additional user input
-3. Order steps by dependencies (what must happen first)
-4. Be specific about what each step will accomplish
-5. Estimate which tools will be needed for each step
-6. If the user's request is ambiguous, make reasonable assumptions and proceed - do NOT create steps that ask for clarification
-7. Steps should produce concrete outputs, not ask questions or wait for user input
-8. ALWAYS include at least one step, even for simple questions. For simple factual questions, create a single step like "Provide the answer to [question]"
-9. When a step uses information gathered by a previous step, set "dependsOn" to that step's number and phrase the description as "Using the [data] from step N, [do something]" instead of gathering it again
-10. The final step must synthesize the workflow's results into a concise deliverable, avoiding redundant word-for-word repetition of earlier step outputs
-11. The exact result MUST be valid JSON matching this schema:
-{
-  "summary": "Brief description of the overall goal",
-  "steps": [
-    {
-      "number": 1,
-      "description": "What this step does",
-      "expectedTools": ["tool.name"],
-      "dependsOn": []
-    }
-  ]
-}
-`;
+const DEFAULT_PLANNING_PROMPT = AGENT_PLANNING_PROMPT;
 
 export class Planner {
     private client: AIClient;
@@ -77,15 +52,6 @@ export class Planner {
             logWarn(`[Planner] createPlan() failed, using fallback: ${(error as Error).message}`);
             return this.createFallbackPlan(request);
         }
-    }
-
-    /**
-     * Create a lightweight implicit plan when steps are enabled but planning phase is skipped.
-     */
-    async createImplicitPlan(request: CompletionRequest, providerName?: string): Promise<Plan> {
-        // Fallback or simplified logic can go here. For now, we reuse the robust createPlan logic
-        // but it could be optimized in the future.
-        return this.createPlan(request, providerName);
     }
 
     private parsePlan(jsonString: string, originalRequest: CompletionRequest, planningResponse?: import('../../types/index.js').CompletionResponse): Plan {

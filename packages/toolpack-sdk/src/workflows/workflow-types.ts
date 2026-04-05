@@ -3,6 +3,10 @@ import { CompletionResponse } from '../types/index.js';
 
 export interface WorkflowConfig {
     /**
+     * Workflow name for display purposes.
+     */
+    name?: string;
+    /**
      * Planning phase configuration.
      * If enabled, AI generates a plan before executing.
      */
@@ -39,6 +43,9 @@ export interface WorkflowConfig {
 
         /** Maximum total steps (including dynamic). Default: 50 */
         maxTotalSteps?: number;
+
+        /** Custom step execution prompt. Default: uses built-in STEP_EXECUTION_PROMPT */
+        stepPrompt?: string;
     };
 
     /**
@@ -57,10 +64,22 @@ export interface WorkflowConfig {
      */
     onFailure?: {
         /** Strategy when a step fails after all retries. Default: 'abort' */
-        strategy: 'abort' | 'skip' | 'ask_user' | 'try_alternative';
+        strategy: 'abort' | 'skip' | 'ask_user';
+    };
 
-        /** If 'try_alternative', allow AI to choose a different approach */
-        allowAlternativePath?: boolean;
+    /**
+     * Query complexity routing configuration.
+     * Routes simple queries to faster execution paths based on query classification.
+     */
+    complexityRouting?: {
+        /** Enable complexity-based routing. Default: false (opt-in) */
+        enabled: boolean;
+
+        /** Routing strategy for simple queries. Default: 'single-step' */
+        strategy: 'single-step' | 'bypass' | 'disabled';
+
+        /** Confidence threshold for routing analytical queries. Default: 0.6 */
+        confidenceThreshold?: number;
     };
 }
 
