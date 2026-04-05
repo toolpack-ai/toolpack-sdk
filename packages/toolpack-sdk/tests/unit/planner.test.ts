@@ -142,11 +142,11 @@ describe('Planner', () => {
         });
     });
 
-    describe('createImplicitPlan', () => {
-        it('should create a single-step implicit plan', async () => {
+    describe('createPlan', () => {
+        it('should create a single-step plan', async () => {
             const planner = new Planner(client, { enabled: false });
 
-            const plan = await planner.createImplicitPlan({
+            const plan = await planner.createPlan({
                 messages: [{ role: 'user', content: 'Simple task' }],
                 model: 'test',
             });
