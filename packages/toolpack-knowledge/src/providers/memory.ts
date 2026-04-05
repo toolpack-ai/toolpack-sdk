@@ -87,4 +87,11 @@ export class MemoryProvider implements KnowledgeProvider {
     this.chunks.clear();
     this.dimensions = undefined;
   }
+
+  async getAllChunks(): Promise<Chunk[]> {
+    return Array.from(this.chunks.values()).map(({ chunk, vector }) => ({
+      ...chunk,
+      vector,
+    }));
+  }
 }

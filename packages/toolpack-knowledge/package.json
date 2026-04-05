@@ -31,7 +31,11 @@
     "embeddings",
     "vector-search",
     "knowledge-base",
-    "sdk"
+    "sdk",
+    "web-crawling",
+    "api-indexing",
+    "hybrid-search",
+    "streaming-ingestion"
   ],
   "engines": {
     "node": ">=20"
@@ -48,6 +52,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
+    "cheerio": "^1.0.0-rc.12",
     "fast-glob": "^3.3.3",
     "openai": "^6.18.0"
   },
