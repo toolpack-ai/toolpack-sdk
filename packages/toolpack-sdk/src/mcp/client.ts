@@ -79,6 +79,10 @@ export class McpClient extends EventEmitter {
         return this._connected && this.process !== null;
     }
 
+    private async initializeServer(): Promise<void> {
+        await this.request('initialize', { client: 'toolpack-sdk' });
+    }
+
     // ======================================================================
     // Connection
     // ======================================================================
@@ -88,62 +92,55 @@ export class McpClient extends EventEmitter {
             throw new McpConnectionError('Client is shutting down');
         }
 
-        return new Promise((resolve, reject) => {
-            try {
-                this.buffer = '';
-                this.process = spawn(this.config.command, this.config.args || [], {
-                    env: { ...process.env, ...this.config.env },
-                    stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
-                });
+        this.buffer = '';
+        this.process = spawn(this.config.command, this.config.args || [], {
+            env: { ...process.env, ...this.config.env },
+            stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
+        });
 
-                if (!this.process.stdout || !this.process.stdin) {
-                    throw new McpConnectionError('Failed to spawn MCP server: stdout/stdin unavailable');
-                }
+        if (!this.process.stdout || !this.process.stdin) {
+            throw new McpConnectionError('Failed to spawn MCP server: stdout/stdin unavailable');
+        }
 
-                this.process.stdout.on('data', (data: Buffer) => {
-                    this.handleData(data);
-                });
+        this.process.stdout.on('data', (data: Buffer) => {
+            this.handleData(data);
+        });
 
-                // Route child stderr through logger instead of inheriting
-                // (inherited stderr corrupts Ink TUI rendering)
-                if (this.process.stderr) {
-                    this.process.stderr.on('data', (data: Buffer) => {
-                        logWarn(`[MCP server stderr] ${data.toString().trim()}`);
-                    });
-                }
+        // Route child stderr through logger instead of inheriting
+        // (inherited stderr corrupts Ink TUI rendering)
+        if (this.process.stderr) {
+            this.process.stderr.on('data', (data: Buffer) => {
+                logWarn(`[MCP server stderr] ${data.toString().trim()}`);
+            });
+        }
 
-                this.process.on('error', (err) => {
-                    this._connected = false;
-                    this.emit('error', err);
-                });
+        this.process.on('error', (err) => {
+            this._connected = false;
+            this.emit('error', err);
+        });
 
-                this.process.on('exit', (code) => {
-                    const wasConnected = this._connected;
-                    this._connected = false;
-                    this.process = null;
+        this.process.on('exit', (code) => {
+            const wasConnected = this._connected;
+            this._connected = false;
+            this.process = null;
 
-                    // Reject all pending requests
-                    this.rejectAllPending(
-                        new McpConnectionError(`MCP server exited with code ${code}`, code)
-                    );
+            // Reject all pending requests
+            this.rejectAllPending(
+                new McpConnectionError(`MCP server exited with code ${code}`, code)
+            );
 
-                    this.emit('close', code);
+            this.emit('close', code);
 
-                    // Auto-reconnect on unexpected crash
-                    if (wasConnected && !this._shuttingDown && this.autoReconnect) {
-                        this.attemptReconnect();
-                    }
-                });
-
-                this._connected = true;
-                this._reconnectAttempts = 0;
-
-                // Give it a moment to start
-                setTimeout(resolve, 500);
-            } catch (error) {
-                reject(error);
+            // Auto-reconnect on unexpected crash
+            if (wasConnected && !this._shuttingDown && this.autoReconnect) {
+                this.attemptReconnect();
             }
         });
+
+        this._reconnectAttempts = 0;
+
+        await this.initializeServer();
+        this._connected = true;
     }
 
     // ======================================================================

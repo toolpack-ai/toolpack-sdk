@@ -43,6 +43,7 @@ export class McpToolManager {
     private clients = new Map<string, McpClient>();
     private serverConfigs = new Map<string, McpServerConfig>();
     private toolDefinitions = new Map<string, ToolDefinition>();
+    private toolOwners = new Map<string, string>();
     
     constructor(private config: McpToolsConfig) {}
     
@@ -67,21 +68,9 @@ export class McpToolManager {
             // Connect to the server
             await client.connect();
             
-            // Discover available tools
-            const toolsResponse = await client.request('tools/list');
-            const mcpTools: McpTool[] = toolsResponse?.tools || [];
-            
-            logInfo(`[MCP] Discovered ${mcpTools.length} tools from ${name}`);
-            
-            // Convert MCP tools to Toolpack tools
-            const prefix = toolPrefix || `mcp.${name}.`;
-            for (const mcpTool of mcpTools) {
-                const toolDef = this.convertMcpTool(mcpTool, name, prefix, client);
-                this.toolDefinitions.set(toolDef.name, toolDef);
-            }
-            
             this.clients.set(name, client);
             this.serverConfigs.set(name, serverConfig);
+            await this.discoverServerTools(name, client, serverConfig);
             
         } catch (error) {
             logError(`[MCP] Failed to connect to ${name}: ${error}`);
@@ -113,9 +102,10 @@ export class McpToolManager {
         logInfo(`[MCP] Disconnecting from ${name}`);
         
         // Remove tools from this server
-        for (const [toolName, toolDef] of this.toolDefinitions) {
-            if (toolDef.name.includes(name)) {
+        for (const [toolName, owner] of this.toolOwners) {
+            if (owner === name) {
                 this.toolDefinitions.delete(toolName);
+                this.toolOwners.delete(toolName);
             }
         }
         
@@ -195,31 +185,74 @@ export class McpToolManager {
      * Set up event handlers for an MCP client
      */
     private setupClientEvents(client: McpClient, serverName: string): void {
-        // McpClient extends EventEmitter, so we can use .on()
-        (client as any).on('error', (error: any) => {
+        client.on('error', (error: any) => {
             logError(`[MCP] ${serverName} error: ${error}`);
         });
         
-        (client as any).on('close', (code: any) => {
+        client.on('close', (code: any) => {
             logWarn(`[MCP] ${serverName} closed with code ${code}`);
         });
         
-        (client as any).on('reconnecting', ({ attempt, max }: any) => {
+        client.on('reconnecting', ({ attempt, max }: any) => {
             logInfo(`[MCP] ${serverName} reconnecting (${attempt}/${max})`);
         });
         
-        (client as any).on('reconnected', ({ attempt }: any) => {
+        client.on('reconnected', ({ attempt }: any) => {
             logInfo(`[MCP] ${serverName} reconnected after ${attempt} attempts`);
+            this.refreshServerTools(serverName).catch(err => {
+                logError(`[MCP] ${serverName} tool refresh failed after reconnect: ${err}`);
+            });
         });
         
-        (client as any).on('reconnect_failed', (attempts: any) => {
+        client.on('reconnect_failed', (attempts: any) => {
             logError(`[MCP] ${serverName} failed to reconnect after ${attempts} attempts`);
         });
         
-        (client as any).on('notification', (message: any) => {
+        client.on('notification', (message: any) => {
             logInfo(`[MCP] ${serverName} notification: ${JSON.stringify(message)}`);
         });
     }
+
+    private removeServerToolDefinitions(serverName: string): void {
+        for (const [toolName, owner] of this.toolOwners) {
+            if (owner === serverName) {
+                this.toolDefinitions.delete(toolName);
+                this.toolOwners.delete(toolName);
+            }
+        }
+    }
+
+    private async discoverServerTools(
+        serverName: string,
+        client: McpClient,
+        serverConfig: McpServerConfig
+    ): Promise<void> {
+        const toolsResponse = await client.request('tools/list');
+        const mcpTools: McpTool[] = toolsResponse?.tools || [];
+
+        logInfo(`[MCP] Discovered ${mcpTools.length} tools from ${serverName}`);
+
+        this.removeServerToolDefinitions(serverName);
+
+        const prefix = serverConfig.toolPrefix || `mcp.${serverName}.`;
+        for (const mcpTool of mcpTools) {
+            const toolDef = this.convertMcpTool(mcpTool, serverName, prefix, client);
+            this.toolDefinitions.set(toolDef.name, toolDef);
+            this.toolOwners.set(toolDef.name, serverName);
+        }
+    }
+
+    private async refreshServerTools(serverName: string): Promise<void> {
+        const client = this.clients.get(serverName);
+        const serverConfig = this.serverConfigs.get(serverName);
+        if (!client || !serverConfig) return;
+
+        await this.discoverServerTools(serverName, client, serverConfig);
+    }
+}
+
+export interface McpToolProject extends ToolProject {
+    mcpManager: McpToolManager;
 }
 
 /**
@@ -253,7 +286,7 @@ export class McpToolManager {
  */
 export async function createMcpToolProject(
     config: McpToolsConfig
-): Promise<ToolProject> {
+): Promise<McpToolProject> {
     const manager = new McpToolManager(config);
     
     // Connect to all servers
@@ -262,7 +295,7 @@ export async function createMcpToolProject(
     // Get all tool definitions
     const tools = manager.getToolDefinitions();
     
-    const project: ToolProject = {
+    const project: McpToolProject = {
         manifest: {
             key: 'mcp-tools',
             name: 'mcp-tools',
@@ -274,10 +307,8 @@ export async function createMcpToolProject(
             tools: tools.map(t => t.name),
         },
         tools,
+        mcpManager: manager,
     };
-    
-    // Store manager for lifecycle management (non-standard property)
-    (project as any)._mcpManager = manager;
     
     return project;
 }
@@ -285,9 +316,8 @@ export async function createMcpToolProject(
 /**
  * Disconnect all MCP servers in a tool project
  */
-export async function disconnectMcpToolProject(project: ToolProject): Promise<void> {
-    const manager = (project as any)._mcpManager as McpToolManager | undefined;
-    if (manager) {
-        await manager.disconnectAll();
+export async function disconnectMcpToolProject(project: ToolProject | McpToolProject): Promise<void> {
+    if ('mcpManager' in project) {
+        await project.mcpManager.disconnectAll();
     }
 }

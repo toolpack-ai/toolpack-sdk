@@ -23,6 +23,10 @@ vi.mock('../../mcp/client.js', async () => {
         }
         
         async request(method: string): Promise<any> {
+            if (method === 'initialize') {
+                return { initialized: true };
+            }
+
             if (method === 'tools/list') {
                 return {
                     tools: [
@@ -291,6 +295,35 @@ describe('McpToolManager', () => {
             const serverTools = toolsAfter.filter(t => t.name.includes('test-server'));
             expect(serverTools).toHaveLength(0);
         });
+
+        it('should only remove exact server tools when disconnecting', async () => {
+            const config: McpToolsConfig = {
+                servers: [],
+            };
+
+            manager = new McpToolManager(config);
+
+            await manager.connectServer({
+                name: 'test',
+                command: 'node',
+                args: ['test.js'],
+            });
+
+            await manager.connectServer({
+                name: 'test-server',
+                command: 'node',
+                args: ['test.js'],
+            });
+
+            await manager.disconnectServer('test');
+
+            const toolsAfter = manager.getToolDefinitions();
+            const exactServerTools = toolsAfter.filter(t => t.name.startsWith('mcp.test-server.'));
+            expect(exactServerTools.length).toBeGreaterThan(0);
+
+            const removedTools = toolsAfter.filter(t => t.name.startsWith('mcp.test.'));
+            expect(removedTools.every(t => t.name.startsWith('mcp.test-server.'))).toBe(true);
+        });
         
         it('should disconnect from all servers', async () => {
             const config: McpToolsConfig = {
@@ -355,6 +388,48 @@ describe('McpToolManager', () => {
             expect(result).toBeDefined();
             expect(typeof result).toBe('string');
         });
+
+        it('should refresh tools after reconnecting', async () => {
+            const config: McpToolsConfig = {
+                servers: [
+                    {
+                        name: 'test-server',
+                        command: 'node',
+                        args: ['test.js'],
+                    },
+                ],
+            };
+
+            manager = new McpToolManager(config);
+            await manager.connectServer(config.servers[0]);
+
+            const client = (manager as any).clients.get('test-server');
+            client.request = async (method: string): Promise<any> => {
+                if (method === 'tools/list') {
+                    return {
+                        tools: [
+                            {
+                                name: 'updated_tool',
+                                description: 'Updated tool after reconnect',
+                                inputSchema: { type: 'object', properties: {}, required: [] },
+                            },
+                        ],
+                    };
+                }
+
+                if (method === 'initialize') {
+                    return { initialized: true };
+                }
+                throw new Error(`Unknown method: ${method}`);
+            };
+
+            client.emit('reconnected', { attempt: 1 });
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const tools = manager.getToolDefinitions();
+            expect(tools.some(t => t.name.includes('updated_tool'))).toBe(true);
+            expect(tools.some(t => t.name.includes('test_tool'))).toBe(false);
+        });
     });
 });
 
@@ -395,10 +470,10 @@ describe('createMcpToolProject', () => {
             ],
         };
         
-        const project = await createMcpToolProject(config);
+        const project = await createMcpToolProject(config) as any;
         
-        expect((project as any)._mcpManager).toBeDefined();
-        expect((project as any)._mcpManager).toBeInstanceOf(McpToolManager);
+        expect(project.mcpManager).toBeDefined();
+        expect(project.mcpManager).toBeInstanceOf(McpToolManager);
         
         // Cleanup
         await disconnectMcpToolProject(project);
@@ -437,7 +512,7 @@ describe('createMcpToolProject', () => {
         
         expect(project.tools.length).toBeGreaterThan(0);
         
-        const manager = (project as any)._mcpManager;
+        const manager = (project as any).mcpManager;
         expect(manager.getConnectedServers()).toHaveLength(2);
         
         // Cleanup
@@ -458,7 +533,7 @@ describe('disconnectMcpToolProject', () => {
         };
         
         const project = await createMcpToolProject(config);
-        const manager = (project as any)._mcpManager;
+        const manager = (project as any).mcpManager;
         
         expect(manager.getConnectedServers()).toHaveLength(1);
         
