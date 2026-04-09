@@ -31,4 +31,9 @@ export const dbUpdateTool: ToolDefinition = {
             return `Database update error: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'high',
+        reason: 'This will update database rows, potentially affecting multiple records.',
+        showArgs: ['table', 'data', 'where'],
+    },
 };

@@ -8,11 +8,29 @@ const CONFIG_FILENAME = 'toolpack.config.json';
 // Types
 // ============================================================================
 
+export type ConfirmationLevel = 'high' | 'medium';
+
 export interface OllamaModelConfig {
     /** Model name as used by Ollama, e.g. 'llama3', 'phi3:mini' */
     model: string;
     /** Display label for the UI */
     label?: string;
+}
+
+export interface HitlConfig {
+    /** Master switch. Default: true */
+    enabled?: boolean;
+    /** Confirmation mode. Default: 'all' */
+    confirmationMode?: 'off' | 'high-only' | 'all';
+    /** Bypass rules for specific tools, categories, or risk levels */
+    bypass?: {
+        /** Tool keys to bypass (e.g. ["exec.run", "fs.delete_file"]) */
+        tools?: string[];
+        /** Categories to bypass (e.g. ["exec-tools"]) */
+        categories?: string[];
+        /** Risk levels to bypass (e.g. ["medium"]) */
+        levels?: ConfirmationLevel[];
+    };
 }
 
 export interface ToolpackConfig {
@@ -40,6 +58,9 @@ export interface ToolpackConfig {
         /** Log file path. Default: 'toolpack-sdk.log' in CWD */
         filePath?: string;
     };
+
+    /** Human-in-the-loop configuration for tool confirmation */
+    hitl?: HitlConfig;
 }
 
 // ============================================================================
@@ -124,4 +145,136 @@ export function getOllamaProviderEntries(configPath?: string): OllamaProviderEnt
 export function getOllamaBaseUrl(configPath?: string): string {
     const config = getToolpackConfig(configPath);
     return config.ollama?.baseUrl || 'http://localhost:11434';
+}
+
+// ============================================================================
+// HITL Bypass Helpers
+// ============================================================================
+
+export type BypassRuleType = 'tool' | 'category' | 'level';
+
+export interface AddBypassRuleOptions {
+    /** Type of bypass rule */
+    type: BypassRuleType;
+    /** Value to bypass (tool name, category, or level) */
+    value: string;
+    /** Optional config path. If not provided, uses local config or creates one */
+    configPath?: string;
+}
+
+/**
+ * Add a bypass rule to the HITL config and persist it to the config file.
+ * This is useful for implementing "Allow Always" functionality.
+ * 
+ * @example
+ * // Bypass a specific tool
+ * await addBypassRule({ type: 'tool', value: 'fs.write_file' });
+ * 
+ * // Bypass all medium-risk tools
+ * await addBypassRule({ type: 'level', value: 'medium' });
+ * 
+ * // Bypass an entire category
+ * await addBypassRule({ type: 'category', value: 'exec-tools' });
+ */
+export async function addBypassRule(options: AddBypassRuleOptions): Promise<void> {
+    const { type, value, configPath: explicitPath } = options;
+
+    // Determine config file path
+    let configPath = explicitPath || discoverConfigPath();
+    
+    // If no config exists, create one in CWD
+    if (!configPath) {
+        configPath = path.join(process.cwd(), CONFIG_FILENAME);
+    }
+
+    // Load existing config or create empty one
+    let config: ToolpackConfig = loadConfig(configPath) || {};
+
+    // Ensure hitl config exists
+    if (!config.hitl) {
+        config.hitl = {};
+    }
+
+    // Ensure bypass section exists
+    if (!config.hitl.bypass) {
+        config.hitl.bypass = {};
+    }
+
+    // Add the bypass rule based on type
+    switch (type) {
+        case 'tool':
+            if (!config.hitl.bypass.tools) {
+                config.hitl.bypass.tools = [];
+            }
+            if (!config.hitl.bypass.tools.includes(value)) {
+                config.hitl.bypass.tools.push(value);
+            }
+            break;
+        case 'category':
+            if (!config.hitl.bypass.categories) {
+                config.hitl.bypass.categories = [];
+            }
+            if (!config.hitl.bypass.categories.includes(value)) {
+                config.hitl.bypass.categories.push(value);
+            }
+            break;
+        case 'level':
+            if (!config.hitl.bypass.levels) {
+                config.hitl.bypass.levels = [];
+            }
+            const level = value as ConfirmationLevel;
+            if (!config.hitl.bypass.levels.includes(level)) {
+                config.hitl.bypass.levels.push(level);
+            }
+            break;
+    }
+
+    // Write config back to file
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
+    
+    // Clear cache so next read gets updated config
+    reloadToolpackConfig();
+}
+
+/**
+ * Remove a bypass rule from the HITL config.
+ * 
+ * @example
+ * await removeBypassRule({ type: 'tool', value: 'fs.write_file' });
+ */
+export async function removeBypassRule(options: AddBypassRuleOptions): Promise<void> {
+    const { type, value, configPath: explicitPath } = options;
+
+    // Determine config file path
+    const configPath = explicitPath || discoverConfigPath();
+    if (!configPath) return; // No config to modify
+
+    // Load existing config
+    const config = loadConfig(configPath);
+    if (!config?.hitl?.bypass) return; // No bypass rules to remove
+
+    // Remove the bypass rule based on type
+    switch (type) {
+        case 'tool':
+            if (config.hitl.bypass.tools) {
+                config.hitl.bypass.tools = config.hitl.bypass.tools.filter(t => t !== value);
+            }
+            break;
+        case 'category':
+            if (config.hitl.bypass.categories) {
+                config.hitl.bypass.categories = config.hitl.bypass.categories.filter(c => c !== value);
+            }
+            break;
+        case 'level':
+            if (config.hitl.bypass.levels) {
+                config.hitl.bypass.levels = config.hitl.bypass.levels.filter(l => l !== value);
+            }
+            break;
+    }
+
+    // Write config back to file
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
+    
+    // Clear cache
+    reloadToolpackConfig();
 }

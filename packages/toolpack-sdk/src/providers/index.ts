@@ -9,10 +9,15 @@ export {
     reloadToolpackConfig,
     getOllamaProviderEntries,
     getOllamaBaseUrl,
+    addBypassRule,
+    removeBypassRule,
 } from './config.js';
 export type {
     ToolpackConfig,
+    HitlConfig,
     OllamaProviderEntry,
+    BypassRuleType,
+    AddBypassRuleOptions,
 } from "./config.js";
 // Ollama (local LLM)
 export * from './ollama/index.js';

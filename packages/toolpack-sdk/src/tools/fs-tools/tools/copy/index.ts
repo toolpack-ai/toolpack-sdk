@@ -54,4 +54,9 @@ export const fsCopyTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'medium',
+        reason: 'This will copy files or directories, potentially overwriting the destination.',
+        showArgs: ['path', 'new_path'],
+    },
 };

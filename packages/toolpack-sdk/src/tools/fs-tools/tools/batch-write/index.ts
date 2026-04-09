@@ -88,4 +88,9 @@ export const fsBatchWriteTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will overwrite multiple files at once.',
+        showArgs: ['files'],
+    },
 };

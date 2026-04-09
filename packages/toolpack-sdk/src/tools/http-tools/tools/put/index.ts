@@ -49,4 +49,9 @@ export const httpPutTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will send an HTTP PUT request to overwrite remote resources.',
+        showArgs: ['url', 'body'],
+    },
 };

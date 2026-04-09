@@ -32,4 +32,9 @@ export const fsAppendFileTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'medium',
+        reason: 'This will modify the file by appending content.',
+        showArgs: ['path'],
+    },
 };

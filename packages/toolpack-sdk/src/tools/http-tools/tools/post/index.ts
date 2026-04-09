@@ -50,4 +50,9 @@ export const httpPostTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will send an HTTP POST request with arbitrary payload.',
+        showArgs: ['url', 'body'],
+    },
 };

@@ -31,4 +31,9 @@ export const fsDeleteFileTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will permanently delete the file. This action cannot be undone.',
+        showArgs: ['path'],
+    },
 };

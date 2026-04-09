@@ -19,4 +19,9 @@ export const gitCheckoutTool: ToolDefinition = {
             return `Error checking out branch: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'medium',
+        reason: 'This will switch branches, potentially losing uncommitted changes.',
+        showArgs: ['branch'],
+    },
 };

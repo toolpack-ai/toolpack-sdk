@@ -114,4 +114,9 @@ export const codingMultiFileEditTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will modify multiple source code files atomically.',
+        showArgs: ['edits'],
+    },
 };

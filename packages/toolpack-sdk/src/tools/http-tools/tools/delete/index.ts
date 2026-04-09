@@ -38,4 +38,9 @@ export const httpDeleteTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will send an HTTP DELETE request to destroy remote resources.',
+        showArgs: ['url'],
+    },
 };

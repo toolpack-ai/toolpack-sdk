@@ -23,4 +23,9 @@ export const dbDeleteTool: ToolDefinition = {
             return `Database delete error: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'high',
+        reason: 'This will permanently delete rows from the database.',
+        showArgs: ['table', 'where'],
+    },
 };

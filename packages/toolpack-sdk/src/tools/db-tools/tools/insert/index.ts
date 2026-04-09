@@ -31,4 +31,9 @@ export const dbInsertTool: ToolDefinition = {
             return `Database insert error: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'medium',
+        reason: 'This will insert rows into the database, creating permanent records.',
+        showArgs: ['table', 'data'],
+    },
 };

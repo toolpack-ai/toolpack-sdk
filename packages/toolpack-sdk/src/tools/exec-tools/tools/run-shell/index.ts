@@ -47,4 +47,9 @@ export const execRunShellTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will execute a shell command with explicit shell context.',
+        showArgs: ['command'],
+    },
 };

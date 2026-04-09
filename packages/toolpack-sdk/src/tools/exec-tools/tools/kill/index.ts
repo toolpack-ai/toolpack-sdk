@@ -29,4 +29,9 @@ export const execKillTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'medium',
+        reason: 'This will terminate a running process.',
+        showArgs: ['process_id'],
+    },
 };

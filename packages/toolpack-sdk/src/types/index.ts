@@ -188,6 +188,36 @@ export interface ToolLogEvent {
     timestamp: number;
 }
 
+// ── Human-in-the-Loop (HITL) Types ────────────────────────────
+
+import type { ConfirmationLevel, ToolDefinition } from '../tools/types.js';
+
+export type ConfirmationDecision =
+    | { action: 'allow' }
+    | { action: 'deny'; reason?: string }
+    | { action: 'modify'; args: Record<string, any> };
+
+export interface ToolConfirmationRequestedEvent {
+    tool: ToolDefinition;
+    args: Record<string, any>;
+    level: ConfirmationLevel;
+    reason: string;
+}
+
+export interface ToolConfirmationResolvedEvent extends ToolConfirmationRequestedEvent {
+    decision: ConfirmationDecision;
+}
+
+/**
+ * Callback type for handling tool confirmation requests.
+ * Called before executing tools that have confirmation metadata set.
+ */
+export type OnToolConfirmCallback = (
+    tool: ToolDefinition,
+    args: Record<string, any>,
+    context: { roundNumber: number; conversationId?: string }
+) => Promise<ConfirmationDecision>;
+
 /**
  * Information about a single model available from a provider.
  */

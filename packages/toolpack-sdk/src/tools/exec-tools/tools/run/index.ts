@@ -37,4 +37,9 @@ export const execRunTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will execute a shell command on the host system.',
+        showArgs: ['command'],
+    },
 };

@@ -53,4 +53,9 @@ export const fsReplaceInFileTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will perform a global find-and-replace operation that may corrupt the file if the pattern is incorrect.',
+        showArgs: ['path', 'search', 'replace'],
+    },
 };

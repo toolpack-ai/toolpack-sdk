@@ -29,6 +29,16 @@ export interface ToolContext {
     log: (message: string) => void;
 }
 
+// ── Tool Confirmation (HITL) ─────────────────────────────────
+
+export type ConfirmationLevel = 'high' | 'medium';
+
+export interface ToolConfirmation {
+    level: ConfirmationLevel;
+    reason: string;      // Shown to user: "This will permanently delete the file."
+    showArgs?: string[]; // Which args to surface in the prompt (e.g. ['path', 'table'])
+}
+
 export interface ToolDefinition {
     name: string;
     displayName: string;
@@ -42,6 +52,12 @@ export interface ToolDefinition {
      * Default: true
      */
     cacheable?: boolean;
+    /**
+     * Human-in-the-loop confirmation configuration.
+     * If set, the tool will require user confirmation before execution.
+     * Note: Only effective when onToolConfirm callback is provided to AIClient.
+     */
+    confirmation?: ToolConfirmation;
 }
 
 /**

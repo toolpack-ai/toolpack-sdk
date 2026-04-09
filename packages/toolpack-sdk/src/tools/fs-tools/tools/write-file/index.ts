@@ -34,4 +34,9 @@ export const fsWriteFileTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will overwrite the entire file contents.',
+        showArgs: ['path'],
+    },
 };

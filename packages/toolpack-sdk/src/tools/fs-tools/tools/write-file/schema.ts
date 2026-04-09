@@ -2,7 +2,7 @@ import { ToolParameters } from '../../../types.js';
 
 export const name = 'fs.write_file';
 export const displayName = 'Write File';
-export const description = 'Write content to a file. Creates parent directories if they do not exist. Overwrites existing files.';
+export const description = 'Write content to a file. Creates parent directories if they do not exist. Overwrites existing files. IMPORTANT: Do NOT use this to delete/remove files - use fs.delete_file for that.';
 export const category = 'filesystem';
 
 export const parameters: ToolParameters = {

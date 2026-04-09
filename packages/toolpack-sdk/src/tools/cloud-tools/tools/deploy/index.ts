@@ -37,4 +37,9 @@ export const cloudDeployTool: ToolDefinition = {
             return `Cloud deployment error: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'high',
+        reason: 'This will deploy to production (live site).',
+        showArgs: ['siteId', 'dir'],
+    },
 };

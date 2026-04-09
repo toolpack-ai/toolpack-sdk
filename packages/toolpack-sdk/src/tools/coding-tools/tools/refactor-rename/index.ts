@@ -173,4 +173,9 @@ export const codingRefactorRenameTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will rename a symbol across multiple files, rewriting source code without backup.',
+        showArgs: ['symbol', 'newName'],
+    },
 };

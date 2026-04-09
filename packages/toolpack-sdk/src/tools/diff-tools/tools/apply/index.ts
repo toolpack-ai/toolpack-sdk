@@ -27,4 +27,9 @@ export const diffApplyTool: ToolDefinition = {
             return `Error applying patch: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'high',
+        reason: 'This will apply a patch to files, which may corrupt them if the patch doesn\'t match.',
+        showArgs: ['path'],
+    },
 };

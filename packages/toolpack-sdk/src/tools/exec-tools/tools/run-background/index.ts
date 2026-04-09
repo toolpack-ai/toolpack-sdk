@@ -41,4 +41,9 @@ export const execRunBackgroundTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will spawn a background process that runs unsupervised.',
+        showArgs: ['command'],
+    },
 };

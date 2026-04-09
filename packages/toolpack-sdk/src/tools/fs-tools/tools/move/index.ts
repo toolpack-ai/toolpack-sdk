@@ -35,4 +35,9 @@ export const fsMoveTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will move/rename the file or directory, potentially overwriting the destination.',
+        showArgs: ['path', 'new_path'],
+    },
 };

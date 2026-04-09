@@ -28,4 +28,9 @@ export const systemSetEnvTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'medium',
+        reason: 'This will modify the process environment, affecting all subsequent operations.',
+        showArgs: ['key', 'value'],
+    },
 };

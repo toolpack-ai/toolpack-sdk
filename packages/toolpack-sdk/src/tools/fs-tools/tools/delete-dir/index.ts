@@ -35,4 +35,9 @@ export const fsDeleteDirTool: ToolDefinition = {
     parameters,
     category,
     execute,
+    confirmation: {
+        level: 'high',
+        reason: 'This will recursively delete the directory and all its contents. This action cannot be undone.',
+        showArgs: ['path'],
+    },
 };

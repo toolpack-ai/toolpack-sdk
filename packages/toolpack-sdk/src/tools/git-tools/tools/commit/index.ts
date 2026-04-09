@@ -24,4 +24,9 @@ export const gitCommitTool: ToolDefinition = {
             return `Error committing changes: ${error instanceof Error ? error.message : String(error)}`;
         }
     },
+    confirmation: {
+        level: 'medium',
+        reason: 'This will create a permanent commit in the repository history.',
+        showArgs: ['message'],
+    },
 };

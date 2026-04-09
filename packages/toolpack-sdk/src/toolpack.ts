@@ -100,10 +100,30 @@ export interface ToolpackInitConfig {
      * Optional Knowledge instance for RAG (Retrieval-Augmented Generation).
      * When provided, the knowledge base will be registered as a tool that the AI can use to search documentation.
      * Can be null if initialization fails - will be gracefully skipped.
-     * 
+     *
      * Accepts any object with a `toTool()` method (e.g. `Knowledge` from `@toolpack-sdk/knowledge`).
      */
     knowledge?: KnowledgeInstance | null;
+
+    /**
+     * Human-in-the-loop configuration for tool confirmation.
+     * Default: 'all' when onToolConfirm is provided, 'off' otherwise.
+     */
+    confirmationMode?: 'off' | 'high-only' | 'all';
+
+    /**
+     * Callback for handling tool confirmation requests.
+     * Called before executing tools that have confirmation metadata set.
+     * If not provided, HITL is disabled regardless of confirmationMode.
+     */
+    onToolConfirm?: (
+        tool: import('./tools/types.js').ToolDefinition,
+        args: Record<string, any>,
+        context: { roundNumber: number; conversationId?: string }
+    ) => Promise<import('./types/index.js').ConfirmationDecision>;
+
+    /** Optional conversation ID for tracking context across confirmations */
+    conversationId?: string;
 }
 
 /**
@@ -334,7 +354,22 @@ export class Toolpack extends EventEmitter {
             }
         }
 
-        // 4. Initialize Client
+        // 4. Prepare HITL config (merge file-based with programmatic overrides)
+        const hitlConfig = fullConfig.hitl || {};
+        // Programmatic confirmationMode takes precedence over file config
+        if (config.confirmationMode !== undefined) {
+            hitlConfig.confirmationMode = config.confirmationMode;
+        }
+        // Enable HITL by default if onToolConfirm is provided and no explicit enabled setting
+        if (hitlConfig.enabled === undefined && config.onToolConfirm) {
+            hitlConfig.enabled = true;
+        }
+        // Default confirmationMode to 'all' when onToolConfirm is provided
+        if (hitlConfig.confirmationMode === undefined && config.onToolConfirm) {
+            hitlConfig.confirmationMode = 'all';
+        }
+
+        // 5. Initialize Client
         const client = new AIClient({
             providers,
             defaultProvider: defaultProviderName,
@@ -342,6 +377,9 @@ export class Toolpack extends EventEmitter {
             toolsConfig: registry.getConfig(),
             systemPrompt: systemPrompt,
             disableBaseContext: disableBaseContext,
+            hitlConfig: Object.keys(hitlConfig).length > 0 ? hitlConfig : undefined,
+            onToolConfirm: config.onToolConfirm,
+            conversationId: config.conversationId,
         });
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);
@@ -527,6 +565,23 @@ export class Toolpack extends EventEmitter {
      */
     getClient(): AIClient {
         return this.client;
+    }
+
+    /**
+     * Reload configuration from the config file.
+     * This updates the HITL config in the running instance.
+     * Call this after modifying config (e.g., bypass rules) to apply changes immediately.
+     */
+    reloadConfig(configPath?: string): void {
+        const { loadConfig, discoverConfigPath } = require('./providers/config.js');
+        const path = configPath || discoverConfigPath();
+        if (path) {
+            const config = loadConfig(path);
+            if (config?.hitl) {
+                this.client.updateHitlConfig(config.hitl);
+            }
+            // Future: Add other config reloading here as needed
+        }
     }
 
     /**

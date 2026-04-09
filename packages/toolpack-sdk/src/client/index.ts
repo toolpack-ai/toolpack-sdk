@@ -1,11 +1,12 @@
 import { EventEmitter } from 'events';
 import { ProviderAdapter } from "../providers/base/index.js";
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent } from "../types/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolRouter } from '../tools/router.js';
-import type { ToolsConfig, ToolSchema, ToolContext } from "../tools/types.js";
+import type { ToolsConfig, ToolSchema, ToolContext, ToolDefinition } from "../tools/types.js";
 import { DEFAULT_TOOLS_CONFIG } from "../tools/types.js";
+import type { HitlConfig } from '../providers/config.js';
 import { ModeConfig } from '../modes/mode-types.js';
 import { BM25SearchEngine, isToolSearchTool, generateToolCategoriesPrompt } from '../tools/search/index.js';
 import { generateBaseAgentContext } from './base-agent-context.js';
@@ -189,6 +190,12 @@ export interface AIClientConfig {
     toolsConfig?: ToolsConfig;
     systemPrompt?: string;
     disableBaseContext?: boolean;
+    /** Human-in-the-loop configuration for tool confirmation */
+    hitlConfig?: HitlConfig;
+    /** Callback for handling tool confirmation requests */
+    onToolConfirm?: OnToolConfirmCallback;
+    /** Optional conversation ID for tracking context */
+    conversationId?: string;
 }
 
 export class AIClient extends EventEmitter {
@@ -204,6 +211,10 @@ export class AIClient extends EventEmitter {
     private overrideSystemPrompt?: string;
     private disableBaseContext: boolean;
     private toolResultMaxChars: number;
+    private hitlConfig?: HitlConfig;
+    private onToolConfirm?: OnToolConfirmCallback;
+    private currentRound: number = 0;
+    private conversationId?: string;
 
     constructor(config: AIClientConfig) {
         super();
@@ -219,11 +230,41 @@ export class AIClient extends EventEmitter {
         this.disableBaseContext = config.disableBaseContext || false;
         const configuredMax = this.toolsConfig.resultMaxChars ?? DEFAULT_TOOLS_CONFIG.resultMaxChars ?? 20_000;
         this.toolResultMaxChars = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 20_000;
+        this.hitlConfig = config.hitlConfig;
+        this.onToolConfirm = config.onToolConfirm;
+        this.conversationId = config.conversationId;
 
         // Index tools for BM25 search if registry is provided
         if (this.toolRegistry) {
             this.bm25Engine.index(this.toolRegistry.getAll());
         }
+    }
+
+    /**
+     * Check if a tool should bypass confirmation based on HITL config.
+     * Returns true if the tool should execute without confirmation.
+     */
+    private isBypassed(tool: ToolDefinition): boolean {
+        const hitl = this.hitlConfig;
+
+        // If HITL config doesn't exist, bypass everything
+        if (!hitl) return true;
+
+        // If HITL is explicitly disabled, bypass everything
+        if (hitl.enabled === false) return true;
+
+        // Check confirmation mode
+        const mode = hitl.confirmationMode ?? 'all';
+        if (mode === 'off') return true;
+        if (mode === 'high-only' && tool.confirmation?.level === 'medium') return true;
+
+        // Check bypass rules
+        const bypass = hitl.bypass ?? {};
+        if (bypass.tools?.includes(tool.name)) return true;
+        if (bypass.categories?.includes(tool.category)) return true;
+        if (tool.confirmation && bypass.levels?.includes(tool.confirmation.level)) return true;
+
+        return false;
     }
 
     /**
@@ -246,6 +287,21 @@ export class AIClient extends EventEmitter {
             throw new SDKError(`Provider '${providerName}' not found`, 'PROVIDER_NOT_FOUND', 404);
         }
         return provider;
+    }
+
+    /**
+     * Update the HITL configuration dynamically.
+     * This allows modifying bypass rules without restarting the client.
+     */
+    updateHitlConfig(config: HitlConfig): void {
+        this.hitlConfig = config;
+    }
+
+    /**
+     * Get the current HITL configuration.
+     */
+    getHitlConfig(): HitlConfig | undefined {
+        return this.hitlConfig;
     }
 
     /**
@@ -420,6 +476,7 @@ export class AIClient extends EventEmitter {
 
                 while (response.tool_calls && response.tool_calls.length > 0 && rounds < maxRounds) {
                     rounds++;
+                    this.currentRound = rounds;
                     logInfo(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
 
                     // Add assistant message with tool calls to conversation
@@ -668,7 +725,9 @@ export class AIClient extends EventEmitter {
                 let accumulatedContent = '';
                 const pendingToolCalls: ToolCallResult[] = [];
 
-                logInfo(`[AIClient][${requestId}] stream() round_start ${rounds + 1}/${maxRounds}`);
+                rounds++;
+                this.currentRound = rounds;
+                logInfo(`[AIClient][${requestId}] stream() round_start ${rounds}/${maxRounds}`);
                 let lastFinishReason: string | null = null;
 
                 const rawRoundReq: any = { ...baseReq, messages };
@@ -1281,12 +1340,68 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
         }
 
         try {
+            let args = toolCall.arguments;
+
+            // Human-in-the-loop confirmation check
+            if (tool.confirmation && this.onToolConfirm && !this.isBypassed(tool)) {
+                // Emit confirmation requested event
+                this.emit('tool:confirmation_requested', {
+                    tool,
+                    args,
+                    level: tool.confirmation.level,
+                    reason: tool.confirmation.reason,
+                } as ToolConfirmationRequestedEvent);
+
+                // Wait for user decision
+                const decision = await this.onToolConfirm(tool, args, {
+                    roundNumber: this.currentRound,
+                    conversationId: this.conversationId,
+                });
+
+                // Emit confirmation resolved event
+                this.emit('tool:confirmation_resolved', {
+                    tool,
+                    args,
+                    level: tool.confirmation.level,
+                    reason: tool.confirmation.reason,
+                    decision,
+                } as ToolConfirmationResolvedEvent);
+
+                // Handle decision
+                if (decision.action === 'deny') {
+                    const denyMsg = `[Execution denied by user${decision.reason ? ': ' + decision.reason : ''}]`;
+                    const duration = Date.now() - startTime;
+                    this.emit('tool:completed', {
+                        toolName: toolCall.name,
+                        toolCallId: toolCall.id,
+                        status: 'completed',
+                        result: denyMsg,
+                        duration,
+                    } as ToolProgressEvent);
+                    this.emit('tool:log', {
+                        id: toolCall.id,
+                        name: toolCall.name,
+                        arguments: args,
+                        result: denyMsg,
+                        duration,
+                        status: 'success',
+                        timestamp: Date.now(),
+                    } as ToolLogEvent);
+                    return denyMsg;
+                }
+
+                if (decision.action === 'modify') {
+                    args = decision.args;
+                }
+                // 'allow' falls through to execution
+            }
+
             const ctx: ToolContext = {
                 workspaceRoot: process.cwd(),
                 config: this.toolsConfig?.additionalConfigurations ?? {},
                 log: (msg) => logInfo(`[Tool] ${msg}`),
             };
-            const result = await tool.execute(toolCall.arguments, ctx);
+            const result = await tool.execute(args, ctx);
             const duration = Date.now() - startTime;
 
             // Emit completed event
