@@ -16,6 +16,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
 - **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
+- **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
 - **79 Built-in Tools** across 10 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
@@ -765,6 +766,49 @@ Create a `toolpack.config.json` in your project root:
 | `toolChoicePolicy` | string | `"auto"` | `"auto"`, `"required"`, or `"required_for_actions"` |
 | `enabledTools` | string[] | `[]` | Whitelist specific tools (empty = all) |
 | `enabledToolCategories` | string[] | `[]` | Whitelist categories (empty = all) |
+
+### HITL (Human-in-the-Loop) Configuration
+
+Configure user confirmation for high-risk tool operations:
+
+```json
+{
+  "hitl": {
+    "enabled": true,
+    "confirmationMode": "all",
+    "bypass": {
+      "tools": ["fs.write_file"],
+      "categories": ["filesystem"],
+      "levels": ["medium"]
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `true` | Master switch for HITL confirmation |
+| `confirmationMode` | string | `"all"` | `"off"`, `"high-only"`, or `"all"` |
+| `bypass.tools` | string[] | `[]` | Tool names to bypass (e.g., `["fs.write_file"]`) |
+| `bypass.categories` | string[] | `[]` | Categories to bypass (e.g., `["filesystem"]`) |
+| `bypass.levels` | string[] | `[]` | Risk levels to bypass (`["high"]` or `["medium"]`) |
+
+**Programmatic API:**
+
+```typescript
+import { addBypassRule, removeBypassRule } from 'toolpack-sdk';
+
+// Add bypass rule
+await addBypassRule({ type: 'tool', value: 'fs.delete_file' });
+
+// Remove bypass rule
+await removeBypassRule({ type: 'tool', value: 'fs.delete_file' });
+
+// Reload config to apply changes
+toolpack.reloadConfig();
+```
+
+See the [HITL documentation](https://toolpacksdk.com/guides/hitl-confirmation) for detailed configuration options and best practices.
 
 #### Web Search Providers
 
