@@ -105,8 +105,12 @@ export class Knowledge {
       includeVectors = false,
     } = options || {};
 
-    // For keyword search, we need to get all chunks and score them
-    // This is a limitation - in production, you'd want a full-text search index
+    // Use provider's keywordQuery if available for better performance
+    if (typeof this.provider.keywordQuery === 'function') {
+      return this.provider.keywordQuery(text, options);
+    }
+
+    // Fallback: get all chunks and score them in memory
     const allChunks = await this.getAllChunks();
 
     const results: QueryResult[] = [];
@@ -187,10 +191,8 @@ export class Knowledge {
   }
 
   private async getAllChunks(): Promise<Chunk[]> {
-    // This is a simplified implementation - in a real system, you'd want
-    // the provider to support efficient text search
-    if ('getAllChunks' in this.provider) {
-      return (this.provider as any).getAllChunks();
+    if (typeof this.provider.getAllChunks === 'function') {
+      return this.provider.getAllChunks();
     }
 
     // Fallback: query with a dummy vector to get all chunks

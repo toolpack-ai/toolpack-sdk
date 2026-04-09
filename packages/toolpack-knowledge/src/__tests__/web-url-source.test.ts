@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WebUrlSource } from '../../dist/index.js';
+import { WebUrlSource } from '../sources/web-url.js';
 
 // Mock fetch globally
 global.fetch = vi.fn();

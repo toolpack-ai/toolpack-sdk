@@ -36,6 +36,7 @@ export interface QueryResult {
 export interface KnowledgeProvider {
   add(chunks: Chunk[]): Promise<void>;
   query(queryVector: number[], options?: QueryOptions): Promise<QueryResult[]>;
+  keywordQuery?(query: string, options?: QueryOptions): Promise<QueryResult[]>;
   delete(ids: string[]): Promise<void>;
   clear(): Promise<void>;
   validateDimensions(dimensions: number): Promise<void>;

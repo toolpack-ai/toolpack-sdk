@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ApiDataSource } from '../../dist/index.js';
+import { ApiDataSource } from '../sources/api.js';
 
 // Mock fetch globally
 global.fetch = vi.fn();

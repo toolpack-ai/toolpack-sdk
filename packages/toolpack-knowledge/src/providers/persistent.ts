@@ -5,6 +5,7 @@ import * as os from 'os';
 import { KnowledgeProvider, Chunk, QueryOptions, QueryResult } from '../interfaces.js';
 import { DimensionMismatchError, KnowledgeProviderError } from '../errors.js';
 import { cosineSimilarity, matchesFilter } from '../utils/cosine.js';
+import { keywordSearch } from '../utils/keyword.js';
 
 export interface PersistentKnowledgeProviderOptions {
   namespace: string;
@@ -40,10 +41,29 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
         synced_at INTEGER NOT NULL
       );
 
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+        id, content, metadata
+      );
+
       CREATE TABLE IF NOT EXISTS provider_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON chunks
+      BEGIN
+        INSERT INTO chunks_fts (id, content, metadata) VALUES (new.id, new.content, new.metadata);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON chunks
+      BEGIN
+        DELETE FROM chunks_fts WHERE id = old.id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE ON chunks
+      BEGIN
+        UPDATE chunks_fts SET content = new.content, metadata = new.metadata WHERE id = new.id;
+      END;
     `);
   }
 
@@ -136,6 +156,65 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
 
     results.sort((a, b) => b.score - a.score);
     
+    return results.slice(0, limit);
+  }
+
+  async keywordQuery(query: string, options: QueryOptions = {}): Promise<QueryResult[]> {
+    const {
+      limit = 10,
+      threshold = 0.1,
+      filter,
+      includeMetadata = true,
+      includeVectors = false,
+    } = options;
+
+    // Use FTS for efficient keyword search
+    const ftsQuery = query.split(/\s+/).map(term => `"${term}"`).join(' OR ');
+    const rows = this.db.prepare(`
+      SELECT c.id, c.content, c.metadata, c.vector, highlight(chunks_fts, 1, '<mark>', '</mark>') as highlighted
+      FROM chunks_fts fts
+      JOIN chunks c ON fts.id = c.id
+      WHERE chunks_fts MATCH ?
+      ORDER BY bm25(chunks_fts) DESC
+      LIMIT ?
+    `).all(ftsQuery, limit * 2) as Array<{
+      id: string;
+      content: string;
+      metadata: string;
+      vector: Buffer;
+      highlighted: string;
+    }>;
+
+    const results: QueryResult[] = [];
+
+    for (const row of rows) {
+      const metadata = JSON.parse(row.metadata);
+
+      if (filter && !matchesFilter(metadata, filter)) {
+        continue;
+      }
+
+      // Use keywordSearch for scoring since FTS doesn't give scores directly
+      const score = keywordSearch(row.content, query);
+
+      if (score >= threshold) {
+        const vector = new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4);
+
+        results.push({
+          chunk: {
+            id: row.id,
+            content: row.content,
+            metadata: includeMetadata ? metadata : {},
+            vector: includeVectors ? Array.from(vector) : undefined,
+          },
+          score,
+          distance: 1 - score,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+
     return results.slice(0, limit);
   }
 

@@ -1,6 +1,7 @@
 import { KnowledgeProvider, Chunk, QueryOptions, QueryResult } from '../interfaces.js';
 import { DimensionMismatchError, KnowledgeProviderError } from '../errors.js';
 import { cosineSimilarity, matchesFilter } from '../utils/cosine.js';
+import { keywordSearch } from '../utils/keyword.js';
 
 export interface MemoryProviderOptions {
   maxChunks?: number;
@@ -74,6 +75,43 @@ export class MemoryProvider implements KnowledgeProvider {
 
     results.sort((a, b) => b.score - a.score);
     
+    return results.slice(0, limit);
+  }
+
+  async keywordQuery(query: string, options: QueryOptions = {}): Promise<QueryResult[]> {
+    const {
+      limit = 10,
+      threshold = 0.1,
+      filter,
+      includeMetadata = true,
+      includeVectors = false,
+    } = options;
+
+    const results: QueryResult[] = [];
+
+    for (const { chunk, vector } of this.chunks.values()) {
+      if (filter && !matchesFilter(chunk.metadata, filter)) {
+        continue;
+      }
+
+      const score = keywordSearch(chunk.content, query);
+
+      if (score >= threshold) {
+        results.push({
+          chunk: {
+            id: chunk.id,
+            content: chunk.content,
+            metadata: includeMetadata ? chunk.metadata : {},
+            vector: includeVectors ? vector : undefined,
+          },
+          score,
+          distance: 1 - score,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+
     return results.slice(0, limit);
   }
 

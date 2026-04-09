@@ -14,6 +14,8 @@ export interface WebUrlSourceOptions {
   userAgent?: string;
   delayMs?: number;
   timeoutMs?: number;
+  sameDomainOnly?: boolean;
+  maxPagesPerDomain?: number;
 }
 
 interface CrawledPage {
@@ -26,6 +28,8 @@ interface CrawledPage {
 export class WebUrlSource implements KnowledgeSource {
   private options: Required<WebUrlSourceOptions>;
   private crawledUrls = new Set<string>();
+  private domainPageCount = new Map<string, number>();
+  private lastRequestTime = new Map<string, number>();
 
   constructor(
     private urls: string[],
@@ -41,6 +45,8 @@ export class WebUrlSource implements KnowledgeSource {
       userAgent: options.userAgent ?? 'Toolpack-Knowledge/1.0',
       delayMs: options.delayMs ?? 1000,
       timeoutMs: options.timeoutMs ?? 30000,
+      sameDomainOnly: options.sameDomainOnly ?? true,
+      maxPagesPerDomain: options.maxPagesPerDomain ?? 10,
     };
   }
 
@@ -67,32 +73,47 @@ export class WebUrlSource implements KnowledgeSource {
 
     const pages: CrawledPage[] = [];
     const newUrls: string[] = [];
+    const initialDomains = new Set(urls.map(url => new URL(url).hostname));
 
     for (const url of urls) {
       if (this.crawledUrls.has(url)) {
         continue;
       }
 
+      const domain = new URL(url).hostname;
+      const pageCount = this.domainPageCount.get(domain) ?? 0;
+
+      if (this.options.sameDomainOnly && !initialDomains.has(domain)) {
+        continue; // Skip external domains
+      }
+
+      if (pageCount >= this.options.maxPagesPerDomain) {
+        continue; // Skip if too many pages from this domain
+      }
+
       this.crawledUrls.add(url);
+      this.domainPageCount.set(domain, pageCount + 1);
 
       try {
+        // Rate limiting per domain
+        const lastTime = this.lastRequestTime.get(domain) ?? 0;
+        const timeSince = Date.now() - lastTime;
+        if (timeSince < this.options.delayMs) {
+          await new Promise(resolve => setTimeout(resolve, this.options.delayMs - timeSince));
+        }
+
         const page = await this.fetchPage(url);
         pages.push(page);
+        this.lastRequestTime.set(domain, Date.now());
 
         if (depth < this.options.maxDepth - 1) {
           newUrls.push(...page.links);
-        }
-
-        // Delay between requests to be respectful
-        if (this.options.delayMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, this.options.delayMs));
         }
       } catch (error) {
         console.warn(`Failed to crawl ${url}: ${(error as Error).message}`);
       }
     }
 
-    // Recursively crawl discovered URLs
     if (newUrls.length > 0) {
       const subPages = await this.crawlUrls(newUrls, depth + 1);
       pages.push(...subPages);
