@@ -5,8 +5,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w packages/toolpack-knowledge && npm run build -w packages/toolpack-sdk",
-    "test": "npm run test -w packages/toolpack-knowledge && npm run test -w packages/toolpack-sdk",
+    "build": "npm run build -w packages/toolpack-knowledge && npm run build -w packages/toolpack-sdk && npm run build -w packages/toolpack-agents",
+    "test": "npm run test -w packages/toolpack-knowledge && npm run test -w packages/toolpack-sdk && npm run test -w packages/toolpack-agents",
     "lint": "eslint packages/*/src/**",
     "version": "node scripts/update-version.js"
   },

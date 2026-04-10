@@ -106,6 +106,13 @@ export interface ToolpackInitConfig {
     knowledge?: KnowledgeInstance | null;
 
     /**
+     * Optional AgentRegistry for registering and running AI agents.
+     * When provided, the SDK will start all agent channels and route incoming messages to the appropriate agents.
+     * Requires the `@toolpack-sdk/agents` package as a peer dependency.
+     */
+    agents?: AgentRegistryInstance | null;
+
+    /**
      * Human-in-the-loop configuration for tool confirmation.
      * Default: 'all' when onToolConfirm is provided, 'off' otherwise.
      */
@@ -146,6 +153,15 @@ export interface KnowledgeInstance {
     };
     query(text: string, options?: Record<string, unknown>): Promise<any[]>;
     stop(): Promise<void>;
+}
+
+/**
+ * Duck-typed interface for AgentRegistry instances to avoid circular dependency
+ * with the @toolpack-sdk/agents package.
+ */
+export interface AgentRegistryInstance {
+    start(toolpack: Toolpack): void;
+    stop?(): Promise<void>;
 }
 
 export class Toolpack extends EventEmitter {
@@ -395,6 +411,17 @@ export class Toolpack extends EventEmitter {
             }
         }
 
+        // 6. Start agent registry if provided
+        if (config.agents) {
+            try {
+                logInfo('[Agents] Starting agent registry');
+                config.agents.start(instance);
+                logInfo('[Agents] Agent registry started successfully');
+            } catch (error) {
+                logError(`[Agents] Failed to start agent registry: ${error}`);
+                // Continue without agents rather than failing completely
+            }
+        }
 
         return instance;
     }
