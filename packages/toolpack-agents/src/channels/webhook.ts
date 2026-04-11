@@ -35,12 +35,11 @@ export class WebhookChannel extends BaseChannel {
 
   constructor(config: WebhookChannelConfig) {
     super();
-    this.config = {
-      port: 3000,
-      path: '/webhook',
-      ...config,
-    };
     this.name = config.name;
+    this.config = {
+      port: config.port ?? 3000,
+      path: config.path ?? '/webhook',
+    };
   }
 
   /**

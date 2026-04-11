@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import type { Toolpack } from 'toolpack-sdk';
-import type { Knowledge } from 'toolpack-knowledge';
+import type { Knowledge } from '@toolpack-sdk/knowledge';
 import { AgentInput, AgentResult, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk } from './types.js';
 import { AgentError } from './errors.js';
 
@@ -101,21 +101,21 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
           // Sort by timestamp and convert to messages
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const historyMessages = historyResults
-            .sort((a: { metadata?: { timestamp?: string } }, b: { metadata?: { timestamp?: string } }) => {
-              const aTime = a.metadata?.timestamp || '';
-              const bTime = b.metadata?.timestamp || '';
+            .sort((a, b) => {
+              const aTime = (a.chunk.metadata?.timestamp as string) || '';
+              const bTime = (b.chunk.metadata?.timestamp as string) || '';
               return aTime.localeCompare(bTime);
             })
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .filter((result: { metadata?: { role?: string } }) => {
+            .filter((result) => {
               // Only include messages with a valid role (user or assistant)
-              const role = result.metadata?.role;
+              const role = result.chunk.metadata?.role as string | undefined;
               return role === 'user' || role === 'assistant';
             })
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .map((result: { metadata?: { role?: string }; content: string }) => ({
-              role: result.metadata?.role as 'user' | 'assistant',
-              content: result.content,
+            .map((result) => ({
+              role: result.chunk.metadata?.role as 'user' | 'assistant',
+              content: result.chunk.content,
             }));
           messages.push(...historyMessages);
         } catch {
@@ -126,8 +126,17 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       messages.push({ role: 'user' as const, content: message });
 
       // Build tools array with knowledge search if available
-      const tools = this.knowledge
-        ? [this.knowledge.toTool()]
+      // Convert KnowledgeTool to SDK ToolCallRequest format
+      const knowledgeTool = this.knowledge?.toTool();
+      const tools = knowledgeTool
+        ? [{
+            type: 'function' as const,
+            function: {
+              name: knowledgeTool.name,
+              description: knowledgeTool.description,
+              parameters: knowledgeTool.parameters,
+            },
+          }]
         : undefined;
 
       // Build the completion request

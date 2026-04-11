@@ -577,6 +577,11 @@ describe('BaseAgent', () => {
       const mockKnowledgeTool = {
         name: 'knowledge_search',
         description: 'Search knowledge base',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+        },
         execute: vi.fn(),
       };
 
@@ -598,10 +603,19 @@ describe('BaseAgent', () => {
       // Verify knowledge.toTool() was called
       expect(mockKnowledge.toTool).toHaveBeenCalled();
 
-      // Verify the tool was passed to generate
+      // Verify the tool was passed to generate in converted ToolCallRequest format
       expect(mockToolpack.generate).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [mockKnowledgeTool],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'knowledge_search',
+                description: 'Search knowledge base',
+                parameters: mockKnowledgeTool.parameters,
+              },
+            },
+          ],
         }),
         expect.anything()
       );
@@ -634,12 +648,18 @@ describe('BaseAgent', () => {
 
       const historyResults = [
         {
-          content: 'Hello from user',
-          metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
+          chunk: {
+            content: 'Hello from user',
+            metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
+          },
+          score: 0.9,
         },
         {
-          content: 'Hello from assistant',
-          metadata: { role: 'assistant', timestamp: '2024-01-01T00:00:01Z' },
+          chunk: {
+            content: 'Hello from assistant',
+            metadata: { role: 'assistant', timestamp: '2024-01-01T00:00:01Z' },
+          },
+          score: 0.9,
         },
       ];
 
@@ -689,16 +709,25 @@ describe('BaseAgent', () => {
 
       const historyResults = [
         {
-          content: 'Valid user message',
-          metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
+          chunk: {
+            content: 'Valid user message',
+            metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
+          },
+          score: 0.9,
         },
         {
-          content: 'Message without role metadata',
-          metadata: { timestamp: '2024-01-01T00:00:01Z' },
+          chunk: {
+            content: 'Message without role metadata',
+            metadata: { timestamp: '2024-01-01T00:00:01Z' },
+          },
+          score: 0.9,
         },
         {
-          content: 'Message with invalid role',
-          metadata: { role: 'system', timestamp: '2024-01-01T00:00:02Z' },
+          chunk: {
+            content: 'Message with invalid role',
+            metadata: { role: 'system', timestamp: '2024-01-01T00:00:02Z' },
+          },
+          score: 0.9,
         },
       ];
 

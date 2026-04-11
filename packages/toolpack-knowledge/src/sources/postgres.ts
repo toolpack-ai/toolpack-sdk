@@ -86,11 +86,13 @@ export class PostgresSource implements KnowledgeSource {
       await client.connect();
 
       // Execute query
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await client.query(this.options.query);
-      const rows = result.rows;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = result.rows as Array<Record<string, unknown>>;
 
       // Transform each row using toContent and chunk
-      const contentItems = rows.map((row) => this.options.toContent(row as Record<string, unknown>));
+      const contentItems = rows.map((row) => this.options.toContent(row));
       
       for (let i = 0; i < contentItems.length; i += this.options.chunkSize) {
         const chunkItems = contentItems.slice(i, i + this.options.chunkSize);

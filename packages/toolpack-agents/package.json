@@ -53,10 +53,10 @@
   },
   "peerDependencies": {
     "toolpack-sdk": "^1.3.0",
-    "toolpack-knowledge": "^1.0.0"
+    "@toolpack-sdk/knowledge": "^1.3.0"
   },
   "peerDependenciesMeta": {
-    "toolpack-knowledge": {
+    "@toolpack-sdk/knowledge": {
       "optional": true
     }
   },
