@@ -53,4 +53,13 @@ describe('k8s-tools', () => {
             expect(typeof tool.execute).toBe('function');
         });
     });
+
+    test('k8s tools expose JSON output and dry-run schema options', () => {
+        expect(k8sListPodsTool.parameters.properties).toHaveProperty('output');
+        expect(k8sListDeploymentsTool.parameters.properties).toHaveProperty('output');
+        expect(k8sListServicesTool.parameters.properties).toHaveProperty('output');
+        expect(k8sGetNamespacesTool.parameters.properties).toHaveProperty('output');
+        expect(k8sApplyManifestTool.parameters.properties).toHaveProperty('dryRun');
+        expect(k8sDeleteResourceTool.parameters.properties).toHaveProperty('dryRun');
+    });
 });

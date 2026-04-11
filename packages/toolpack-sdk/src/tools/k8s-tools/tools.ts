@@ -1,29 +1,67 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { ToolDefinition } from '../types.js';
 import { logDebug } from '../../providers/provider-logger.js';
 
-function runKubectl(args: string[], stdin?: string): string {
-    const command = ['kubectl', ...args].join(' ');
-    logDebug(`[k8s-tools] execute: ${command}`);
+function ensureSafeKubectlArg(value: string, name: string): string {
+    if (value.includes('\0') || value.includes('\n') || value.includes('\r')) {
+        throw new Error(`Invalid ${name}: contains disallowed characters.`);
+    }
+    return value;
+}
+
+function formatKubectlError(error: any): string {
+    const stdout = typeof error.stdout === 'string' ? error.stdout : '';
+    const stderr = typeof error.stderr === 'string' ? error.stderr : '';
+    const status = error.status ?? 'unknown';
+    const stderrLines = stderr.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
+    const kubectlMessage = stderrLines.find((line: string) => line.toLowerCase().startsWith('error:')) || stderrLines[0] || error.message || '';
+    return `kubectl failed (exit code ${status})${kubectlMessage ? `: ${kubectlMessage.trim()}` : ''}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`;
+}
+
+function runKubectl(args: string[], stdin?: string, timeoutMs = 30_000): string {
+    args.forEach((arg, index) => ensureSafeKubectlArg(arg, `kubectl argument #${index}`));
+    logDebug(`[k8s-tools] execute: kubectl ${args.join(' ')}`);
 
     try {
-        const output = execSync(command, {
+        const output = execFileSync('kubectl', args, {
             input: stdin,
             encoding: 'utf-8',
             maxBuffer: 10 * 1024 * 1024,
             stdio: ['pipe', 'pipe', 'pipe'],
-            timeout: 30000,
+            timeout: timeoutMs,
         });
         return output || '(kubectl completed with no output)';
     } catch (error: any) {
-        const stdout = error.stdout || '';
-        const stderr = error.stderr || '';
-        const status = error.status ?? 'unknown';
-        return `kubectl failed (exit code ${status})\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`;
+        return formatKubectlError(error);
+    }
+}
+
+function parseKubectlTimeout(timeout?: string): number {
+    if (!timeout) return 300_000;
+    const normalized = timeout.trim().toLowerCase();
+    const match = /^([0-9]+)(s|m|h)?$/.exec(normalized);
+    if (!match) return 300_000;
+
+    const value = Number(match[1]);
+    switch (match[2]) {
+        case 'h':
+            return value * 60 * 60 * 1000;
+        case 'm':
+            return value * 60 * 1000;
+        default:
+            return value * 1000;
     }
 }
 
 const category = 'kubernetes';
+
+function toLabelSelector(labelInput: string | Record<string, string> | undefined): string | undefined {
+    if (!labelInput) return undefined;
+    if (typeof labelInput === 'string') return labelInput;
+    const entries = Object.entries(labelInput).filter(([, value]) => value !== undefined && value !== '');
+    if (!entries.length) return undefined;
+    return entries.map(([key, value]) => `${ensureSafeKubectlArg(key, 'label key')}=${ensureSafeKubectlArg(value, 'label value')}`).join(',');
+}
 
 export const k8sListPodsTool: ToolDefinition = {
     name: 'k8s.list_pods',
@@ -35,15 +73,32 @@ export const k8sListPodsTool: ToolDefinition = {
         properties: {
             namespace: { type: 'string', description: 'Namespace to query. If omitted, uses the current namespace.' },
             labels: { type: 'string', description: 'Label selector to filter pods.', },
+            labelSelector: {
+                type: 'object',
+                description: 'Map of label key/value pairs to filter pods.',
+                additionalProperties: { type: 'string' },
+            },
+            output: { type: 'string', description: 'Output format for the pod list.', enum: ['wide', 'name', 'json', 'yaml'], default: 'wide' },
             allNamespaces: { type: 'boolean', description: 'If true, list pods across all namespaces.', default: false },
         },
         required: [],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['get', 'pods', '-o', 'wide'];
+        const command = ['get', 'pods'];
+        const output = args.output as string | undefined;
+
+        if (output) {
+            command.push('-o', output);
+        } else {
+            command.push('-o', 'wide');
+        }
+
         if (args.allNamespaces) command.push('--all-namespaces');
-        if (args.namespace && !args.allNamespaces) command.push('-n', args.namespace);
-        if (args.labels) command.push('-l', args.labels);
+        if (args.namespace && !args.allNamespaces) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
+
+        const labelSelector = toLabelSelector(args.labelSelector as Record<string, string> | string | undefined) ?? args.labels;
+        if (labelSelector) command.push('-l', ensureSafeKubectlArg(labelSelector, 'labels'));
+
         return runKubectl(command);
     },
 };
@@ -63,9 +118,10 @@ export const k8sDescribeTool: ToolDefinition = {
         required: ['resource'],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['describe', args.resource as string];
-        if (args.name) command.push(args.name as string);
-        if (args.namespace) command.push('-n', args.namespace as string);
+        const resource = ensureSafeKubectlArg(args.resource as string, 'resource');
+        const command = ['describe', resource];
+        if (args.name) command.push(ensureSafeKubectlArg(args.name as string, 'name'));
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         return runKubectl(command);
     },
 };
@@ -81,17 +137,17 @@ export const k8sGetLogsTool: ToolDefinition = {
             podName: { type: 'string', description: 'The name of the pod to fetch logs from.' },
             namespace: { type: 'string', description: 'Namespace of the pod.', },
             container: { type: 'string', description: 'Container name inside the pod.', },
-            tailLines: { type: 'integer', description: 'Number of log lines to show from the end.', default: 100 },
+            tailLines: { type: 'number', description: 'Number of log lines to show from the end.', default: 100 },
             since: { type: 'string', description: 'Return logs newer than a relative duration like 5m or 1h.', },
         },
         required: ['podName'],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['logs', args.podName as string];
-        if (args.container) command.push('-c', args.container as string);
-        if (args.namespace) command.push('-n', args.namespace as string);
+        const command = ['logs', ensureSafeKubectlArg(args.podName as string, 'podName')];
+        if (args.container) command.push('-c', ensureSafeKubectlArg(args.container as string, 'container'));
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         if (typeof args.tailLines === 'number') command.push('--tail', `${args.tailLines}`);
-        if (args.since) command.push('--since', args.since as string);
+        if (args.since) command.push('--since', ensureSafeKubectlArg(args.since as string, 'since'));
         return runKubectl(command);
     },
 };
@@ -107,6 +163,7 @@ export const k8sApplyManifestTool: ToolDefinition = {
             path: { type: 'string', description: 'Path to the manifest file to apply.', },
             manifest: { type: 'string', description: 'Inline YAML manifest to apply if no path is provided.', },
             namespace: { type: 'string', description: 'Namespace to apply the manifest into, if supported by the manifest.', },
+            dryRun: { type: 'boolean', description: 'If true, perform a client-side dry run without applying changes.', default: false },
         },
         required: [],
     },
@@ -118,10 +175,12 @@ export const k8sApplyManifestTool: ToolDefinition = {
     execute: async (args: Record<string, any>) => {
         const path = args.path as string | undefined;
         const manifest = args.manifest as string | undefined;
-        const command = ['apply', '-f'];
+        const command = ['apply'];
+        if (args.dryRun) command.push('--dry-run=client');
+        command.push('-f');
         if (path) {
-            command.push(path);
-            if (args.namespace) command.push('-n', args.namespace as string);
+            command.push(ensureSafeKubectlArg(path, 'path'));
+            if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
             return runKubectl(command);
         }
 
@@ -129,7 +188,7 @@ export const k8sApplyManifestTool: ToolDefinition = {
             throw new Error('Either path or manifest is required to apply a Kubernetes manifest.');
         }
 
-        if (args.namespace) command.push('-n', args.namespace as string);
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         command.push('-');
         return runKubectl(command, manifest);
     },
@@ -148,6 +207,7 @@ export const k8sDeleteResourceTool: ToolDefinition = {
             namespace: { type: 'string', description: 'Namespace containing the resource.', },
             path: { type: 'string', description: 'Path to a manifest file that contains the resources to delete.', },
             force: { type: 'boolean', description: 'Force deletion of the resource.', default: false },
+            dryRun: { type: 'boolean', description: 'If true, perform a client-side dry run without deleting resources.', default: false },
         },
         required: [],
     },
@@ -162,16 +222,21 @@ export const k8sDeleteResourceTool: ToolDefinition = {
         const name = args.name as string | undefined;
 
         if (path) {
-            return runKubectl(['delete', '-f', path]);
+            const command = ['delete'];
+            if (args.dryRun) command.push('--dry-run=client');
+            command.push('-f', ensureSafeKubectlArg(path, 'path'));
+            if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
+            return runKubectl(command);
         }
 
         if (!resource || !name) {
             throw new Error('resource and name are required unless a manifest path is provided.');
         }
 
-        const command = ['delete', resource, name];
-        if (args.namespace) command.push('-n', args.namespace as string);
+        const command = ['delete', ensureSafeKubectlArg(resource, 'resource'), ensureSafeKubectlArg(name, 'name')];
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         if (args.force) command.push('--force', '--grace-period=0');
+        if (args.dryRun) command.push('--dry-run=client');
         return runKubectl(command);
     },
 };
@@ -185,14 +250,17 @@ export const k8sListServicesTool: ToolDefinition = {
         type: 'object',
         properties: {
             namespace: { type: 'string', description: 'Namespace to query. If omitted, uses the current namespace.' },
+            output: { type: 'string', description: 'Output format for the service list.', enum: ['wide', 'name', 'json', 'yaml'], default: 'wide' },
             allNamespaces: { type: 'boolean', description: 'List services across all namespaces.', default: false },
         },
         required: [],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['get', 'services', '-o', 'wide'];
+        const command = ['get', 'services'];
+        const output = args.output as string | undefined;
+        command.push('-o', output || 'wide');
         if (args.allNamespaces) command.push('--all-namespaces');
-        if (args.namespace && !args.allNamespaces) command.push('-n', args.namespace as string);
+        if (args.namespace && !args.allNamespaces) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         return runKubectl(command);
     },
 };
@@ -207,15 +275,25 @@ export const k8sListDeploymentsTool: ToolDefinition = {
         properties: {
             namespace: { type: 'string', description: 'Namespace to query. If omitted, uses the current namespace.' },
             labels: { type: 'string', description: 'Label selector to filter deployments.', },
+            labelSelector: {
+                type: 'object',
+                description: 'Map of label key/value pairs to filter deployments.',
+                additionalProperties: { type: 'string' },
+            },
+            output: { type: 'string', description: 'Output format for the deployment list.', enum: ['wide', 'name', 'json', 'yaml'], default: 'wide' },
             allNamespaces: { type: 'boolean', description: 'List deployments across all namespaces.', default: false },
         },
         required: [],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['get', 'deployments', '-o', 'wide'];
+        const command = ['get', 'deployments'];
+        const output = args.output as string | undefined;
+        command.push('-o', output || 'wide');
         if (args.allNamespaces) command.push('--all-namespaces');
-        if (args.namespace && !args.allNamespaces) command.push('-n', args.namespace as string);
-        if (args.labels) command.push('-l', args.labels as string);
+        if (args.namespace && !args.allNamespaces) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
+
+        const labelSelector = toLabelSelector(args.labelSelector as Record<string, string> | string | undefined) ?? args.labels;
+        if (labelSelector) command.push('-l', ensureSafeKubectlArg(labelSelector, 'labels'));
         return runKubectl(command);
     },
 };
@@ -235,8 +313,8 @@ export const k8sGetConfigMapTool: ToolDefinition = {
         required: ['name'],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['get', 'configmap', args.name as string, '-o', args.output as string || 'yaml'];
-        if (args.namespace) command.push('-n', args.namespace as string);
+        const command = ['get', 'configmap', ensureSafeKubectlArg(args.name as string, 'name'), '-o', args.output as string || 'yaml'];
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
         return runKubectl(command);
     },
 };
@@ -254,7 +332,7 @@ export const k8sSwitchContextTool: ToolDefinition = {
         required: ['context'],
     },
     execute: async (args: Record<string, any>) => {
-        return runKubectl(['config', 'use-context', args.context as string]);
+        return runKubectl(['config', 'use-context', ensureSafeKubectlArg(args.context as string, 'context')]);
     },
 };
 
@@ -265,10 +343,12 @@ export const k8sGetNamespacesTool: ToolDefinition = {
     category,
     parameters: {
         type: 'object',
-        properties: {},
+        properties: {
+            output: { type: 'string', description: 'Output format for the namespace list.', enum: ['wide', 'name', 'json', 'yaml'], default: 'wide' },
+        },
         required: [],
     },
-    execute: async () => runKubectl(['get', 'namespaces', '-o', 'wide']),
+    execute: async (args: Record<string, any>) => runKubectl(['get', 'namespaces', '-o', (args.output as string) || 'wide']),
 };
 
 export const k8sWaitForDeploymentTool: ToolDefinition = {
@@ -286,8 +366,9 @@ export const k8sWaitForDeploymentTool: ToolDefinition = {
         required: ['name'],
     },
     execute: async (args: Record<string, any>) => {
-        const command = ['rollout', 'status', `deployment/${args.name as string}`, '--timeout', args.timeout as string || '300s'];
-        if (args.namespace) command.push('-n', args.namespace as string);
-        return runKubectl(command);
+        const timeout = args.timeout as string | undefined;
+        const command = ['rollout', 'status', `deployment/${ensureSafeKubectlArg(args.name as string, 'name')}`, '--timeout', timeout || '300s'];
+        if (args.namespace) command.push('-n', ensureSafeKubectlArg(args.namespace as string, 'namespace'));
+        return runKubectl(command, undefined, parseKubectlTimeout(timeout));
     },
 };
