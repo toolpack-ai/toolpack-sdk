@@ -29,6 +29,11 @@ describe('SlackChannel', () => {
       });
       expect(channel).toBeDefined();
     });
+
+    it('should have isTriggerChannel set to false', () => {
+      const channel = new SlackChannel(baseConfig);
+      expect(channel.isTriggerChannel).toBe(false);
+    });
   });
 
   describe('normalize', () => {

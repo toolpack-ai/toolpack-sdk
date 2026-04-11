@@ -302,4 +302,65 @@ describe('Knowledge', () => {
       expect(results.length).toBe(2);
     });
   });
+
+  describe('add', () => {
+    it('should add single content with metadata', async () => {
+      const kb = await Knowledge.create({
+        provider,
+        sources: [],
+        embedder: createMockEmbedder(),
+        description: 'Test',
+      });
+
+      const id = await kb.add('Test conversation message', {
+        role: 'user',
+        conversationId: 'conv-123',
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(id).toBeDefined();
+      expect(typeof id).toBe('string');
+    });
+
+    it('should add content without metadata', async () => {
+      const kb = await Knowledge.create({
+        provider,
+        sources: [],
+        embedder: createMockEmbedder(),
+        description: 'Test',
+      });
+
+      const id = await kb.add('Simple content');
+
+      expect(id).toBeDefined();
+      expect(typeof id).toBe('string');
+    });
+
+    it('should throw on embedder failure', async () => {
+      const failingEmbedder = createMockEmbedder();
+      failingEmbedder.embed = vi.fn().mockRejectedValue(new Error('Embedding failed'));
+
+      const kb = await Knowledge.create({
+        provider,
+        sources: [],
+        embedder: failingEmbedder,
+        description: 'Test',
+      });
+
+      await expect(kb.add('Test content')).rejects.toThrow('Failed to add content');
+    });
+
+    it('should throw on provider failure', async () => {
+      provider.add = vi.fn().mockRejectedValue(new Error('Provider error'));
+
+      const kb = await Knowledge.create({
+        provider,
+        sources: [],
+        embedder: createMockEmbedder(),
+        description: 'Test',
+      });
+
+      await expect(kb.add('Test content')).rejects.toThrow('Failed to add content');
+    });
+  });
 });

@@ -8,6 +8,13 @@ export abstract class BaseChannel {
   /** Optional name for the channel - required for sendTo() routing */
   name?: string;
 
+  /**
+   * Whether this is a trigger channel (no human recipient).
+   * Trigger channels like ScheduledChannel cannot use this.ask() since there's no human to answer.
+   * Conversation channels (Slack, Telegram, Webhook) can use this.ask().
+   */
+  abstract readonly isTriggerChannel: boolean;
+
   /** Message handler set by AgentRegistry */
   protected _handler?: (input: AgentInput) => Promise<void>;
 

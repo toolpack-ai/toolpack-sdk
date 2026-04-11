@@ -23,6 +23,11 @@ describe('WebhookChannel', () => {
       const channel = new WebhookChannel({ path: '/webhook' });
       expect(channel).toBeDefined();
     });
+
+    it('should have isTriggerChannel set to false', () => {
+      const channel = new WebhookChannel(baseConfig);
+      expect(channel.isTriggerChannel).toBe(false);
+    });
   });
 
   describe('normalize', () => {

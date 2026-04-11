@@ -31,6 +31,7 @@ class TestAgent extends BaseAgent<'test_intent'> {
 
 // Test channel implementation
 class TestChannel extends BaseChannel {
+  readonly isTriggerChannel = false;
   handler?: (input: AgentInput) => Promise<void>;
   sent: { output: string; metadata?: Record<string, unknown> }[] = [];
 
@@ -282,6 +283,203 @@ describe('AgentRegistry', () => {
       await registry.stop();
 
       expect(channel.stopped).toBe(true);
+    });
+  });
+
+  describe('PendingAsksStore', () => {
+    describe('addPendingAsk', () => {
+      it('should add a pending ask', () => {
+        const registry = new AgentRegistry([]);
+        const ask = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'What is your name?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        expect(ask.id).toBeDefined();
+        expect(ask.conversationId).toBe('test-conv');
+        expect(ask.question).toBe('What is your name?');
+        expect(ask.status).toBe('pending');
+        expect(ask.retries).toBe(0);
+        expect(ask.askedAt).toBeInstanceOf(Date);
+      });
+
+      it('should queue multiple asks for same conversation', () => {
+        const registry = new AgentRegistry([]);
+        
+        const ask1 = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'First question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+        
+        const ask2 = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Second question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        expect(ask1.id).not.toBe(ask2.id);
+      });
+    });
+
+    describe('getPendingAsk', () => {
+      it('should return the first pending ask', () => {
+        const registry = new AgentRegistry([]);
+        registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'First question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        const pending = registry.getPendingAsk('test-conv');
+        expect(pending?.question).toBe('First question?');
+      });
+
+      it('should return undefined if no pending asks', () => {
+        const registry = new AgentRegistry([]);
+        const pending = registry.getPendingAsk('test-conv');
+        expect(pending).toBeUndefined();
+      });
+    });
+
+    describe('hasPendingAsks', () => {
+      it('should return true if has pending asks', () => {
+        const registry = new AgentRegistry([]);
+        registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        expect(registry.hasPendingAsks('test-conv')).toBe(true);
+      });
+
+      it('should return false if no pending asks', () => {
+        const registry = new AgentRegistry([]);
+        expect(registry.hasPendingAsks('test-conv')).toBe(false);
+      });
+    });
+
+    describe('resolvePendingAsk', () => {
+      it('should resolve the ask', async () => {
+        const registry = new AgentRegistry([]);
+        const ask = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        await registry.resolvePendingAsk(ask.id, 'Answer');
+
+        // After resolving, the ask should be dequeued
+        expect(registry.getPendingAsk('test-conv')).toBeUndefined();
+      });
+
+      it('should dequeue next ask when resolving', async () => {
+        const registry = new AgentRegistry([]);
+        const ask1 = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'First question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+        
+        registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Second question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        // First ask should be at front
+        expect(registry.getPendingAsk('test-conv')?.question).toBe('First question?');
+
+        // Mock sendTo to capture auto-send
+        const sendToMock = vi.fn().mockResolvedValue(undefined);
+        registry.sendTo = sendToMock;
+
+        // Resolve first ask - should auto-send second
+        await registry.resolvePendingAsk(ask1.id, 'Answer 1');
+
+        // Second ask should be sent automatically
+        expect(sendToMock).toHaveBeenCalledWith('test-channel', { output: 'Second question?' });
+
+        // Second ask should now be at front
+        expect(registry.getPendingAsk('test-conv')?.question).toBe('Second question?');
+      });
+    });
+
+    describe('incrementRetries', () => {
+      it('should increment retry count for a pending ask', () => {
+        const registry = new AgentRegistry([]);
+        const ask = registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        expect(ask.retries).toBe(0);
+
+        const newCount = registry.incrementRetries(ask.id);
+        expect(newCount).toBe(1);
+
+        const newCount2 = registry.incrementRetries(ask.id);
+        expect(newCount2).toBe(2);
+      });
+
+      it('should return undefined for non-existent ask', () => {
+        const registry = new AgentRegistry([]);
+        const result = registry.incrementRetries('non-existent-id');
+        expect(result).toBeUndefined();
+      });
+    });
+
+    describe('stop', () => {
+      it('should clear pending asks on stop', () => {
+        const mockToolpack = createMockToolpack();
+        const registry = new AgentRegistry([]);
+        
+        registry.addPendingAsk({
+          conversationId: 'test-conv',
+          agentName: 'test-agent',
+          question: 'Question?',
+          context: {},
+          maxRetries: 2,
+          channelName: 'test-channel',
+        });
+
+        registry.start(mockToolpack);
+        expect(registry.hasPendingAsks('test-conv')).toBe(true);
+
+        registry.stop();
+        expect(registry.hasPendingAsks('test-conv')).toBe(false);
+      });
     });
   });
 });

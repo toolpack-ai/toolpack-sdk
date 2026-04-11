@@ -34,14 +34,15 @@ interface CronComponents {
  * Delivers output to the configured notification destination.
  */
 export class ScheduledChannel extends BaseChannel {
+  readonly isTriggerChannel = true;
   private config: ScheduledChannelConfig;
-  private timer?: NodeJS.Timeout;
+  private timer?: ReturnType<typeof setTimeout>;
   private cronComponents: CronComponents;
 
   constructor(config: ScheduledChannelConfig) {
     super();
-    this.name = config.name;
     this.config = config;
+    this.name = config.name;
     this.cronComponents = this.parseCron(config.cron);
   }
 

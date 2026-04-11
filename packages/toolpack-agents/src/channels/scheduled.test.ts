@@ -48,6 +48,11 @@ describe('ScheduledChannel', () => {
       expect(input.message).toContain('Scheduled task triggered');
     });
 
+    it('should have isTriggerChannel set to true', () => {
+      const channel = new ScheduledChannel(baseConfig);
+      expect(channel.isTriggerChannel).toBe(true);
+    });
+
     it('should include date-keyed conversationId', () => {
       const channel = new ScheduledChannel(baseConfig);
 

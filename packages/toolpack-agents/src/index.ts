@@ -12,10 +12,12 @@ export {
   IAgentRegistry,
   AgentInstance,
   ChannelInterface,
+  PendingAsk,
 } from './agent/types.js';
 
 export { BaseAgent, AgentEvents } from './agent/base-agent.js';
 export { AgentRegistry } from './agent/agent-registry.js';
+export { AgentError } from './agent/errors.js';
 
 // Channel base class and implementations
 export { BaseChannel } from './channels/base-channel.js';

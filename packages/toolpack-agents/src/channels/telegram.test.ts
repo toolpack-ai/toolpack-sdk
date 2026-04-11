@@ -17,6 +17,11 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel({ ...baseConfig, name: 'telegram-bot' });
       expect(channel.name).toBe('telegram-bot');
     });
+
+    it('should have isTriggerChannel set to false', () => {
+      const channel = new TelegramChannel(baseConfig);
+      expect(channel.isTriggerChannel).toBe(false);
+    });
   });
 
   describe('normalize', () => {

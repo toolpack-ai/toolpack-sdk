@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import type { Toolpack } from 'toolpack-sdk';
-import { AgentInput, AgentResult, AgentRunOptions, WorkflowStep, IAgentRegistry } from './types.js';
+import type { Knowledge } from 'toolpack-knowledge';
+import { AgentInput, AgentResult, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk } from './types.js';
+import { AgentError } from './errors.js';
 
 /**
  * Abstract base class for all agents.
@@ -31,12 +33,21 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   /** Workflow configuration merged on top of mode config */
   workflow?: Record<string, unknown>;
 
+  /** Knowledge base for this agent - auto-injected as knowledge_search tool in run() */
+  knowledge?: Knowledge;
+
   // --- Internal references (set by AgentRegistry) ---
   /** Reference to the registry for channel routing */
   _registry?: IAgentRegistry;
 
   /** Name of the channel that triggered this invocation */
   _triggeringChannel?: string;
+
+  /** Current conversation ID for this invocation */
+  _conversationId?: string;
+
+  /** Whether the triggering channel is a trigger channel (ScheduledChannel has no human recipient) */
+  _isTriggerChannel?: boolean;
 
   /**
    * Constructor receives the shared Toolpack instance.
@@ -61,9 +72,12 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
    * @param options Optional overrides for this run
    * @returns The execution result
    */
-  protected async run(message: string, _options?: AgentRunOptions): Promise<AgentResult> {
+  protected async run(message: string, options?: AgentRunOptions): Promise<AgentResult> {
+    // Note: options can be used for per-run workflow overrides in future
+    void options;
+
     // Fire lifecycle hooks and emit events
-    await this.onBeforeRun({ message } as AgentInput<TIntent>);
+    await this.onBeforeRun({ message, conversationId: this._conversationId } as AgentInput<TIntent>);
     this.emit('agent:start', { message });
 
     try {
@@ -71,14 +85,85 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // This configures the workflow, system prompt, and available tools
       this.toolpack.setMode(this.mode);
 
+      // Build messages array with conversation history if available
+      const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
+
+      // Fetch and inject conversation history from knowledge base when knowledge and conversationId are set
+      if (this.knowledge && this._conversationId) {
+        try {
+          const historyResults = await this.knowledge.query(
+            `conversation ${this._conversationId}`,
+            {
+              limit: 10,
+              filter: { conversationId: this._conversationId, type: 'conversation_message' },
+            }
+          );
+          // Sort by timestamp and convert to messages
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const historyMessages = historyResults
+            .sort((a: { metadata?: { timestamp?: string } }, b: { metadata?: { timestamp?: string } }) => {
+              const aTime = a.metadata?.timestamp || '';
+              const bTime = b.metadata?.timestamp || '';
+              return aTime.localeCompare(bTime);
+            })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .filter((result: { metadata?: { role?: string } }) => {
+              // Only include messages with a valid role (user or assistant)
+              const role = result.metadata?.role;
+              return role === 'user' || role === 'assistant';
+            })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .map((result: { metadata?: { role?: string }; content: string }) => ({
+              role: result.metadata?.role as 'user' | 'assistant',
+              content: result.content,
+            }));
+          messages.push(...historyMessages);
+        } catch {
+          // If knowledge query fails, continue without history
+        }
+      }
+
+      messages.push({ role: 'user' as const, content: message });
+
+      // Build tools array with knowledge search if available
+      const tools = this.knowledge
+        ? [this.knowledge.toTool()]
+        : undefined;
+
       // Build the completion request
       const request = {
-        messages: [{ role: 'user' as const, content: message }],
+        messages,
         model: this.model || '', // Empty string lets the adapter use defaults
+        tools,
       };
 
       // Call toolpack.generate() with per-agent provider override
       const result = await this.toolpack.generate(request, this.provider);
+
+      // Store the exchange in knowledge base when knowledge and conversationId are set
+      if (this.knowledge && this._conversationId) {
+        try {
+          const timestamp = new Date().toISOString();
+          // Store user message
+          await this.knowledge.add(message, {
+            conversationId: this._conversationId,
+            type: 'conversation_message',
+            role: 'user',
+            agentName: this.name,
+            timestamp,
+          });
+          // Store agent response
+          await this.knowledge.add(result.content || '', {
+            conversationId: this._conversationId,
+            type: 'conversation_message',
+            role: 'assistant',
+            agentName: this.name,
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // If knowledge storage fails, continue without crashing
+        }
+      }
 
       // Convert SDK result to AgentResult
       const agentResult: AgentResult = {
@@ -114,18 +199,211 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   }
 
   /**
-   * Ask the user a question and wait for a response.
-   * Phase 1 implementation: sends the question via current channel and returns a pending marker.
-   * Full resumption logic lands in Phase 2 when conversationId + knowledge are available.
+   * Ask the user a question and pause execution.
+   * Phase 2 implementation: Enqueues question in PendingAsksStore and returns AgentResult.
+   * The answer arrives in the next invokeAgent() call via getPendingAsk().
    * @param question The question to ask the user
-   * @returns '__pending__' marker in Phase 1
+   * @param options Optional configuration for the ask
+   * @returns AgentResult indicating the agent is waiting for human input
    */
-  protected async ask(question: string): Promise<string> {
+  protected async ask(
+    question: string,
+    options?: {
+      context?: Record<string, unknown>;
+      maxRetries?: number;
+      expiresIn?: number;
+    }
+  ): Promise<AgentResult> {
+    if (!this._registry) {
+      throw new AgentError('Agent not registered - cannot use ask()');
+    }
+
+    if (!this._conversationId) {
+      throw new AgentError('No conversationId available - ask() requires a conversation channel');
+    }
+
+    // Check if this is a trigger channel (cannot ask humans from trigger channels)
+    if (this._isTriggerChannel) {
+      throw new AgentError(
+        'this.ask() called from a trigger channel (ScheduledChannel). ' +
+          'Trigger channels have no human recipient — use a conversation channel (Slack, Telegram, Webhook) instead.'
+      );
+    }
+
+    // Validate triggering channel is available
+    if (!this._triggeringChannel || this._triggeringChannel.trim() === '') {
+      throw new AgentError(
+        'Cannot use ask() - no triggering channel available. ' +
+          'The channel must have a name registered with AgentRegistry.'
+      );
+    }
+
+    // Create pending ask
+    const pendingAsk = this._registry.addPendingAsk({
+      conversationId: this._conversationId,
+      agentName: this.name,
+      question,
+      context: options?.context ?? {},
+      maxRetries: options?.maxRetries ?? 2,
+      expiresAt: options?.expiresIn ? new Date(Date.now() + options.expiresIn) : undefined,
+      channelName: this._triggeringChannel,
+    });
+
     // Send question to triggering channel
-    await this.sendTo(this._triggeringChannel ?? '', question);
-    // Phase 1: return pending marker
-    // Phase 2: will implement full async resumption with knowledge
-    return '__pending__';
+    await this.sendTo(this._triggeringChannel, question);
+
+    // Return AgentResult indicating we're waiting for human input
+    return {
+      output: question,
+      metadata: {
+        waitingForHuman: true,
+        askId: pendingAsk.id,
+      },
+    };
+  }
+
+  /**
+   * Get the current pending ask for a conversation.
+   * Returns the first pending ask in the queue, or null if none.
+   * @param conversationId Optional conversation ID (defaults to current conversation)
+   * @returns The pending ask or null
+   */
+  protected getPendingAsk(conversationId?: string): PendingAsk | null {
+    if (!this._registry) {
+      return null;
+    }
+    const convId = conversationId ?? this._conversationId;
+    if (!convId) {
+      return null;
+    }
+    return this._registry.getPendingAsk(convId) ?? null;
+  }
+
+  /**
+   * Resolve a pending ask with an answer.
+   * Marks the ask as answered and dequeues it, then sends the next ask if any.
+   * @param id The ask id
+   * @param answer The human's answer
+   */
+  protected async resolvePendingAsk(id: string, answer: string): Promise<void> {
+    if (!this._registry) {
+      throw new AgentError('Agent not registered - cannot resolve ask');
+    }
+    await this._registry.resolvePendingAsk(id, answer);
+  }
+
+  /**
+   * Evaluate if an answer sufficiently addresses a question.
+   * Uses simpleValidation callback if provided, otherwise uses LLM.
+   * @param question The original question
+   * @param answer The human's answer
+   * @param options Optional configuration
+   * @returns true if the answer is sufficient
+   */
+  protected async evaluateAnswer(
+    question: string,
+    answer: string,
+    options?: {
+      simpleValidation?: (answer: string) => boolean;
+    }
+  ): Promise<boolean> {
+    // If simple validation is provided, use it (no LLM call)
+    if (options?.simpleValidation) {
+      return options.simpleValidation(answer);
+    }
+
+    // Otherwise use LLM to evaluate
+    const result = await this.run(
+      `Evaluate if this answer sufficiently addresses the question.\n\nQuestion: "${question}"\nAnswer: "${answer}"\n\nIs this answer sufficient? Reply with ONLY "yes" or "no".`,
+      { workflow: { mode: 'single-shot' } }
+    );
+
+    return result.output.toLowerCase().trim().startsWith('yes');
+  }
+
+  /**
+   * Handle a pending ask reply with automatic retry logic.
+   * This helper implements the state machine pattern for human-in-the-loop:
+   * 1. Evaluates if the answer is sufficient
+   * 2. If insufficient and retries remain: re-asks with context preserved
+   * 3. If insufficient and maxRetries exceeded: resolves with '__insufficient__' and returns fallback
+   * 4. If sufficient: resolves the ask and returns the answer for continuing the task
+   *
+   * @param pending The pending ask to handle
+   * @param reply The human's reply
+   * @param onSufficient Callback when answer is sufficient (receives answer, should continue task)
+   * @param onInsufficient Optional callback when max retries exceeded (default: returns skipped result)
+   * @returns AgentResult from either re-asking or continuing the task
+   *
+   * @example
+   * ```ts
+   * async invokeAgent(input: AgentInput): Promise<AgentResult> {
+   *   const pending = this.getPendingAsk();
+   *   if (pending) {
+   *     return this.handlePendingAsk(
+   *       pending,
+   *       input.message ?? '',
+   *       async (answer) => {
+   *         // Continue with the task using the answer
+   *         return this.run(`Continue with: ${answer}`);
+   *       }
+   *     );
+   *   }
+   *   // ... normal execution
+   * }
+   * ```
+   */
+  protected async handlePendingAsk(
+    pending: PendingAsk,
+    reply: string,
+    onSufficient: (answer: string) => Promise<AgentResult> | AgentResult,
+    onInsufficient?: () => Promise<AgentResult> | AgentResult
+  ): Promise<AgentResult> {
+    // Check if answer is sufficient
+    const sufficient = await this.evaluateAnswer(pending.question, reply, {
+      simpleValidation: (a) => a.trim().length > 3, // Default: reject empty/one-word
+    });
+
+    if (sufficient) {
+      // Answer is good - resolve the ask and continue
+      await this.resolvePendingAsk(pending.id, reply);
+      return onSufficient(reply);
+    }
+
+    // Answer is insufficient - check retry limit
+    if (pending.retries >= pending.maxRetries) {
+      // Max retries exceeded - resolve with special marker and return fallback
+      await this.resolvePendingAsk(pending.id, '__insufficient__');
+
+      // Notify user
+      if (this._triggeringChannel) {
+        await this.sendTo(
+          this._triggeringChannel,
+          'I was unable to get enough information to proceed. Skipping this step.'
+        );
+      }
+
+      // Return fallback result
+      if (onInsufficient) {
+        return onInsufficient();
+      }
+
+      return {
+        output: 'Step skipped due to insufficient input.',
+        metadata: { skipped: true, askId: pending.id },
+      };
+    }
+
+    // Can retry - increment counter and re-ask
+    this._registry?.incrementRetries(pending.id);
+
+    return this.ask(
+      `I need a bit more clarity on: "${pending.question}". Could you provide more details?`,
+      {
+        context: pending.context,
+        maxRetries: pending.maxRetries,
+      }
+    );
   }
 
   // --- Lifecycle hooks (override in subclasses) ---

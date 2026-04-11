@@ -17,6 +17,15 @@ export type { WebUrlSourceOptions } from './sources/web-url.js';
 export { ApiDataSource } from './sources/api.js';
 export type { ApiDataSourceOptions } from './sources/api.js';
 
+export { JSONSource } from './sources/json.js';
+export type { JSONSourceOptions } from './sources/json.js';
+
+export { SQLiteSource } from './sources/sqlite.js';
+export type { SQLiteSourceOptions } from './sources/sqlite.js';
+
+export { PostgresSource } from './sources/postgres.js';
+export type { PostgresSourceOptions } from './sources/postgres.js';
+
 export { OllamaEmbedder } from './embedders/ollama.js';
 export type { OllamaEmbedderOptions } from './embedders/ollama.js';
 

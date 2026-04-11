@@ -84,11 +84,15 @@ export interface AgentInstance<TIntent extends string = string> extends EventEmi
   invokeAgent(input: AgentInput<TIntent>): Promise<AgentResult>;
   _registry?: IAgentRegistry;
   _triggeringChannel?: string;
+  _conversationId?: string;
+  _isTriggerChannel?: boolean;
 }
 
 // Channel interface
 export interface ChannelInterface {
   name?: string;
+  /** Whether this is a trigger channel (no human recipient). Trigger channels cannot use this.ask(). */
+  isTriggerChannel: boolean;
   listen(): void;
   send(output: AgentOutput): Promise<void>;
   normalize(incoming: unknown): AgentInput;
@@ -112,8 +116,58 @@ export interface AgentRegistration<TIntent extends string = string> {
   channels: ChannelInterface[];
 }
 
+/**
+ * Represents a pending human-in-the-loop question.
+ * Stored in-memory in PendingAsksStore (inside AgentRegistry).
+ */
+export interface PendingAsk {
+  /** Unique identifier for this ask */
+  id: string;
+
+  /** Ties ask to the conversation thread */
+  conversationId: string;
+
+  /** Agent that created this ask */
+  agentName: string;
+
+  /** The question sent to the human */
+  question: string;
+
+  /** Developer-stored state needed to continue */
+  context: Record<string, unknown>;
+
+  /** Current status of the ask */
+  status: 'pending' | 'answered' | 'expired';
+
+  /** The human's answer (if status is 'answered') */
+  answer?: string;
+
+  /** Number of times this ask has been retried */
+  retries: number;
+
+  /** Maximum retry attempts before giving up */
+  maxRetries: number;
+
+  /** When the ask was created */
+  askedAt: Date;
+
+  /** Optional expiration time */
+  expiresAt?: Date;
+
+  /** Channel name to send follow-up questions to (required for auto-send) */
+  channelName: string;
+}
+
 // AgentRegistry interface
 export interface IAgentRegistry {
   start(toolpack: Toolpack): void;
   sendTo(channelName: string, output: AgentOutput): Promise<void>;
+
+  // PendingAsksStore methods
+  getPendingAsk(conversationId: string): PendingAsk | undefined;
+  addPendingAsk(ask: Omit<PendingAsk, 'id' | 'askedAt' | 'retries' | 'status'>): PendingAsk;
+  resolvePendingAsk(id: string, answer: string): Promise<void>;
+  hasPendingAsks(conversationId: string): boolean;
+  incrementRetries(id: string): number | undefined;
+  cleanupExpiredAsks(): number;
 }

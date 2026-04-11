@@ -26,16 +26,17 @@ export interface SlackChannelConfig {
  * Receives messages from users and replies in-thread.
  */
 export class SlackChannel extends BaseChannel {
+  readonly isTriggerChannel = false;
   private config: SlackChannelConfig;
   private server?: any; // HTTP server instance
 
   constructor(config: SlackChannelConfig) {
     super();
-    this.name = config.name;
     this.config = {
       port: 3000,
       ...config,
     };
+    this.name = config.name;
   }
 
   /**

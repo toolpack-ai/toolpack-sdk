@@ -20,6 +20,7 @@ export interface TelegramChannelConfig {
  * Receives messages from users and sends replies.
  */
 export class TelegramChannel extends BaseChannel {
+  readonly isTriggerChannel = false;
   private config: TelegramChannelConfig;
   private offset: number = 0;
   private pollingInterval?: NodeJS.Timeout;

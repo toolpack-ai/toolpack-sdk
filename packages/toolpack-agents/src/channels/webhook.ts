@@ -28,17 +28,19 @@ interface PendingResponse {
  * Receives HTTP requests and responds with agent output.
  */
 export class WebhookChannel extends BaseChannel {
+  readonly isTriggerChannel = false;
   private config: WebhookChannelConfig;
   private server?: any; // HTTP server instance
   private pendingResponses: Map<string, PendingResponse> = new Map();
 
   constructor(config: WebhookChannelConfig) {
     super();
-    this.name = config.name;
     this.config = {
       port: 3000,
+      path: '/webhook',
       ...config,
     };
+    this.name = config.name;
   }
 
   /**
