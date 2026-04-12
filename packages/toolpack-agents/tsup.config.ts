@@ -8,6 +8,7 @@ export default defineConfig({
     index: 'src/index.ts',
     'channels/index': 'src/channels/index.ts',
     'testing/index': 'src/testing/index.ts',
+    'registry/index': 'src/registry/index.ts',
   },
   dts: true,
   format: ['esm', 'cjs'],

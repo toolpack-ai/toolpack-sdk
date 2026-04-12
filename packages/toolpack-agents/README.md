@@ -414,13 +414,61 @@ abstract class BaseChannel {
 }
 ```
 
+## Registry
+
+Discover and publish community-built agents.
+
+### Finding Agents
+
+```typescript
+import { searchRegistry } from '@toolpack-sdk/agents/registry';
+
+// Search all agents
+const results = await searchRegistry();
+
+// Search by keyword
+const results = await searchRegistry({ keyword: 'fintech' });
+
+// Filter by category
+const results = await searchRegistry({ category: 'research' });
+
+// Display results
+for (const agent of results.agents) {
+  console.log(`${agent.name}: ${agent.toolpack?.description || agent.description}`);
+  console.log(`  Install: npm install ${agent.name}`);
+}
+```
+
+### Publishing an Agent
+
+Add the `toolpack` metadata to your `package.json`:
+
+```json
+{
+  "name": "toolpack-agent-fintech-research",
+  "version": "1.0.0",
+  "keywords": ["toolpack-agent"],
+  "toolpack": {
+    "agent": true,
+    "category": "research",
+    "description": "Research agent focused on fintech news and regulatory updates",
+    "tags": ["fintech", "news", "research"]
+  }
+}
+```
+
+Requirements:
+- Must include `"toolpack-agent"` in `keywords`
+- Must have `"toolpack": { "agent": true }` in package.json
+- Agent class must extend `BaseAgent`
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-**Test Coverage:** 199 tests passing across 15 test files.
+**Test Coverage:** 240 tests passing across 17 test files.
 
 ## License
 
