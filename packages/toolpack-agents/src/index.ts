@@ -34,3 +34,12 @@ export { TelegramChannel, TelegramChannelConfig } from './channels/telegram-chan
 export { DiscordChannel, DiscordChannelConfig } from './channels/discord-channel.js';
 export { EmailChannel, EmailChannelConfig } from './channels/email-channel.js';
 export { SMSChannel, SMSChannelConfig } from './channels/sms-channel.js';
+
+// Transport layer for agent-to-agent communication
+export {
+  AgentTransport,
+  AgentRegistryTransportOptions,
+  LocalTransport,
+  JsonRpcTransport,
+  AgentJsonRpcServer,
+} from './transport/index.js';

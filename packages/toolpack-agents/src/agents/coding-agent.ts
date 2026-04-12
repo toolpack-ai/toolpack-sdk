@@ -2,6 +2,18 @@ import type { Toolpack } from 'toolpack-sdk';
 import { BaseAgent } from '../agent/base-agent.js';
 import { AgentInput, AgentResult } from '../agent/types.js';
 
+/**
+ * Built-in coding agent for software development tasks.
+ * Handles code generation, refactoring, debugging, test writing, and code review.
+ *
+ * @example
+ * ```ts
+ * const codingAgent = new CodingAgent(toolpack);
+ * const result = await codingAgent.invokeAgent({
+ *   message: 'Refactor this function to use async/await'
+ * });
+ * ```
+ */
 export class CodingAgent extends BaseAgent {
   name = 'coding-agent';
   description = 'Coding agent for code generation, refactoring, debugging, test writing, and code review';

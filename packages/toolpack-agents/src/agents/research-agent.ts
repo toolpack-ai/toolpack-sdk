@@ -2,6 +2,18 @@ import type { Toolpack } from 'toolpack-sdk';
 import { BaseAgent } from '../agent/base-agent.js';
 import { AgentInput, AgentResult } from '../agent/types.js';
 
+/**
+ * Built-in research agent for web research and information gathering.
+ * Specialized in summarization, fact-finding, competitive analysis, and trend monitoring.
+ *
+ * @example
+ * ```ts
+ * const researchAgent = new ResearchAgent(toolpack);
+ * const result = await researchAgent.invokeAgent({
+ *   message: 'Research latest AI regulations in the EU'
+ * });
+ * ```
+ */
 export class ResearchAgent extends BaseAgent {
   name = 'research-agent';
   description = 'Web research agent for summarization, fact-finding, competitive analysis, and trend monitoring';

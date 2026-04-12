@@ -415,6 +415,100 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     );
   }
 
+  /**
+   * Delegate a task to another agent by name (fire-and-forget).
+   * The target agent will be invoked asynchronously without waiting for the result.
+   *
+   * @param agentName The name of the target agent
+   * @param input Partial input for the agent (conversationId and delegatedBy will be added automatically)
+   * @returns Promise that resolves when the delegation is initiated (not when complete)
+   *
+   * @example
+   * ```ts
+   * // Fire-and-forget delegation
+   * await this.delegate('email-agent', {
+   *   message: 'Send weekly report',
+   *   intent: 'send_email'
+   * });
+   * ```
+   */
+  protected async delegate(
+    agentName: string,
+    input: Partial<AgentInput>
+  ): Promise<void> {
+    if (!this._registry) {
+      throw new AgentError('Agent not registered - cannot use delegate()');
+    }
+
+    const fullInput: AgentInput = {
+      message: input.message,
+      intent: input.intent,
+      data: input.data,
+      context: {
+        ...(input.context || {}),
+        delegatedBy: this.name,
+      },
+      conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
+    };
+
+    // Get transport from registry (will use LocalTransport by default)
+    const transport = (this._registry as any)._transport;
+    if (!transport) {
+      throw new AgentError('No transport configured for delegation');
+    }
+
+    // Fire and forget - don't await
+    transport.invoke(agentName, fullInput).catch((error: Error) => {
+      console.error(`[${this.name}] Delegation to ${agentName} failed:`, error.message);
+    });
+  }
+
+  /**
+   * Delegate a task to another agent and wait for the result (synchronous delegation).
+   * The target agent will be invoked and this method will wait for its completion.
+   *
+   * @param agentName The name of the target agent
+   * @param input Partial input for the agent (conversationId and delegatedBy will be added automatically)
+   * @returns The result from the target agent
+   *
+   * @example
+   * ```ts
+   * // Wait for result
+   * const result = await this.delegateAndWait('data-agent', {
+   *   message: 'Generate weekly leads report',
+   *   intent: 'generate_report'
+   * });
+   * console.log('Report:', result.output);
+   * ```
+   */
+  protected async delegateAndWait(
+    agentName: string,
+    input: Partial<AgentInput>
+  ): Promise<AgentResult> {
+    if (!this._registry) {
+      throw new AgentError('Agent not registered - cannot use delegateAndWait()');
+    }
+
+    const fullInput: AgentInput = {
+      message: input.message,
+      intent: input.intent,
+      data: input.data,
+      context: {
+        ...(input.context || {}),
+        delegatedBy: this.name,
+      },
+      conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
+    };
+
+    // Get transport from registry (will use LocalTransport by default)
+    const transport = (this._registry as any)._transport;
+    if (!transport) {
+      throw new AgentError('No transport configured for delegation');
+    }
+
+    return await transport.invoke(agentName, fullInput);
+  }
+
   // --- Lifecycle hooks (override in subclasses) ---
 
   /**

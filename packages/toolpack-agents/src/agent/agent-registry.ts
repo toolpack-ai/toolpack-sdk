@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
 import type { Toolpack } from 'toolpack-sdk';
 import type { AgentInput, AgentOutput, AgentRegistration, IAgentRegistry, ChannelInterface, AgentInstance, PendingAsk } from './types.js';
+import type { AgentTransport, AgentRegistryTransportOptions } from '../transport/types.js';
+import { LocalTransport } from '../transport/local-transport.js';
 
 /**
  * Registry for agents and their associated channels.
@@ -11,6 +13,9 @@ export class AgentRegistry implements IAgentRegistry {
   private instances: Map<string, AgentInstance> = new Map();
   private channels: Map<string, ChannelInterface> = new Map();
 
+  /** Transport for agent-to-agent communication */
+  _transport: AgentTransport;
+
   /** In-memory store for pending human-in-the-loop questions. Stored as Map<conversationId, PendingAsk[]> */
   private pendingAsks: Map<string, PendingAsk[]> = new Map();
 
@@ -20,9 +25,12 @@ export class AgentRegistry implements IAgentRegistry {
   /**
    * Create a new agent registry with the given registrations.
    * @param registrations Array of agent registrations with their channels
+   * @param options Optional configuration including transport
    */
-  constructor(registrations: AgentRegistration[]) {
+  constructor(registrations: AgentRegistration[], options?: AgentRegistryTransportOptions) {
     this.registrations = registrations;
+    // Default to LocalTransport if no transport specified
+    this._transport = options?.transport || new LocalTransport(this);
   }
 
   /**

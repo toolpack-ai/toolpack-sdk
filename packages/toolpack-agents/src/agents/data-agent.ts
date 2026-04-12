@@ -2,6 +2,18 @@ import type { Toolpack } from 'toolpack-sdk';
 import { BaseAgent } from '../agent/base-agent.js';
 import { AgentInput, AgentResult } from '../agent/types.js';
 
+/**
+ * Built-in data agent for database and data analysis tasks.
+ * Handles database queries, CSV generation, data analysis, reporting, and aggregation.
+ *
+ * @example
+ * ```ts
+ * const dataAgent = new DataAgent(toolpack);
+ * const result = await dataAgent.invokeAgent({
+ *   message: 'Generate a monthly sales report from the orders table'
+ * });
+ * ```
+ */
 export class DataAgent extends BaseAgent {
   name = 'data-agent';
   description = 'Data agent for database queries, CSV generation, data analysis, reporting, and aggregation';

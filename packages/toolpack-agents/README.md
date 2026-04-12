@@ -13,13 +13,31 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
 - **Type-Safe** — Full TypeScript support
-- **Production-Ready** — 199 tests passing
+- **Production-Ready** — 254 tests passing
 
 ## Installation
 
 ```bash
 npm install @toolpack-sdk/agents
 ```
+
+## Stable API (Phase 4)
+
+The following APIs are stable and follow semantic versioning. Breaking changes will require a major version bump:
+
+- `BaseAgent` — Abstract base class for all agents
+- `BaseChannel` — Abstract base class for all channels
+- `AgentRegistry` — Registry for agents and channels
+- `AgentInput`, `AgentResult`, `AgentOutput` — Core data structures
+- `AgentTransport`, `LocalTransport`, `JsonRpcTransport` — Transport layer
+- `AgentJsonRpcServer` — JSON-RPC server for hosting agents
+- `AgentError` — Error class for agent failures
+
+### Version Policy
+
+- **Major (X.y.z)** — Breaking API changes
+- **Minor (x.Y.z)** — New features, backward compatible
+- **Patch (x.y.Z)** — Bug fixes, backward compatible
 
 ## Quick Start
 
@@ -414,6 +432,82 @@ abstract class BaseChannel {
 }
 ```
 
+## Agent-to-Agent Messaging
+
+Agents can delegate tasks to other agents without tight coupling.
+
+### Local Delegation (Same Process)
+
+```typescript
+import { AgentRegistry, BaseAgent } from '@toolpack-sdk/agents';
+import type { AgentInput, AgentResult } from '@toolpack-sdk/agents';
+
+const registry = new AgentRegistry([
+  { agent: EmailAgent, channels: [slack] },
+  { agent: DataAgent, channels: [] },
+]);
+
+// Inside EmailAgent
+class EmailAgent extends BaseAgent {
+  async invokeAgent(input: AgentInput): Promise<AgentResult> {
+    // Delegate to DataAgent and wait for result
+    const report = await this.delegateAndWait('data-agent', {
+      message: 'Generate weekly leads report',
+      intent: 'generate_report',
+    });
+    
+    return {
+      output: `Email sent with report: ${report.output}`,
+    };
+  }
+}
+```
+
+### Cross-Process Delegation (JSON-RPC)
+
+**Server (Host Agents):**
+```typescript
+import { AgentJsonRpcServer } from '@toolpack-sdk/agents';
+
+const server = new AgentJsonRpcServer({ port: 3000 });
+server.registerAgent('data-agent', new DataAgent(toolpack));
+server.registerAgent('research-agent', new ResearchAgent(toolpack));
+server.listen();
+```
+
+**Client (Call Remote Agents):**
+```typescript
+import { AgentRegistry, JsonRpcTransport, BaseAgent } from '@toolpack-sdk/agents';
+import type { AgentInput, AgentResult } from '@toolpack-sdk/agents';
+
+const registry = new AgentRegistry([
+  { agent: EmailAgent, channels: [slack] },
+], {
+  transport: new JsonRpcTransport({
+    agents: {
+      'data-agent': 'http://localhost:3000',
+      'research-agent': 'http://remote-server:3000',
+    }
+  })
+});
+
+// Inside EmailAgent
+class EmailAgent extends BaseAgent {
+  async invokeAgent(input: AgentInput): Promise<AgentResult> {
+    // Can now delegate to remote agents
+    const report = await this.delegateAndWait('data-agent', {
+      message: 'Generate report'
+    });
+    return { output: `Email sent with: ${report.output}` };
+  }
+}
+```
+
+### Delegation Methods
+
+- **`delegate(agentName, input)`** - Fire-and-forget, returns immediately
+- **`delegateAndWait(agentName, input)`** - Waits for result, returns `AgentResult`
+
 ## Registry
 
 Discover and publish community-built agents.
@@ -462,13 +556,62 @@ Requirements:
 - Must have `"toolpack": { "agent": true }` in package.json
 - Agent class must extend `BaseAgent`
 
+## Error Handling
+
+### Error Types
+
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| `AgentError` | Generic agent failure | Check error message for details |
+| `AgentError` (delegate) | Agent not registered | Ensure agent is registered with `AgentRegistry` |
+| `AgentError` (transport) | Transport misconfiguration | Verify transport config and agent URLs |
+| `RegistryError` | NPM registry failure | Check network connection and registry URL |
+
+### Handling Errors
+
+```typescript
+import { AgentError } from '@toolpack-sdk/agents';
+
+try {
+  const result = await agent.invokeAgent({ message: 'Hello' });
+} catch (error) {
+  if (error instanceof AgentError) {
+    // Agent-specific error
+    console.error('Agent failed:', error.message);
+  } else {
+    // Unknown error
+    console.error('Unexpected error:', error);
+  }
+}
+```
+
+### Common Issues
+
+**Agent not found during delegation**
+```
+Agent "data-agent" not found in registry. Available agents: email-agent, browser-agent
+```
+→ Ensure the target agent is registered in `AgentRegistry`.
+
+**Transport configuration error**
+```
+No transport configured for delegation
+```
+→ Use `AgentRegistry` with `LocalTransport` (default) or configure `JsonRpcTransport` for cross-process communication.
+
+**JSON-RPC connection failure**
+```
+Failed to invoke agent "data-agent" at http://localhost:3000: fetch failed
+```
+→ Verify the JSON-RPC server is running and the URL/port is correct.
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-**Test Coverage:** 240 tests passing across 17 test files.
+**Test Coverage:** 254 tests passing across 18 test files.
 
 ## License
 

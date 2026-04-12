@@ -2,6 +2,18 @@ import type { Toolpack } from 'toolpack-sdk';
 import { BaseAgent } from '../agent/base-agent.js';
 import { AgentInput, AgentResult } from '../agent/types.js';
 
+/**
+ * Built-in browser agent for web interaction tasks.
+ * Handles web browsing, form interaction, page extraction, and link following.
+ *
+ * @example
+ * ```ts
+ * const browserAgent = new BrowserAgent(toolpack);
+ * const result = await browserAgent.invokeAgent({
+ *   message: 'Extract all product prices from example.com/products'
+ * });
+ * ```
+ */
 export class BrowserAgent extends BaseAgent {
   name = 'browser-agent';
   description = 'Browser agent for web browsing, form interaction, page extraction, and link following';
