@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ScheduledChannel, ScheduledChannelConfig } from './scheduled.js';
+import { ScheduledChannel, ScheduledChannelConfig } from './scheduled-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
 
 describe('ScheduledChannel', () => {
@@ -171,6 +171,96 @@ describe('ScheduledChannel', () => {
       const channel = new ScheduledChannel({
         cron: '* * * * *',
         notify: 'slack:#ops',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support step values (every 15 minutes)', () => {
+      const channel = new ScheduledChannel({
+        cron: '*/15 * * * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support ranges (9am-5pm)', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 9-17 * * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support lists (specific minutes)', () => {
+      const channel = new ScheduledChannel({
+        cron: '0,15,30,45 * * * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support combinations (every 5 min from 0-30)', () => {
+      const channel = new ScheduledChannel({
+        cron: '0-30/5 * * * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support complex expressions (business hours)', () => {
+      const channel = new ScheduledChannel({
+        cron: '*/15 9-17 * * 1-5',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support specific days of week', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 10 * * 1,3,5',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support specific days of month', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 0 1,15 * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support specific months', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 9 1 1,6,12 *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support midnight cron', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 0 * * *',
+        notify: 'console',
+      });
+
+      expect(channel).toBeDefined();
+    });
+
+    it('should support noon cron', () => {
+      const channel = new ScheduledChannel({
+        cron: '0 12 * * *',
+        notify: 'console',
       });
 
       expect(channel).toBeDefined();

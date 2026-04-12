@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WebhookChannel, WebhookChannelConfig } from './webhook.js';
+import { WebhookChannel, WebhookChannelConfig } from './webhook-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
 
 describe('WebhookChannel', () => {

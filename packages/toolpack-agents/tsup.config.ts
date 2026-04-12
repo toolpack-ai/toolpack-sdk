@@ -4,7 +4,11 @@ const require = createRequire(import.meta.url);
 const pkg = require('./package.json');
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    'channels/index': 'src/channels/index.ts',
+    'testing/index': 'src/testing/index.ts',
+  },
   dts: true,
   format: ['esm', 'cjs'],
   splitting: false,

@@ -1,5 +1,9 @@
 import { BaseChannel } from './base-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
+import cronParserModule from 'cron-parser';
+
+// Type assertion for cron-parser which has incorrect type definitions
+const cronParser = cronParserModule as any;
 
 /**
  * Configuration options for ScheduledChannel.
@@ -8,26 +12,22 @@ export interface ScheduledChannelConfig {
   /** Optional name for the channel - required for sendTo() routing */
   name?: string;
 
-  /** Cron expression (e.g., '0 9 * * 1-5' for 9am weekdays) */
+  /** 
+   * Cron expression - supports full cron syntax including wildcards, ranges, steps, and lists.
+   * Examples: '0 9 * * 1-5' for 9am weekdays, or '* /15 * * * *' for every 15 minutes
+   */
   cron: string;
 
   /** Optional intent to pre-set in AgentInput */
   intent?: string;
 
-  /** Where to deliver the output: 'slack:#channel' or 'webhook:https://...' */
+  /** Optional message to send to the agent on each trigger */
+  message?: string;
+
+  /** Where to deliver the output: 'slack:#channel', 'webhook:https://...', or 'console' for logging only */
   notify: string;
 }
 
-/**
- * Parsed cron expression components.
- */
-interface CronComponents {
-  minute: number | '*';
-  hour: number | '*';
-  dayOfMonth: number | '*';
-  month: number | '*';
-  dayOfWeek: number | '*';
-}
 
 /**
  * Scheduled channel that runs agents on a cron schedule.
@@ -37,13 +37,18 @@ export class ScheduledChannel extends BaseChannel {
   readonly isTriggerChannel = true;
   private config: ScheduledChannelConfig;
   private timer?: ReturnType<typeof setTimeout>;
-  private cronComponents: CronComponents;
 
   constructor(config: ScheduledChannelConfig) {
     super();
     this.config = config;
     this.name = config.name;
-    this.cronComponents = this.parseCron(config.cron);
+    
+    // Validate cron expression on construction
+    try {
+      cronParser.parse(config.cron);
+    } catch (error) {
+      throw new Error(`Invalid cron expression '${config.cron}': ${(error as Error).message}`);
+    }
   }
 
   /**
@@ -143,61 +148,14 @@ export class ScheduledChannel extends BaseChannel {
   }
 
   /**
-   * Parse a cron expression into components.
-   */
-  private parseCron(cron: string): CronComponents {
-    const parts = cron.split(' ');
-    if (parts.length !== 5) {
-      throw new Error(`Invalid cron expression: ${cron}. Expected 5 parts: minute hour day month weekday`);
-    }
-
-    const parsePart = (part: string): number | '*' => {
-      if (part === '*') return '*';
-      const num = parseInt(part, 10);
-      if (isNaN(num)) {
-        throw new Error(`Invalid cron part: ${part}`);
-      }
-      return num;
-    };
-
-    return {
-      minute: parsePart(parts[0]),
-      hour: parsePart(parts[1]),
-      dayOfMonth: parsePart(parts[2]),
-      month: parsePart(parts[3]),
-      dayOfWeek: parsePart(parts[4]),
-    };
-  }
-
-  /**
-   * Calculate next run time based on cron components.
+   * Calculate next run time using cron-parser.
    */
   private getNextRunTime(): Date {
-    const now = new Date();
-    const next = new Date(now);
-
-    // Simple implementation: find next matching time
-    // This is a basic implementation; a production version would use a proper cron library
-
-    if (this.cronComponents.minute !== '*') {
-      next.setMinutes(this.cronComponents.minute as number);
-      next.setSeconds(0);
-      next.setMilliseconds(0);
-
-      if (next <= now) {
-        next.setHours(next.getHours() + 1);
-      }
-    }
-
-    if (this.cronComponents.hour !== '*') {
-      next.setHours(this.cronComponents.hour as number);
-
-      if (next <= now) {
-        next.setDate(next.getDate() + 1);
-      }
-    }
-
-    return next;
+    const interval = cronParser.parse(this.config.cron, {
+      currentDate: new Date(),
+    });
+    
+    return interval.next().toDate();
   }
 
   /**

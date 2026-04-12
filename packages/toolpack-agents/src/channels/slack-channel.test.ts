@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SlackChannel, SlackChannelConfig } from './slack.js';
+import { SlackChannel, SlackChannelConfig } from './slack-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
 
 describe('SlackChannel', () => {

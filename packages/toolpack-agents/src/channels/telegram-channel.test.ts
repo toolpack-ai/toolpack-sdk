@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TelegramChannel, TelegramChannelConfig } from './telegram.js';
+import { TelegramChannel, TelegramChannelConfig } from './telegram-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
 
 describe('TelegramChannel', () => {
