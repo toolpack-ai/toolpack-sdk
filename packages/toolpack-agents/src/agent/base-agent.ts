@@ -3,6 +3,7 @@ import type { Toolpack } from 'toolpack-sdk';
 import type { Knowledge } from '@toolpack-sdk/knowledge';
 import { AgentInput, AgentResult, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk } from './types.js';
 import { AgentError } from './errors.js';
+import { ConversationHistory } from '../conversation-history/index.js';
 
 /**
  * Abstract base class for all agents.
@@ -35,6 +36,9 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /** Knowledge base for this agent - auto-injected as knowledge_search tool in run() */
   knowledge?: Knowledge;
+
+  /** Conversation history storage - separate from domain knowledge */
+  conversationHistory?: ConversationHistory;
 
   // --- Internal references (set by AgentRegistry) ---
   /** Reference to the registry for channel routing */
@@ -85,92 +89,154 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // This configures the workflow, system prompt, and available tools
       this.toolpack.setMode(this.mode);
 
-      // Build messages array with conversation history if available
-      const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
+      // Build messages array
+      // Note: System prompt is added first and is NOT counted toward the limit
+      // It provides essential context/instructions and should always be present
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
 
-      // Fetch and inject conversation history from knowledge base when knowledge and conversationId are set
-      if (this.knowledge && this._conversationId) {
+      // Add system prompt if defined (always sent, outside limit)
+      if (this.systemPrompt) {
+        messages.push({
+          role: 'system',
+          content: this.systemPrompt,
+        });
+      }
+
+      // Fetch conversation history if available (respects limit)
+      if (this.conversationHistory && this._conversationId) {
         try {
-          const historyResults = await this.knowledge.query(
-            `conversation ${this._conversationId}`,
-            {
-              limit: 10,
-              filter: { conversationId: this._conversationId, type: 'conversation_message' },
-            }
-          );
-          // Sort by timestamp and convert to messages
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const historyMessages = historyResults
-            .sort((a, b) => {
-              const aTime = (a.chunk.metadata?.timestamp as string) || '';
-              const bTime = (b.chunk.metadata?.timestamp as string) || '';
-              return aTime.localeCompare(bTime);
-            })
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .filter((result) => {
-              // Only include messages with a valid role (user or assistant)
-              const role = result.chunk.metadata?.role as string | undefined;
-              return role === 'user' || role === 'assistant';
-            })
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .map((result) => ({
-              role: result.chunk.metadata?.role as 'user' | 'assistant',
-              content: result.chunk.content,
-            }));
-          messages.push(...historyMessages);
+          const history = await this.conversationHistory.getHistory(this._conversationId);
+          messages.push(...history);
         } catch {
-          // If knowledge query fails, continue without history
+          // If history fetch fails, continue without it
         }
       }
 
-      messages.push({ role: 'user' as const, content: message });
+      // Add current user message (always sent)
+      messages.push({
+        role: 'user',
+        content: message,
+      });
 
-      // Build tools array with knowledge search if available
-      // Convert KnowledgeTool to SDK ToolCallRequest format
+      // Store user message in conversation history BEFORE AI call
+      if (this.conversationHistory && this._conversationId) {
+        try {
+          await this.conversationHistory.addUserMessage(
+            this._conversationId,
+            message,
+            this.name
+          );
+        } catch {
+          // If history storage fails, continue without crashing
+        }
+      }
+
+      // Build tools array with knowledge search and conversation search if available
+      const tools: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
+      
+      // Store tool execute functions for later execution
+      const toolExecutors = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+
+      // Add knowledge search tool
       const knowledgeTool = this.knowledge?.toTool();
-      const tools = knowledgeTool
-        ? [{
-            type: 'function' as const,
-            function: {
-              name: knowledgeTool.name,
-              description: knowledgeTool.description,
-              parameters: knowledgeTool.parameters,
-            },
-          }]
-        : undefined;
+      if (knowledgeTool) {
+        tools.push({
+          type: 'function' as const,
+          function: {
+            name: knowledgeTool.name,
+            description: knowledgeTool.description,
+            parameters: knowledgeTool.parameters as Record<string, unknown>,
+          },
+        });
+        // Store the execute function
+        toolExecutors.set(knowledgeTool.name, knowledgeTool.execute);
+      }
+      
+      // Add conversation search tool if search is enabled
+      if (this.conversationHistory?.isSearchEnabled && this._conversationId) {
+        const conversationSearchTool = this.conversationHistory.toTool(this._conversationId);
+        tools.push({
+          type: 'function' as const,
+          function: {
+            name: conversationSearchTool.name,
+            description: conversationSearchTool.description,
+            parameters: conversationSearchTool.parameters as Record<string, unknown>,
+          },
+        });
+        // Store the execute function
+        toolExecutors.set(conversationSearchTool.name, conversationSearchTool.execute);
+      }
 
       // Build the completion request
       const request = {
         messages,
         model: this.model || '', // Empty string lets the adapter use defaults
-        tools,
+        tools: tools.length > 0 ? tools : undefined,
       };
 
       // Call toolpack.generate() with per-agent provider override
-      const result = await this.toolpack.generate(request, this.provider);
+      let result = await this.toolpack.generate(request, this.provider);
 
-      // Store the exchange in knowledge base when knowledge and conversationId are set
-      if (this.knowledge && this._conversationId) {
-        try {
-          const timestamp = new Date().toISOString();
-          // Store user message
-          await this.knowledge.add(message, {
-            conversationId: this._conversationId,
-            type: 'conversation_message',
-            role: 'user',
-            agentName: this.name,
-            timestamp,
-          });
-          // Store agent response
-          await this.knowledge.add(result.content || '', {
-            conversationId: this._conversationId,
-            type: 'conversation_message',
+      // Handle tool calls if present
+      if (result.toolCalls && result.toolCalls.length > 0) {
+        // Add tool call messages to conversation
+        for (const toolCall of result.toolCalls) {
+          messages.push({
             role: 'assistant',
-            agentName: this.name,
-            timestamp: new Date().toISOString(),
-          });
+            content: '',
+            tool_calls: [{
+              id: toolCall.id,
+              type: 'function',
+              function: {
+                name: toolCall.name,
+                arguments: JSON.stringify(toolCall.arguments),
+              },
+            }],
+          } as any);
+
+          // Execute the tool
+          const executor = toolExecutors.get(toolCall.name);
+          let toolResult: unknown;
+          if (executor) {
+            try {
+              toolResult = await executor(toolCall.arguments);
+            } catch (error) {
+              toolResult = { error: (error as Error).message };
+            }
+          } else {
+            toolResult = { error: `Tool ${toolCall.name} not found` };
+          }
+
+          // Add tool result to conversation
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(toolResult),
+          } as any);
+        }
+
+        // Make second call to get AI response with tool results
+        const finalRequest = {
+          messages,
+          model: this.model || '',
+          tools: undefined, // Don't need tools for this call
+        };
+        result = await this.toolpack.generate(finalRequest, this.provider);
+      }
+
+      // Store the exchange in conversation history when conversationHistory and conversationId are set
+      if (this.conversationHistory && this._conversationId) {
+        try {
+          // Store agent response (user message was stored before AI call)
+          if (result.content) {
+            await this.conversationHistory.addAssistantMessage(
+              this._conversationId,
+              result.content,
+              this.name
+            );
+          }
         } catch {
-          // If knowledge storage fails, continue without crashing
+          // If history storage fails, continue without crashing
         }
       }
 

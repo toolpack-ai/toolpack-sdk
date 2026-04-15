@@ -21,6 +21,7 @@ class TestAgent extends BaseAgent<'greet' | 'help'> {
   mode = 'chat';
   provider = 'openai';
   model = 'gpt-4';
+  systemPrompt = 'You are a helpful test agent.';
 
   beforeRunCalled = false;
   completeCalled = false;
@@ -133,16 +134,47 @@ describe('BaseAgent', () => {
       const agent = new TestAgent(mockToolpack);
       await agent.invokeAgent({
         message: 'Test',
-        conversationId: 'test-4',
       });
 
       expect(mockToolpack.generate).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: [{ role: 'user', content: 'Test' }],
+          messages: expect.any(Array),
           model: 'gpt-4',
         }),
         'openai'
       );
+    });
+
+    it('should include system prompt as first message', async () => {
+      const agent = new TestAgent(mockToolpack);
+      agent.systemPrompt = 'You are a specialized test agent.';
+
+      await agent.invokeAgent({
+        message: 'Test message',
+      });
+
+      const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
+      const request = generateCall[0] as { messages: Array<{ role: string; content: string }> };
+
+      expect(request.messages[0]).toEqual({
+        role: 'system',
+        content: 'You are a specialized test agent.',
+      });
+    });
+
+    it('should not include system message when systemPrompt is not set', async () => {
+      const agent = new TestAgent(mockToolpack);
+      agent.systemPrompt = undefined;
+
+      await agent.invokeAgent({
+        message: 'Test message',
+      });
+
+      const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
+      const request = generateCall[0] as { messages: Array<{ role: string; content: string }> };
+
+      const systemMessages = request.messages.filter(m => m.role === 'system');
+      expect(systemMessages).toHaveLength(0);
     });
 
     it('should return AgentResult with output and metadata', async () => {
@@ -639,38 +671,18 @@ describe('BaseAgent', () => {
       );
     });
 
-    it('should fetch conversation history from knowledge when available', async () => {
-      const mockKnowledgeTool = {
-        name: 'knowledge_search',
-        description: 'Search knowledge base',
-        execute: vi.fn(),
-      };
-
-      const historyResults = [
-        {
-          chunk: {
-            content: 'Hello from user',
-            metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
-          },
-          score: 0.9,
-        },
-        {
-          chunk: {
-            content: 'Hello from assistant',
-            metadata: { role: 'assistant', timestamp: '2024-01-01T00:00:01Z' },
-          },
-          score: 0.9,
-        },
-      ];
-
-      const mockKnowledge = {
-        query: vi.fn().mockResolvedValue(historyResults),
-        add: vi.fn().mockResolvedValue('chunk-id'),
-        toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
+    it('should fetch conversation history from ConversationHistory when available', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([
+          { role: 'user' as const, content: 'Hello from user', timestamp: '2024-01-01T00:00:00Z' },
+          { role: 'assistant' as const, content: 'Hello from assistant', timestamp: '2024-01-01T00:00:01Z' },
+        ]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
       };
 
       const agent = new TestAgent(mockToolpack);
-      agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent._conversationId = 'test-conv';
 
       await agent.invokeAgent({
@@ -678,99 +690,61 @@ describe('BaseAgent', () => {
         conversationId: 'test-conv',
       });
 
-      // Verify knowledge.query was called with correct parameters
-      expect(mockKnowledge.query).toHaveBeenCalledWith(
-        'conversation test-conv',
-        expect.objectContaining({
-          limit: 10,
-          filter: { conversationId: 'test-conv', type: 'conversation_message' },
-        })
-      );
+      // Verify getHistory was called (limit is now read from instance property)
+      expect(mockConversationHistory.getHistory).toHaveBeenCalledWith('test-conv');
 
-      // Verify the messages were injected into generate
-      expect(mockToolpack.generate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: expect.arrayContaining([
-            { role: 'user', content: 'Hello from user' },
-            { role: 'assistant', content: 'Hello from assistant' },
-            { role: 'user', content: 'New message' },
-          ]),
-        }),
-        expect.anything()
-      );
-    });
-
-    it('should skip history entries without valid role metadata', async () => {
-      const mockKnowledgeTool = {
-        name: 'knowledge_search',
-        description: 'Search knowledge base',
-        execute: vi.fn(),
-      };
-
-      const historyResults = [
-        {
-          chunk: {
-            content: 'Valid user message',
-            metadata: { role: 'user', timestamp: '2024-01-01T00:00:00Z' },
-          },
-          score: 0.9,
-        },
-        {
-          chunk: {
-            content: 'Message without role metadata',
-            metadata: { timestamp: '2024-01-01T00:00:01Z' },
-          },
-          score: 0.9,
-        },
-        {
-          chunk: {
-            content: 'Message with invalid role',
-            metadata: { role: 'system', timestamp: '2024-01-01T00:00:02Z' },
-          },
-          score: 0.9,
-        },
-      ];
-
-      const mockKnowledge = {
-        query: vi.fn().mockResolvedValue(historyResults),
-        add: vi.fn().mockResolvedValue('chunk-id'),
-        toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
-      };
-
-      const agent = new TestAgent(mockToolpack);
-      agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
-      agent._conversationId = 'test-conv';
-
-      await agent.invokeAgent({
-        message: 'New message',
-        conversationId: 'test-conv',
-      });
-
-      // Verify only valid entries were included
+      // Verify the messages were injected into generate (check content only, ignoring timestamp)
       const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
-      const request = generateCall[0] as { messages: Array<{ role: string; content: string }> };
+      const request = generateCall[0] as { messages: Array<{ role: string; content: string; timestamp?: string }> };
       const messages = request.messages;
 
-      expect(messages).toContainEqual({ role: 'user', content: 'Valid user message' });
-      expect(messages).not.toContainEqual({ role: expect.any(String), content: 'Message without role metadata' });
-      expect(messages).not.toContainEqual({ role: expect.any(String), content: 'Message with invalid role' });
+      expect(messages.some(m => m.role === 'user' && m.content === 'Hello from user')).toBe(true);
+      expect(messages.some(m => m.role === 'assistant' && m.content === 'Hello from assistant')).toBe(true);
+      expect(messages.some(m => m.role === 'user' && m.content === 'New message')).toBe(true);
     });
 
-    it('should store exchange in knowledge after response', async () => {
-      const mockKnowledgeTool = {
-        name: 'knowledge_search',
-        description: 'Search knowledge base',
-        execute: vi.fn(),
-      };
-
-      const mockKnowledge = {
-        query: vi.fn().mockResolvedValue([]),
-        add: vi.fn().mockResolvedValue('chunk-id'),
-        toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
+    it('should use all messages from ConversationHistory including system', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([
+          { role: 'system' as const, content: 'You are helpful', timestamp: '2024-01-01T00:00:00Z' },
+          { role: 'user' as const, content: 'Hello', timestamp: '2024-01-01T00:00:01Z' },
+          { role: 'assistant' as const, content: 'Hi!', timestamp: '2024-01-01T00:00:02Z' },
+        ]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
       };
 
       const agent = new TestAgent(mockToolpack);
-      agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
+      agent._conversationId = 'test-conv';
+
+      await agent.invokeAgent({
+        message: 'New message',
+        conversationId: 'test-conv',
+      });
+
+      // Verify all messages including system were injected
+      const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
+      const request = generateCall[0] as { messages: Array<{ role: string; content: string; timestamp?: string }> };
+      const messages = request.messages;
+
+      // Check that messages contain expected content (ignoring timestamp)
+      expect(messages.some(m => m.role === 'system' && m.content === 'You are helpful')).toBe(true);
+      expect(messages.some(m => m.role === 'user' && m.content === 'Hello')).toBe(true);
+      expect(messages.some(m => m.role === 'assistant' && m.content === 'Hi!')).toBe(true);
+      expect(messages.some(m => m.role === 'user' && m.content === 'New message')).toBe(true);
+    });
+
+    it('should store exchange in ConversationHistory after response', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
+        isSearchEnabled: false,
+      };
+
+      const agent = new TestAgent(mockToolpack);
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent.name = 'test-agent';
       agent._conversationId = 'test-conv';
 
@@ -780,34 +754,109 @@ describe('BaseAgent', () => {
       });
 
       // Verify both user message and agent response were stored
-      expect(mockKnowledge.add).toHaveBeenCalledTimes(2);
-
-      // First call stores user message
-      expect(mockKnowledge.add).toHaveBeenNthCalledWith(
-        1,
-        'User question',
-        expect.objectContaining({
-          conversationId: 'test-conv',
-          type: 'conversation_message',
-          role: 'user',
-          agentName: 'test-agent',
-        })
-      );
-
-      // Second call stores agent response
-      expect(mockKnowledge.add).toHaveBeenNthCalledWith(
-        2,
-        'Mock AI response',
-        expect.objectContaining({
-          conversationId: 'test-conv',
-          type: 'conversation_message',
-          role: 'assistant',
-          agentName: 'test-agent',
-        })
-      );
+      expect(mockConversationHistory.addUserMessage).toHaveBeenCalledWith('test-conv', 'User question', 'test-agent');
+      expect(mockConversationHistory.addAssistantMessage).toHaveBeenCalledWith('test-conv', 'Mock AI response', 'test-agent');
     });
 
-    it('should skip knowledge operations when conversationId is undefined', async () => {
+    it('should inject conversation_search tool when search is enabled', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
+        isSearchEnabled: true,
+        toTool: vi.fn().mockReturnValue({
+          name: 'conversation_search',
+          description: 'Search conversation history',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          execute: vi.fn(),
+        }),
+      };
+
+      const agent = new TestAgent(mockToolpack);
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
+      agent._conversationId = 'test-conv';
+
+      await agent.invokeAgent({
+        message: 'What did I say earlier?',
+        conversationId: 'test-conv',
+      });
+
+      // Verify conversation_search tool was injected
+      const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
+      const request = generateCall[0] as { tools?: Array<{ function: { name: string } }> };
+      
+      expect(request.tools).toBeDefined();
+      expect(request.tools?.some(t => t.function.name === 'conversation_search')).toBe(true);
+    });
+
+    it('should execute conversation_search tool when AI calls it', async () => {
+      const mockSearchResults = [
+        { role: 'user', content: 'Hello world', timestamp: '2024-01-01T00:00:00Z' },
+      ];
+      
+      const mockExecute = vi.fn().mockResolvedValue({
+        results: mockSearchResults,
+        count: 1,
+      });
+
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
+        isSearchEnabled: true,
+        toTool: vi.fn().mockReturnValue({
+          name: 'conversation_search',
+          description: 'Search conversation history',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          execute: mockExecute,
+        }),
+      };
+
+      // Mock toolpack to return a tool call
+      const toolCallToolpack = {
+        generate: vi.fn()
+          // First call returns tool call
+          .mockResolvedValueOnce({
+            content: '',
+            toolCalls: [{
+              id: 'call-123',
+              name: 'conversation_search',
+              arguments: { query: 'hello' },
+            }],
+          })
+          // Second call returns final response
+          .mockResolvedValueOnce({
+            content: 'You said "Hello world" earlier.',
+            toolCalls: [],
+          }),
+      };
+
+      const agent = new TestAgent(toolCallToolpack);
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
+      agent._conversationId = 'test-conv';
+
+      const result = await agent.invokeAgent({
+        message: 'What did I say earlier?',
+        conversationId: 'test-conv',
+      });
+
+      // Verify tool was executed with correct arguments
+      expect(mockExecute).toHaveBeenCalledWith({ query: 'hello' });
+      
+      // Verify generate was called twice (initial + after tool execution)
+      expect(toolCallToolpack.generate).toHaveBeenCalledTimes(2);
+      
+      // Verify final response includes tool result context
+      expect(result.content).toBe('You said "Hello world" earlier.');
+    });
+
+    it('should skip conversation history operations when conversationId is undefined', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([]),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
+      };
+
       const mockKnowledgeTool = {
         name: 'knowledge_search',
         description: 'Search knowledge base',
@@ -815,12 +864,11 @@ describe('BaseAgent', () => {
       };
 
       const mockKnowledge = {
-        query: vi.fn().mockResolvedValue([]),
-        add: vi.fn().mockResolvedValue('chunk-id'),
         toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
       };
 
       const agent = new TestAgent(mockToolpack);
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
 
       await agent.invokeAgent({
@@ -828,29 +876,21 @@ describe('BaseAgent', () => {
         // No conversationId
       });
 
-      // Verify knowledge operations were skipped
-      expect(mockKnowledge.query).not.toHaveBeenCalled();
-      expect(mockKnowledge.add).not.toHaveBeenCalled();
-
-      // But tool was still injected
-      expect(mockKnowledge.toTool).toHaveBeenCalled();
+      // Verify conversation history operations were skipped
+      expect(mockConversationHistory.getHistory).not.toHaveBeenCalled();
+      expect(mockConversationHistory.addUserMessage).not.toHaveBeenCalled();
+      expect(mockConversationHistory.addAssistantMessage).not.toHaveBeenCalled();
     });
 
-    it('should continue without history when knowledge query fails', async () => {
-      const mockKnowledgeTool = {
-        name: 'knowledge_search',
-        description: 'Search knowledge base',
-        execute: vi.fn(),
-      };
-
-      const mockKnowledge = {
-        query: vi.fn().mockRejectedValue(new Error('Query failed')),
-        add: vi.fn().mockResolvedValue('chunk-id'),
-        toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
+    it('should continue without history when getHistory fails', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockRejectedValue(new Error('Query failed')),
+        addUserMessage: vi.fn().mockResolvedValue(undefined),
+        addAssistantMessage: vi.fn().mockResolvedValue(undefined),
       };
 
       const agent = new TestAgent(mockToolpack);
-      agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent._conversationId = 'test-conv';
 
       // Should not throw
@@ -866,21 +906,15 @@ describe('BaseAgent', () => {
       expect(mockToolpack.generate).toHaveBeenCalled();
     });
 
-    it('should continue when knowledge storage fails', async () => {
-      const mockKnowledgeTool = {
-        name: 'knowledge_search',
-        description: 'Search knowledge base',
-        execute: vi.fn(),
-      };
-
-      const mockKnowledge = {
-        query: vi.fn().mockResolvedValue([]),
-        add: vi.fn().mockRejectedValue(new Error('Storage failed')),
-        toTool: vi.fn().mockReturnValue(mockKnowledgeTool),
+    it('should continue when conversation history storage fails', async () => {
+      const mockConversationHistory = {
+        getHistory: vi.fn().mockResolvedValue([]),
+        addUserMessage: vi.fn().mockRejectedValue(new Error('Storage failed')),
+        addAssistantMessage: vi.fn().mockRejectedValue(new Error('Storage failed')),
       };
 
       const agent = new TestAgent(mockToolpack);
-      agent.knowledge = mockKnowledge as unknown as NonNullable<typeof agent.knowledge>;
+      agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent._conversationId = 'test-conv';
 
       // Should not throw

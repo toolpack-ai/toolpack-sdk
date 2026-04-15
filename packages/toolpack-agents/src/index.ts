@@ -18,6 +18,13 @@ export {
 export { BaseAgent, AgentEvents } from './agent/base-agent.js';
 export { AgentRegistry } from './agent/agent-registry.js';
 export { AgentError } from './agent/errors.js';
+// Conversation history
+export {
+  ConversationHistory,
+  ConversationMessage,
+  ConversationHistoryOptions,
+  ConversationSearchTool,
+} from './conversation-history/index.js';
 
 // Built-in agents
 export { ResearchAgent } from './agents/research-agent.js';

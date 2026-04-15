@@ -1,6 +1,6 @@
 {
   "name": "@toolpack-sdk/knowledge",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "RAG (Retrieval-Augmented Generation) package for Toolpack SDK",
   "type": "module",
   "main": "dist/index.cjs",

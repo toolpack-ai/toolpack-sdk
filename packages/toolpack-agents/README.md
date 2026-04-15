@@ -13,7 +13,7 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
 - **Type-Safe** — Full TypeScript support
-- **Production-Ready** — 254 tests passing
+- **Production-Ready** — 285 tests passing
 
 ## Installation
 
@@ -286,9 +286,39 @@ class ApprovalAgent extends BaseAgent {
 
 **Note:** `ask()` throws an error if called from trigger-only channels (ScheduledChannel, EmailChannel).
 
+## Conversation History
+
+Store conversation history separately from domain knowledge:
+
+```typescript
+import { ConversationHistory } from '@toolpack-sdk/agents';
+
+class SupportAgent extends BaseAgent {
+  // In-memory (development)
+  conversationHistory = new ConversationHistory();
+  
+  // SQLite (production) - requires: npm install better-sqlite3
+  // conversationHistory = new ConversationHistory('./history.db');
+
+  async invokeAgent(input) {
+    // History is automatically loaded before AI call
+    // and stored after response
+    const result = await this.run(input.message);
+    return result;
+  }
+}
+```
+
+**Features:**
+- Auto-loads last 10 messages before each AI call
+- Auto-stores user and assistant messages
+- Auto-trims to `maxMessages` limit (default: 20)
+- Zero-config in-memory mode for development
+- Optional SQLite persistence for production
+
 ## Knowledge Integration
 
-Integrate knowledge bases for conversation memory and RAG:
+Integrate knowledge bases for RAG (domain knowledge, not conversation history):
 
 ```typescript
 import { Knowledge, MemoryProvider } from '@toolpack-sdk/knowledge';
@@ -611,7 +641,7 @@ Failed to invoke agent "data-agent" at http://localhost:3000: fetch failed
 npm test
 ```
 
-**Test Coverage:** 254 tests passing across 18 test files.
+**Test Coverage:** 285 tests passing across 19 test files.
 
 ## License
 
