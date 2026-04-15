@@ -156,10 +156,8 @@ describe('BaseAgent', () => {
       const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
       const request = generateCall[0] as { messages: Array<{ role: string; content: string }> };
 
-      expect(request.messages[0]).toEqual({
-        role: 'system',
-        content: 'You are a specialized test agent.',
-      });
+      expect(request.messages[0].role).toBe('system');
+      expect(request.messages[0].content).toContain('You are a specialized test agent.');
     });
 
     it('should not include system message when systemPrompt is not set', async () => {
@@ -764,6 +762,7 @@ describe('BaseAgent', () => {
         addUserMessage: vi.fn().mockResolvedValue(undefined),
         addAssistantMessage: vi.fn().mockResolvedValue(undefined),
         isSearchEnabled: true,
+        getHistoryLimit: vi.fn().mockReturnValue(10),
         toTool: vi.fn().mockReturnValue({
           name: 'conversation_search',
           description: 'Search conversation history',
@@ -804,6 +803,7 @@ describe('BaseAgent', () => {
         addUserMessage: vi.fn().mockResolvedValue(undefined),
         addAssistantMessage: vi.fn().mockResolvedValue(undefined),
         isSearchEnabled: true,
+        getHistoryLimit: vi.fn().mockReturnValue(10),
         toTool: vi.fn().mockReturnValue({
           name: 'conversation_search',
           description: 'Search conversation history',
@@ -818,7 +818,7 @@ describe('BaseAgent', () => {
           // First call returns tool call
           .mockResolvedValueOnce({
             content: '',
-            toolCalls: [{
+            tool_calls: [{
               id: 'call-123',
               name: 'conversation_search',
               arguments: { query: 'hello' },
@@ -827,11 +827,12 @@ describe('BaseAgent', () => {
           // Second call returns final response
           .mockResolvedValueOnce({
             content: 'You said "Hello world" earlier.',
-            toolCalls: [],
+            tool_calls: [],
           }),
+        setMode: vi.fn(),
       };
 
-      const agent = new TestAgent(toolCallToolpack);
+      const agent = new TestAgent(toolCallToolpack as unknown as Toolpack);
       agent.conversationHistory = mockConversationHistory as unknown as NonNullable<typeof agent.conversationHistory>;
       agent._conversationId = 'test-conv';
 
@@ -847,7 +848,7 @@ describe('BaseAgent', () => {
       expect(toolCallToolpack.generate).toHaveBeenCalledTimes(2);
       
       // Verify final response includes tool result context
-      expect(result.content).toBe('You said "Hello world" earlier.');
+      expect(result.output).toBe('You said "Hello world" earlier.');
     });
 
     it('should skip conversation history operations when conversationId is undefined', async () => {

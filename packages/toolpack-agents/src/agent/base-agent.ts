@@ -89,20 +89,36 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // This configures the workflow, system prompt, and available tools
       this.toolpack.setMode(this.mode);
 
-      // Build messages array
-      // Note: System prompt is added first and is NOT counted toward the limit
-      // It provides essential context/instructions and should always be present
-      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+      // ── Build dynamic system prompt ──────────────────────────────────────
+      // Start with the agent's own system prompt (if any), then append
+      // guidance for each meta-tool that is configured.  These instructions
+      // are always sent regardless of toolsConfig so the AI knows when to
+      // reach for knowledge / conversation history.
+      let systemPromptContent = this.systemPrompt || '';
 
-      // Add system prompt if defined (always sent, outside limit)
-      if (this.systemPrompt) {
-        messages.push({
-          role: 'system',
-          content: this.systemPrompt,
-        });
+      if (this.knowledge) {
+        systemPromptContent +=
+          '\n\n**Knowledge Base:** You have access to a domain-specific knowledge base. ' +
+          'When you need factual information that may be stored there, call the ' +
+          '`knowledge_search` tool with a concise query before answering.';
       }
 
-      // Fetch conversation history if available (respects limit)
+      if (this.conversationHistory?.isSearchEnabled && this._conversationId) {
+        systemPromptContent +=
+          `\n\n**Conversation History Search:** Only the most recent ` +
+          `${this.conversationHistory.getHistoryLimit()} messages are shown above. ` +
+          'When you need to recall details from earlier in the conversation, call the ' +
+          '`conversation_search` tool with a relevant query.';
+      }
+
+      // ── Build messages array ─────────────────────────────────────────────
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+
+      if (systemPromptContent) {
+        messages.push({ role: 'system', content: systemPromptContent });
+      }
+
+      // Fetch recent conversation history (respects configured limit)
       if (this.conversationHistory && this._conversationId) {
         try {
           const history = await this.conversationHistory.getHistory(this._conversationId);
@@ -112,11 +128,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         }
       }
 
-      // Add current user message (always sent)
-      messages.push({
-        role: 'user',
-        content: message,
-      });
+      // Current user message (always last before the AI call)
+      messages.push({ role: 'user', content: message });
 
       // Store user message in conversation history BEFORE AI call
       if (this.conversationHistory && this._conversationId) {
@@ -131,16 +144,17 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         }
       }
 
-      // Build tools array with knowledge search and conversation search if available
-      const tools: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
-      
-      // Store tool execute functions for later execution
-      const toolExecutors = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+      // ── Build meta-tools ─────────────────────────────────────────────────
+      // Meta-tools (knowledge_search, conversation_search) are agent
+      // infrastructure — they bypass toolsConfig and are ALWAYS injected
+      // when the corresponding feature is configured on this agent.
+      // Regular developer tools continue to be managed by toolsConfig/ToolRegistry.
+      const metaTools: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
+      const metaToolExecutors = new Map<string, (args: Record<string, any>) => Promise<unknown>>();
 
-      // Add knowledge search tool
       const knowledgeTool = this.knowledge?.toTool();
       if (knowledgeTool) {
-        tools.push({
+        metaTools.push({
           type: 'function' as const,
           function: {
             name: knowledgeTool.name,
@@ -148,14 +162,12 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
             parameters: knowledgeTool.parameters as Record<string, unknown>,
           },
         });
-        // Store the execute function
-        toolExecutors.set(knowledgeTool.name, knowledgeTool.execute);
+        metaToolExecutors.set(knowledgeTool.name, knowledgeTool.execute as (args: Record<string, any>) => Promise<unknown>);
       }
-      
-      // Add conversation search tool if search is enabled
+
       if (this.conversationHistory?.isSearchEnabled && this._conversationId) {
         const conversationSearchTool = this.conversationHistory.toTool(this._conversationId);
-        tools.push({
+        metaTools.push({
           type: 'function' as const,
           function: {
             name: conversationSearchTool.name,
@@ -163,51 +175,44 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
             parameters: conversationSearchTool.parameters as Record<string, unknown>,
           },
         });
-        // Store the execute function
-        toolExecutors.set(conversationSearchTool.name, conversationSearchTool.execute);
+        metaToolExecutors.set(conversationSearchTool.name, conversationSearchTool.execute as (args: Record<string, any>) => Promise<unknown>);
       }
 
-      // Build the completion request
-      const request = {
-        messages,
-        model: this.model || '', // Empty string lets the adapter use defaults
-        tools: tools.length > 0 ? tools : undefined,
-      };
+      // ── First AI call ────────────────────────────────────────────────────
+      // Pass meta-tools explicitly so they are available even when
+      // tools.enabled = false in toolsConfig.
+      let result = await this.toolpack.generate(
+        {
+          messages,
+          model: this.model || '',
+          tools: metaTools.length > 0 ? metaTools : undefined,
+        },
+        this.provider
+      );
 
-      // Call toolpack.generate() with per-agent provider override
-      let result = await this.toolpack.generate(request, this.provider);
-
-      // Handle tool calls if present
-      if (result.toolCalls && result.toolCalls.length > 0) {
-        // Add tool call messages to conversation
-        for (const toolCall of result.toolCalls) {
+      // ── Meta-tool execution loop ─────────────────────────────────────────
+      // AIClient auto-executes tools from its ToolRegistry, but meta-tools
+      // live outside that registry so we handle their calls here.
+      if (result.tool_calls && result.tool_calls.length > 0) {
+        for (const toolCall of result.tool_calls) {
           messages.push({
             role: 'assistant',
             content: '',
-            tool_calls: [{
-              id: toolCall.id,
-              type: 'function',
-              function: {
-                name: toolCall.name,
-                arguments: JSON.stringify(toolCall.arguments),
-              },
-            }],
+            tool_calls: [{ id: toolCall.id, type: 'function', function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) } }],
           } as any);
 
-          // Execute the tool
-          const executor = toolExecutors.get(toolCall.name);
+          const executor = metaToolExecutors.get(toolCall.name);
           let toolResult: unknown;
           if (executor) {
             try {
               toolResult = await executor(toolCall.arguments);
-            } catch (error) {
-              toolResult = { error: (error as Error).message };
+            } catch (err) {
+              toolResult = { error: (err as Error).message };
             }
           } else {
-            toolResult = { error: `Tool ${toolCall.name} not found` };
+            toolResult = { error: `Meta-tool '${toolCall.name}' not found` };
           }
 
-          // Add tool result to conversation
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
@@ -215,19 +220,16 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
           } as any);
         }
 
-        // Make second call to get AI response with tool results
-        const finalRequest = {
-          messages,
-          model: this.model || '',
-          tools: undefined, // Don't need tools for this call
-        };
-        result = await this.toolpack.generate(finalRequest, this.provider);
+        // Second AI call — get final answer now that tool results are injected
+        result = await this.toolpack.generate(
+          { messages, model: this.model || '' },
+          this.provider
+        );
       }
 
-      // Store the exchange in conversation history when conversationHistory and conversationId are set
+      // ── Persist assistant response ───────────────────────────────────────
       if (this.conversationHistory && this._conversationId) {
         try {
-          // Store agent response (user message was stored before AI call)
           if (result.content) {
             await this.conversationHistory.addAssistantMessage(
               this._conversationId,
