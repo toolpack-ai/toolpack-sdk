@@ -25,5 +25,7 @@ export { getRegisteredSlmModels, getDefaultSlmModel, isRegisteredSlm } from "./o
 export type { SlmModelEntry } from "./ollama/slm-registry.js";
 // OpenAI
 export * from './openai/index.js';
+// OpenRouter
+export * from './openrouter/index.js';
 // Media Utilities
 export * from './media-utils.js';

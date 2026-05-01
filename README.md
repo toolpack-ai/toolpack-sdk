@@ -652,6 +652,355 @@ const response = await toolpack.chat('How do I configure authentication?');
 
 See the [Knowledge package README](./packages/toolpack-knowledge/README.md) for full documentation.
 
+## AI Agents (@toolpack-sdk/agents)
+
+Build production-ready AI agents with channels, workflows, and event-driven architecture using the companion `@toolpack-sdk/agents` package:
+
+```bash
+npm install @toolpack-sdk/agents
+```
+
+### What are Agents?
+
+Agents are autonomous AI systems that:
+- **Listen** for events from channels (Slack, webhooks, schedules, etc.)
+- **Process** messages using the Toolpack SDK
+- **Execute** tasks with full tool access
+- **Respond** back through the same or different channels
+- **Remember** conversations using knowledge bases
+
+### Quick Start
+
+```typescript
+import { Toolpack } from 'toolpack-sdk';
+import { BaseAgent, AgentRegistry, SlackChannel } from '@toolpack-sdk/agents';
+
+// 1. Create a custom agent
+class SupportAgent extends BaseAgent {
+  name = 'support-agent';
+  description = 'Customer support agent that answers questions';
+  mode = 'chat';
+
+  async invokeAgent(input) {
+    const result = await this.run(input.message);
+    await this.sendTo('slack-support', result.output);
+    return result;
+  }
+}
+
+// 2. Set up channels
+const slackChannel = new SlackChannel({
+  name: 'slack-support',
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+});
+
+// 3. Register agent and channels
+const registry = new AgentRegistry([
+  { agent: SupportAgent, channels: [slackChannel] },
+]);
+
+// 4. Initialize Toolpack with agents
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+  agents: registry,
+});
+
+// Agents now listen and respond automatically!
+```
+
+### Built-in Agents
+
+The package includes 4 production-ready agents you can use directly or extend:
+
+#### ResearchAgent
+```typescript
+import { ResearchAgent } from '@toolpack-sdk/agents';
+
+const agent = new ResearchAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Summarize recent developments in edge AI',
+});
+```
+- **Mode:** `agent`
+- **Tools:** web.search, web.fetch, web.scrape
+- **Use Cases:** Market research, competitive analysis, trend monitoring
+
+#### CodingAgent
+```typescript
+import { CodingAgent } from '@toolpack-sdk/agents';
+
+const agent = new CodingAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Refactor the auth module to use the new SDK pattern',
+});
+```
+- **Mode:** `coding`
+- **Tools:** fs.*, coding.*, git.*, exec.*
+- **Use Cases:** Code generation, refactoring, debugging, test writing
+
+#### DataAgent
+```typescript
+import { DataAgent } from '@toolpack-sdk/agents';
+
+const agent = new DataAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Generate a weekly summary of signups by region',
+});
+```
+- **Mode:** `agent`
+- **Tools:** db.*, fs.*, http.*
+- **Use Cases:** Database queries, reporting, data analysis, CSV generation
+
+#### BrowserAgent
+```typescript
+import { BrowserAgent } from '@toolpack-sdk/agents';
+
+const agent = new BrowserAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Extract all product prices from acme.com/products',
+});
+```
+- **Mode:** `chat`
+- **Tools:** web.fetch, web.screenshot, web.extract_links
+- **Use Cases:** Web scraping, form filling, content extraction
+
+### Channels
+
+Channels connect agents to the outside world. The package includes 7 built-in channels:
+
+#### SlackChannel (Two-way)
+```typescript
+import { SlackChannel } from '@toolpack-sdk/agents';
+
+const slack = new SlackChannel({
+  name: 'slack-support',
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+});
+```
+- ✅ Receives messages from Slack
+- ✅ Replies in threads
+- ✅ Supports `ask()` for human input
+
+#### TelegramChannel (Two-way)
+```typescript
+import { TelegramChannel } from '@toolpack-sdk/agents';
+
+const telegram = new TelegramChannel({
+  name: 'telegram-bot',
+  token: process.env.TELEGRAM_BOT_TOKEN,
+});
+```
+- ✅ Receives messages from Telegram
+- ✅ Replies to users
+- ✅ Supports `ask()` for human input
+
+#### WebhookChannel (Two-way)
+```typescript
+import { WebhookChannel } from '@toolpack-sdk/agents';
+
+const webhook = new WebhookChannel({
+  name: 'github-webhook',
+  path: '/webhook/github',
+  port: 3000,
+  secret: process.env.WEBHOOK_SECRET,
+});
+```
+- ✅ Receives HTTP POST webhooks
+- ✅ Signature verification
+- ✅ Supports `ask()` for human input
+
+#### ScheduledChannel (Trigger-only)
+```typescript
+import { ScheduledChannel } from '@toolpack-sdk/agents';
+
+const scheduler = new ScheduledChannel({
+  name: 'daily-report',
+  cron: '0 9 * * 1-5', // 9am weekdays
+  notify: 'webhook:https://hooks.example.com/daily-report',
+  message: 'Generate the daily sales report',
+});
+// For Slack delivery, attach a named SlackChannel to the same agent and
+// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
+```
+- ⏰ Triggers agents on cron schedules
+- ✅ Full cron expression support (ranges, steps, lists, combinations)
+- ❌ No `ask()` support (no human recipient)
+
+#### DiscordChannel (Two-way)
+```typescript
+import { DiscordChannel } from '@toolpack-sdk/agents';
+
+const discord = new DiscordChannel({
+  name: 'discord-bot',
+  token: process.env.DISCORD_BOT_TOKEN,
+  guildId: 'your-guild-id',
+  channelId: 'your-channel-id',
+});
+```
+- ✅ Receives messages from Discord
+- ✅ Replies in threads
+- ✅ Supports `ask()` for human input
+
+#### EmailChannel (Outbound-only)
+```typescript
+import { EmailChannel } from '@toolpack-sdk/agents';
+
+const email = new EmailChannel({
+  name: 'email-alerts',
+  from: 'bot@acme.com',
+  to: 'team@acme.com',
+  smtp: {
+    host: 'smtp.gmail.com',
+    port: 587,
+    auth: { user: 'bot@acme.com', pass: process.env.SMTP_PASSWORD },
+  },
+});
+```
+- 📧 Sends emails via SMTP
+- ❌ No `ask()` support (outbound-only)
+
+#### SMSChannel (Configurable)
+```typescript
+import { SMSChannel } from '@toolpack-sdk/agents';
+
+// Two-way with webhook
+const sms = new SMSChannel({
+  name: 'sms-alerts',
+  accountSid: process.env.TWILIO_ACCOUNT_SID,
+  authToken: process.env.TWILIO_AUTH_TOKEN,
+  from: '+1234567890',
+  webhookPath: '/sms/webhook', // Enables two-way
+  port: 3000,
+});
+
+// Outbound-only
+const smsOutbound = new SMSChannel({
+  name: 'sms-notifications',
+  accountSid: process.env.TWILIO_ACCOUNT_SID,
+  authToken: process.env.TWILIO_AUTH_TOKEN,
+  from: '+1234567890',
+  to: '+0987654321', // Fixed recipient
+});
+```
+- 📱 Twilio SMS integration
+- ✅ Two-way when `webhookPath` is set
+- ❌ Outbound-only without webhook
+
+### Agent Lifecycle & Events
+
+Agents emit events at each stage of execution:
+
+```typescript
+const agent = new MyAgent(sdk);
+
+agent.on('agent:start', (input) => {
+  console.log('Agent started:', input.message);
+});
+
+agent.on('agent:complete', (result) => {
+  console.log('Agent completed:', result.output);
+});
+
+agent.on('agent:error', (error) => {
+  console.error('Agent error:', error);
+});
+```
+
+### Knowledge Integration
+
+Agents can use knowledge bases for conversation memory and RAG:
+
+```typescript
+import { Knowledge, MemoryProvider, OllamaEmbedder } from '@toolpack-sdk/knowledge';
+import { BaseAgent } from '@toolpack-sdk/agents';
+
+class SmartAgent extends BaseAgent {
+  name = 'smart-agent';
+  description = 'Agent with memory';
+  mode = 'chat';
+  
+  constructor(toolpack) {
+    super(toolpack);
+    // Set up knowledge base
+    this.knowledge = await Knowledge.create({
+      provider: new MemoryProvider(),
+      embedder: new OllamaEmbedder({ model: 'nomic-embed-text' }),
+    });
+  }
+
+  async invokeAgent(input) {
+    // Conversation history is automatically loaded from knowledge
+    const result = await this.run(input.message);
+    return result;
+  }
+}
+```
+
+### Multi-Channel Routing
+
+Agents can send output to different channels:
+
+```typescript
+class MultiChannelAgent extends BaseAgent {
+  name = 'multi-agent';
+  description = 'Routes to multiple channels';
+  mode = 'agent';
+
+  async invokeAgent(input) {
+    const result = await this.run(input.message);
+    
+    // Send to multiple channels
+    await this.sendTo('slack:#general', result.output);
+    await this.sendTo('email-team', result.output);
+    await this.sendTo('sms-alerts', 'Task completed!');
+    
+    return result;
+  }
+}
+```
+
+### Extending Built-in Agents
+
+```typescript
+import { ResearchAgent } from '@toolpack-sdk/agents';
+
+class FintechResearchAgent extends ResearchAgent {
+  systemPrompt = `You are a research agent focused on fintech.
+                  Always cite sources and flag regulatory implications.`;
+  provider = 'anthropic';
+  model = 'claude-sonnet-4-20250514';
+
+  async onComplete(result) {
+    // Store research in knowledge base
+    if (this.knowledge) {
+      await this.knowledge.add(result.output, { 
+        category: 'research',
+        topic: 'fintech',
+      });
+    }
+    
+    // Send to Slack
+    await this.sendTo('slack-research', result.output);
+  }
+}
+```
+
+### Features
+
+- ✅ **7 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled
+- ✅ **4 Built-in Agents** — Research, Coding, Data, Browser
+- ✅ **Event-Driven** — Full lifecycle events for monitoring
+- ✅ **Knowledge Integration** — Conversation memory and RAG
+- ✅ **Multi-Channel Routing** — Send to any registered channel
+- ✅ **Human-in-the-Loop** — `ask()` support for two-way channels
+- ✅ **Type-Safe** — Full TypeScript support
+- ✅ **199 Tests Passing** — Production-ready
+
+See the [Agents package README](./packages/toolpack-agents/README.md) for full documentation.
+
 ## Multimodal Support
 
 The SDK supports multimodal inputs (text + images) across all vision-capable providers. Images can be provided in three formats:

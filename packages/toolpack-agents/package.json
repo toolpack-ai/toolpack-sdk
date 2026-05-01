@@ -1,0 +1,117 @@
+{
+  "name": "@toolpack-sdk/agents",
+  "version": "1.4.0",
+  "description": "Agent layer for the Toolpack SDK - build, compose, and deploy AI agents with a consistent, extensible pattern",
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./channels": {
+      "types": "./dist/channels/index.d.ts",
+      "import": "./dist/channels/index.js",
+      "require": "./dist/channels/index.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "require": "./dist/testing/index.cjs"
+    },
+    "./registry": {
+      "types": "./dist/registry/index.d.ts",
+      "import": "./dist/registry/index.js",
+      "require": "./dist/registry/index.cjs"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities/index.d.ts",
+      "import": "./dist/capabilities/index.js",
+      "require": "./dist/capabilities/index.cjs"
+    },
+    "./interceptors": {
+      "types": "./dist/interceptors/index.d.ts",
+      "import": "./dist/interceptors/index.js",
+      "require": "./dist/interceptors/index.cjs"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:dev": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "watch": "tsup --watch",
+    "lint": "eslint src/**",
+    "publish:npm": "npm run build && npm run test && npm publish --access public"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "agent",
+    "ai-agent",
+    "slack",
+    "telegram",
+    "webhook",
+    "cron",
+    "scheduler",
+    "typescript",
+    "sdk",
+    "toolpack"
+  ],
+  "author": "Sajeer (https://sajeerzeji.com)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toolpack-ai/toolpack-sdk.git"
+  },
+  "homepage": "https://toolpacksdk.com",
+  "bugs": {
+    "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
+  },
+  "peerDependencies": {
+    "@toolpack-sdk/knowledge": "^1.4.0",
+    "better-sqlite3": "^11.x",
+    "discord.js": "^14.x",
+    "nodemailer": "^6.x",
+    "toolpack-sdk": "^1.4.0",
+    "twilio": "^5.x"
+  },
+  "peerDependenciesMeta": {
+    "@toolpack-sdk/knowledge": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "discord.js": {
+      "optional": true
+    },
+    "nodemailer": {
+      "optional": true
+    },
+    "twilio": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.2",
+    "@types/nodemailer": "^6.4.23",
+    "discord.js": "^14.26.2",
+    "twilio": "^5.13.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "cron-parser": "^5.5.0"
+  }
+}

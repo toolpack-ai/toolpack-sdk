@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 90 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 97 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -18,7 +18,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **90 Built-in Tools** across 11 categories:
+- **97 Built-in Tools** across 12 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -31,6 +31,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 | **`http-tools`** | 5 | HTTP requests — GET, POST, PUT, DELETE, download |
 | **`web-tools`** | 9 | Web interaction — fetch, search (Tavily/Brave/DuckDuckGo), scrape, extract links, map, metadata, sitemap, feed, screenshot |
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
+| **`github-tools`** | 9 | GitHub operations — PR reviews, review threads, file diffs, issue comments, GraphQL, repo contents |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
 | **`k8s-tools`** | 11 | Kubernetes cluster inspection and management via kubectl |
@@ -60,7 +61,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 90 built-in tools
+  tools: true,         // Load all 97 built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -548,7 +549,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 90 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 97 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -645,6 +646,355 @@ const response = await toolpack.chat('How do I configure authentication?');
 - **Metadata Filtering**: Query with filters like `{ hasCode: true, category: 'api' }`
 
 See the [Knowledge package README](../toolpack-knowledge/README.md) for full documentation.
+
+## AI Agents (@toolpack-sdk/agents)
+
+Build production-ready AI agents with channels, workflows, and event-driven architecture using the companion `@toolpack-sdk/agents` package:
+
+```bash
+npm install @toolpack-sdk/agents
+```
+
+### What are Agents?
+
+Agents are autonomous AI systems that:
+- **Listen** for events from channels (Slack, webhooks, schedules, etc.)
+- **Process** messages using the Toolpack SDK
+- **Execute** tasks with full tool access
+- **Respond** back through the same or different channels
+- **Remember** conversations using knowledge bases
+
+### Quick Start
+
+```typescript
+import { Toolpack } from 'toolpack-sdk';
+import { BaseAgent, AgentRegistry, SlackChannel } from '@toolpack-sdk/agents';
+
+// 1. Create a custom agent
+class SupportAgent extends BaseAgent {
+  name = 'support-agent';
+  description = 'Customer support agent that answers questions';
+  mode = 'chat';
+
+  async invokeAgent(input) {
+    const result = await this.run(input.message);
+    await this.sendTo('slack-support', result.output);
+    return result;
+  }
+}
+
+// 2. Set up channels
+const slackChannel = new SlackChannel({
+  name: 'slack-support',
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+});
+
+// 3. Register agent and channels
+const registry = new AgentRegistry([
+  { agent: SupportAgent, channels: [slackChannel] },
+]);
+
+// 4. Initialize Toolpack with agents
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+  agents: registry,
+});
+
+// Agents now listen and respond automatically!
+```
+
+### Built-in Agents
+
+The package includes 4 production-ready agents you can use directly or extend:
+
+#### ResearchAgent
+```typescript
+import { ResearchAgent } from '@toolpack-sdk/agents';
+
+const agent = new ResearchAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Summarize recent developments in edge AI',
+});
+```
+- **Mode:** `agent`
+- **Tools:** web.search, web.fetch, web.scrape
+- **Use Cases:** Market research, competitive analysis, trend monitoring
+
+#### CodingAgent
+```typescript
+import { CodingAgent } from '@toolpack-sdk/agents';
+
+const agent = new CodingAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Refactor the auth module to use the new SDK pattern',
+});
+```
+- **Mode:** `coding`
+- **Tools:** fs.*, coding.*, git.*, exec.*
+- **Use Cases:** Code generation, refactoring, debugging, test writing
+
+#### DataAgent
+```typescript
+import { DataAgent } from '@toolpack-sdk/agents';
+
+const agent = new DataAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Generate a weekly summary of signups by region',
+});
+```
+- **Mode:** `agent`
+- **Tools:** db.*, fs.*, http.*
+- **Use Cases:** Database queries, reporting, data analysis, CSV generation
+
+#### BrowserAgent
+```typescript
+import { BrowserAgent } from '@toolpack-sdk/agents';
+
+const agent = new BrowserAgent(sdk);
+const result = await agent.invokeAgent({
+  message: 'Extract all product prices from acme.com/products',
+});
+```
+- **Mode:** `chat`
+- **Tools:** web.fetch, web.screenshot, web.extract_links
+- **Use Cases:** Web scraping, form filling, content extraction
+
+### Channels
+
+Channels connect agents to the outside world. The package includes 7 built-in channels:
+
+#### SlackChannel (Two-way)
+```typescript
+import { SlackChannel } from '@toolpack-sdk/agents';
+
+const slack = new SlackChannel({
+  name: 'slack-support',
+  token: process.env.SLACK_BOT_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+});
+```
+- ✅ Receives messages from Slack
+- ✅ Replies in threads
+- ✅ Supports `ask()` for human input
+
+#### TelegramChannel (Two-way)
+```typescript
+import { TelegramChannel } from '@toolpack-sdk/agents';
+
+const telegram = new TelegramChannel({
+  name: 'telegram-bot',
+  token: process.env.TELEGRAM_BOT_TOKEN,
+});
+```
+- ✅ Receives messages from Telegram
+- ✅ Replies to users
+- ✅ Supports `ask()` for human input
+
+#### WebhookChannel (Two-way)
+```typescript
+import { WebhookChannel } from '@toolpack-sdk/agents';
+
+const webhook = new WebhookChannel({
+  name: 'github-webhook',
+  path: '/webhook/github',
+  port: 3000,
+  secret: process.env.WEBHOOK_SECRET,
+});
+```
+- ✅ Receives HTTP POST webhooks
+- ✅ Signature verification
+- ✅ Supports `ask()` for human input
+
+#### ScheduledChannel (Trigger-only)
+```typescript
+import { ScheduledChannel } from '@toolpack-sdk/agents';
+
+const scheduler = new ScheduledChannel({
+  name: 'daily-report',
+  cron: '0 9 * * 1-5', // 9am weekdays
+  notify: 'webhook:https://hooks.example.com/daily-report',
+  message: 'Generate the daily sales report',
+});
+// For Slack delivery, attach a named SlackChannel to the same agent and
+// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
+```
+- ⏰ Triggers agents on cron schedules
+- ✅ Full cron expression support (ranges, steps, lists, combinations)
+- ❌ No `ask()` support (no human recipient)
+
+#### DiscordChannel (Two-way)
+```typescript
+import { DiscordChannel } from '@toolpack-sdk/agents';
+
+const discord = new DiscordChannel({
+  name: 'discord-bot',
+  token: process.env.DISCORD_BOT_TOKEN,
+  guildId: 'your-guild-id',
+  channelId: 'your-channel-id',
+});
+```
+- ✅ Receives messages from Discord
+- ✅ Replies in threads
+- ✅ Supports `ask()` for human input
+
+#### EmailChannel (Outbound-only)
+```typescript
+import { EmailChannel } from '@toolpack-sdk/agents';
+
+const email = new EmailChannel({
+  name: 'email-alerts',
+  from: 'bot@acme.com',
+  to: 'team@acme.com',
+  smtp: {
+    host: 'smtp.gmail.com',
+    port: 587,
+    auth: { user: 'bot@acme.com', pass: process.env.SMTP_PASSWORD },
+  },
+});
+```
+- 📧 Sends emails via SMTP
+- ❌ No `ask()` support (outbound-only)
+
+#### SMSChannel (Configurable)
+```typescript
+import { SMSChannel } from '@toolpack-sdk/agents';
+
+// Two-way with webhook
+const sms = new SMSChannel({
+  name: 'sms-alerts',
+  accountSid: process.env.TWILIO_ACCOUNT_SID,
+  authToken: process.env.TWILIO_AUTH_TOKEN,
+  from: '+1234567890',
+  webhookPath: '/sms/webhook', // Enables two-way
+  port: 3000,
+});
+
+// Outbound-only
+const smsOutbound = new SMSChannel({
+  name: 'sms-notifications',
+  accountSid: process.env.TWILIO_ACCOUNT_SID,
+  authToken: process.env.TWILIO_AUTH_TOKEN,
+  from: '+1234567890',
+  to: '+0987654321', // Fixed recipient
+});
+```
+- 📱 Twilio SMS integration
+- ✅ Two-way when `webhookPath` is set
+- ❌ Outbound-only without webhook
+
+### Agent Lifecycle & Events
+
+Agents emit events at each stage of execution:
+
+```typescript
+const agent = new MyAgent(sdk);
+
+agent.on('agent:start', (input) => {
+  console.log('Agent started:', input.message);
+});
+
+agent.on('agent:complete', (result) => {
+  console.log('Agent completed:', result.output);
+});
+
+agent.on('agent:error', (error) => {
+  console.error('Agent error:', error);
+});
+```
+
+### Knowledge Integration
+
+Agents can use knowledge bases for conversation memory and RAG:
+
+```typescript
+import { Knowledge, MemoryProvider, OllamaEmbedder } from '@toolpack-sdk/knowledge';
+import { BaseAgent } from '@toolpack-sdk/agents';
+
+class SmartAgent extends BaseAgent {
+  name = 'smart-agent';
+  description = 'Agent with memory';
+  mode = 'chat';
+  
+  constructor(toolpack) {
+    super(toolpack);
+    // Set up knowledge base
+    this.knowledge = await Knowledge.create({
+      provider: new MemoryProvider(),
+      embedder: new OllamaEmbedder({ model: 'nomic-embed-text' }),
+    });
+  }
+
+  async invokeAgent(input) {
+    // Conversation history is automatically loaded from knowledge
+    const result = await this.run(input.message);
+    return result;
+  }
+}
+```
+
+### Multi-Channel Routing
+
+Agents can send output to different channels:
+
+```typescript
+class MultiChannelAgent extends BaseAgent {
+  name = 'multi-agent';
+  description = 'Routes to multiple channels';
+  mode = 'agent';
+
+  async invokeAgent(input) {
+    const result = await this.run(input.message);
+    
+    // Send to multiple channels
+    await this.sendTo('slack:#general', result.output);
+    await this.sendTo('email-team', result.output);
+    await this.sendTo('sms-alerts', 'Task completed!');
+    
+    return result;
+  }
+}
+```
+
+### Extending Built-in Agents
+
+```typescript
+import { ResearchAgent } from '@toolpack-sdk/agents';
+
+class FintechResearchAgent extends ResearchAgent {
+  systemPrompt = `You are a research agent focused on fintech.
+                  Always cite sources and flag regulatory implications.`;
+  provider = 'anthropic';
+  model = 'claude-sonnet-4-20250514';
+
+  async onComplete(result) {
+    // Store research in knowledge base
+    if (this.knowledge) {
+      await this.knowledge.add(result.output, { 
+        category: 'research',
+        topic: 'fintech',
+      });
+    }
+    
+    // Send to Slack
+    await this.sendTo('slack-research', result.output);
+  }
+}
+```
+
+### Features
+
+- ✅ **7 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled
+- ✅ **4 Built-in Agents** — Research, Coding, Data, Browser
+- ✅ **Event-Driven** — Full lifecycle events for monitoring
+- ✅ **Knowledge Integration** — Conversation memory and RAG
+- ✅ **Multi-Channel Routing** — Send to any registered channel
+- ✅ **Human-in-the-Loop** — `ask()` support for two-way channels
+- ✅ **Type-Safe** — Full TypeScript support
+- ✅ **199 Tests Passing** — Production-ready
+
+See the [Agents package README](../toolpack-agents/README.md) for full documentation.
 
 ## Multimodal Support
 
@@ -926,6 +1276,7 @@ interface CompletionRequest {
   temperature?: number;
   max_tokens?: number;
   tools?: ToolCallRequest[];
+  requestTools?: RequestToolDefinition[];  // Request-scoped tools
   tool_choice?: 'auto' | 'none' | 'required';
 }
 
@@ -955,6 +1306,115 @@ interface ProviderModelInfo {
   costTier?: string;            // e.g., 'low', 'medium', 'high', 'premium'
 }
 ```
+
+### Request-Scoped Tools
+
+Request-scoped tools are dynamic tools attached to a single completion request. Unlike globally registered tools in the ToolRegistry, they:
+
+- **Don't pollute the shared registry** — Each request can have its own tools
+- **Can close over request-specific state** — e.g., `conversationId`, user context
+- **Are safe for multi-agent/multi-request usage** — No cross-request contamination
+- **Execute through the same SDK orchestration** — Events, logging, HITL all work
+
+#### Built-in Request-Scoped Tools
+
+**Knowledge Tools** (when `knowledge` is configured):
+- `knowledge_search` — Search the knowledge base for relevant information
+- `knowledge_add` — Add new content to the knowledge base at runtime
+
+**Conversation Tools** (when using `ConversationHistory`):
+- `conversation_search` — Search conversation history for past messages
+
+#### Creating Custom Request Tools
+
+```typescript
+import { RequestToolDefinition, ConversationHistory } from 'toolpack-sdk';
+
+// Example: Session-specific calculator
+const createCalculatorTool = (sessionId: string): RequestToolDefinition => ({
+  name: 'calculate',
+  displayName: 'Calculator',
+  description: 'Perform mathematical calculations',
+  category: 'math',
+  parameters: {
+    type: 'object',
+    properties: {
+      expression: { type: 'string', description: 'Math expression to evaluate' },
+    },
+    required: ['expression'],
+  },
+  execute: async (args) => {
+    // Can safely close over sessionId
+    console.log(`Session ${sessionId}: calculating ${args.expression}`);
+    
+    // Simple eval (use a proper math library in production)
+    const result = eval(args.expression);
+    return { result, sessionId };
+  },
+});
+
+// Use in a request
+const result = await sdk.generate({
+  messages: [{ role: 'user', content: 'What is 15 * 23?' }],
+  model: 'gpt-4',
+  requestTools: [createCalculatorTool('user-123')],
+});
+```
+
+#### Using ConversationHistory with Request Tools
+
+```typescript
+import { ConversationHistory } from 'toolpack-sdk';
+
+const history = new ConversationHistory('./chat.db');
+
+// Add some messages
+await history.addUserMessage('conv-1', 'What is the API rate limit?');
+await history.addAssistantMessage('conv-1', 'The rate limit is 100 requests per minute.');
+
+// Use conversation search in a request
+const result = await sdk.generate({
+  messages: [
+    { role: 'user', content: 'What did we discuss about rate limits?' }
+  ],
+  model: 'gpt-4',
+  requestTools: [
+    history.toTool('conv-1'),  // Scoped to conversation 'conv-1'
+  ],
+});
+
+// AI can now call conversation_search to find the earlier discussion
+```
+
+#### Request Tools vs Registry Tools
+
+| Feature | Request Tools | Registry Tools |
+|---------|---------------|----------------|
+| **Scope** | Single request | All requests |
+| **State** | Can close over request state | Stateless |
+| **Registration** | Per-request via `requestTools` | Global via `ToolRegistry` |
+| **Use Case** | Dynamic, stateful tools | Reusable, static tools |
+| **Priority** | Higher (checked first) | Lower |
+| **Examples** | `conversation_search`, `knowledge_add` | `fs.read_file`, `web.search` |
+
+#### Automatic Guidance Injection
+
+When request-scoped tools are present, the SDK automatically injects usage guidance into the system prompt:
+
+```
+Knowledge Base:
+- Use `knowledge_search` when you need factual or domain-specific information.
+- Use `knowledge_add` when you learn durable information that should be saved.
+
+Conversation History:
+- Only recent messages may be present in context.
+- Use `conversation_search` to find details from earlier in this conversation.
+```
+
+This guidance is:
+- **Per-request** — Only injected when tools are actually present
+- **Derived from effective tool set** — Reflects the actual tools available
+- **Idempotent** — Won't duplicate if already present
 
 ## Error Handling
 
@@ -1011,7 +1471,7 @@ toolpack-sdk/
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
-│   ├── tools/             # 90 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 97 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
 │   │   ├── git-tools/     # Git operations (9 tools)

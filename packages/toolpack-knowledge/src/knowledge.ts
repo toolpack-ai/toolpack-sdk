@@ -1,6 +1,8 @@
+import { randomUUID } from 'crypto';
 import { KnowledgeProvider, KnowledgeSource, Embedder, QueryOptions, QueryResult, Chunk } from './interfaces.js';
 import { keywordSearch, combineScores } from './utils/keyword.js';
 import { matchesFilter } from './utils/cosine.js';
+import { IngestionError } from './errors.js';
 
 export interface KnowledgeOptions {
   provider: KnowledgeProvider;
@@ -295,6 +297,40 @@ export class Knowledge {
     }
     
     return embeddedChunks;
+  }
+
+  /**
+   * Add a single content item to the knowledge base without triggering a full re-sync.
+   * This is useful for runtime additions like conversation history or agent state.
+   * @param content The text content to add
+   * @param metadata Optional metadata to attach to the chunk
+   * @returns The ID of the added chunk
+   */
+  async add(content: string, metadata?: Record<string, unknown>): Promise<string> {
+    try {
+      const id = randomUUID();
+
+      // Embed the content
+      const vector = await this.embedder.embed(content);
+
+      // Create the chunk
+      const chunk: Chunk = {
+        id,
+        content,
+        metadata: metadata || {},
+        vector,
+      };
+
+      // Add to provider
+      await this.provider.add([chunk]);
+
+      return id;
+    } catch (error) {
+      throw new IngestionError(
+        `Failed to add content to knowledge base: ${(error as Error).message}`,
+        'add'
+      );
+    }
   }
 
   async stop(): Promise<void> {

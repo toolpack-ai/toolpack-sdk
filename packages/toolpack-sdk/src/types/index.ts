@@ -90,6 +90,17 @@ export interface ToolCallRequest {
     function: ToolCallFunction;
 }
 
+export interface RequestToolDefinition {
+    name: string;
+    displayName: string;
+    description: string;
+    parameters: Record<string, any>;
+    category: string;
+    execute: (args: Record<string, any>) => Promise<any>;
+    cacheable?: boolean;
+    confirmation?: import('../tools/types.js').ToolConfirmation;
+}
+
 export interface ToolCallResult {
     id: string;
     name: string;
@@ -107,6 +118,7 @@ export interface CompletionRequest {
     response_format?: 'text' | 'json_object';
     stream?: boolean;
     tools?: ToolCallRequest[];
+    requestTools?: RequestToolDefinition[];
     tool_choice?: 'auto' | 'none' | 'required';
     /** AbortSignal to cancel the request */
     signal?: AbortSignal;

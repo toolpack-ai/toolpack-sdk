@@ -36,6 +36,19 @@ export {
     httpGetTool, httpPostTool, httpPutTool, httpDeleteTool, httpDownloadTool,
 } from './http-tools/index.js';
 
+// github-tools
+export {
+    githubToolsProject,
+    githubGraphqlExecuteTool,
+    githubContentsGetTextTool,
+    githubPrReviewThreadsListTool,
+    githubPrReviewThreadsResolveTool,
+    githubPrReviewCommentsReplyTool,
+    githubPrDiffGetTool,
+    githubPrFilesListTool,
+    githubPrReviewsSubmitTool,
+} from './github-tools/index.js';
+
 // web-tools
 export {
     webToolsProject,

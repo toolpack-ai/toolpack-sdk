@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { keywordSearch, combineScores } from '../../dist/index.js';
+import { keywordSearch, combineScores } from '../utils/keyword.js';
 
 describe('keywordSearch', () => {
   it('should return 1.0 for exact matches', () => {

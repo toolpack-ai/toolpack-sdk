@@ -228,12 +228,13 @@ export class ToolRegistry {
         const { execToolsProject } = await import('./exec-tools/index.js');
         const { systemToolsProject } = await import('./system-tools/index.js');
         const { httpToolsProject } = await import('./http-tools/index.js');
+        const { githubToolsProject } = await import('./github-tools/index.js');
         const { webToolsProject } = await import('./web-tools/index.js');
         const { codingToolsProject } = await import('./coding-tools/index.js');
         const { gitToolsProject } = await import('./git-tools/index.js');
         const { diffToolsProject } = await import('./diff-tools/index.js');
         const { dbToolsProject } = await import('./db-tools/index.js');
         const { cloudToolsProject } = await import('./cloud-tools/index.js');
-        await this.loadProjects([fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject, webToolsProject, codingToolsProject, gitToolsProject, diffToolsProject, dbToolsProject, cloudToolsProject]);
+        await this.loadProjects([fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject, githubToolsProject, webToolsProject, codingToolsProject, gitToolsProject, diffToolsProject, dbToolsProject, cloudToolsProject]);
     }
 }
