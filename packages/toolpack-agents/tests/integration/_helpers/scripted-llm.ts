@@ -60,6 +60,8 @@ export class ScriptedLLM {
       registerMode: () => {},
       setProvider: () => {},
       setModel: () => {},
+      on: () => {},
+      off: () => {},
     } as unknown as Toolpack;
   }
 }

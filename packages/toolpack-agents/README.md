@@ -13,7 +13,7 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
 - **Type-Safe** — Full TypeScript support
-- **Production-Ready** — 285 tests passing
+- **Production-Ready** — 573 tests passing
 
 ## Installation
 
@@ -273,7 +273,7 @@ class ApprovalAgent extends BaseAgent {
     // Ask for approval
     const approval = await this.ask('Approve this draft? (yes/no)');
     
-    if (approval.answer === 'yes') {
+    if (approval.output === 'yes') {
       await this.sendTo('slack', 'Draft approved!');
     }
     
@@ -309,7 +309,6 @@ class SupportAgent extends BaseAgent {
 - Auto-stores user and assistant messages
 - Auto-trims to `maxMessages` limit (default: 20)
 - Zero-config in-memory mode for development
-- Optional SQLite persistence for production
 - `conversation_search` tool is automatically provided as a request-scoped tool when search is enabled
 
 **Memory model:**
@@ -453,7 +452,7 @@ npm install twilio
 abstract class BaseAgent {
   abstract name: string;
   abstract description: string;
-  abstract mode: string;
+  abstract mode: ModeConfig | string;
   
   // Core method to implement
   abstract invokeAgent(input: AgentInput): Promise<AgentResult>;
@@ -491,7 +490,7 @@ abstract class BaseChannel {
   
   abstract listen(): void;
   abstract send(output: AgentOutput): Promise<void>;
-  abstract stop(): Promise<void>;
+  abstract normalize(incoming: unknown): AgentInput;
   onMessage(handler: (input: AgentInput) => Promise<void>): void;
 }
 ```
@@ -672,13 +671,143 @@ Failed to invoke agent "data-agent" at http://localhost:3000: fetch failed
 ```
 → Verify the JSON-RPC server is running and the URL/port is correct.
 
+## Interceptors
+
+Interceptors are composable middleware that run before `invokeAgent`. They can filter, enrich, classify, or short-circuit incoming messages. All built-ins are opt-in — none run unless you explicitly list them.
+
+Import from the dedicated subpath:
+
+```typescript
+import {
+  createNoiseFilterInterceptor,
+  createRateLimitInterceptor,
+  createSelfFilterInterceptor,
+  // ...
+} from '@toolpack-sdk/agents/interceptors';
+```
+
+### Writing a Custom Interceptor
+
+```typescript
+import type { Interceptor } from '@toolpack-sdk/agents/interceptors';
+
+const myInterceptor: Interceptor = async (input, ctx, next) => {
+  if (shouldIgnore(input)) {
+    return ctx.skip(); // End the chain silently — no reply sent
+  }
+  const result = await next(); // Continue to next interceptor or agent
+  return result;
+};
+
+class MyAgent extends BaseAgent {
+  interceptors = [myInterceptor];
+}
+```
+
+### Registering Interceptors
+
+```typescript
+import {
+  createNoiseFilterInterceptor,
+  createRateLimitInterceptor,
+} from '@toolpack-sdk/agents/interceptors';
+
+class MyAgent extends BaseAgent {
+  name = 'my-agent';
+  description = 'My agent';
+  mode = 'chat';
+
+  interceptors = [
+    createNoiseFilterInterceptor({ denySubtypes: ['message_changed', 'message_deleted'] }),
+    createRateLimitInterceptor({
+      getKey: (input) => input.participant?.id ?? 'anon',
+      tokensPerInterval: 5,
+      interval: 60000, // 5 messages per minute per user
+    }),
+  ];
+
+  async invokeAgent(input) {
+    return this.run(input.message);
+  }
+}
+```
+
+### Built-in Interceptors
+
+| Interceptor | Purpose |
+|---|---|
+| `createNoiseFilterInterceptor` | Drop messages by subtype (edits, deletes, bot messages) |
+| `createEventDedupInterceptor` | Drop duplicate events (Slack retries, webhook redeliveries) |
+| `createSelfFilterInterceptor` | Drop the agent's own messages (infinite loop guard) |
+| `createRateLimitInterceptor` | Token-bucket rate limiting per user or conversation |
+| `createAddressCheckInterceptor` | Rule-based address detection (@mention, vocative, direct message) |
+| `createIntentClassifierInterceptor` | LLM-based intent classification for ambiguous address checks |
+| `createParticipantResolverInterceptor` | Resolve participant identity from platform user ID |
+| `createCaptureInterceptor` | Persist inbound and outbound messages to conversation history (auto-registered) |
+| `createDepthGuardInterceptor` | Reject delegation chains that exceed a configured depth |
+| `createTracerInterceptor` | Structured logging of each chain hop for debugging |
+
+## Capabilities
+
+Capability agents are headless agents with no channels. They are invoked by interceptors or other agents for specific cross-cutting concerns.
+
+Import from the dedicated subpath:
+
+```typescript
+import { IntentClassifierAgent, SummarizerAgent } from '@toolpack-sdk/agents/capabilities';
+```
+
+### IntentClassifierAgent
+
+Classifies whether a message is directly addressing the target agent. Used by `createIntentClassifierInterceptor` to resolve ambiguous cases that rules alone cannot determine.
+
+```typescript
+import { IntentClassifierAgent } from '@toolpack-sdk/agents/capabilities';
+import type { IntentClassifierInput } from '@toolpack-sdk/agents/capabilities';
+
+const classifier = new IntentClassifierAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
+const result = await classifier.invokeAgent({
+  message: 'classify',
+  data: {
+    message: 'Hey @assistant can you help?',
+    agentName: 'assistant',
+    agentId: 'U123',
+    senderName: 'alice',
+    channelName: 'general',
+  } as IntentClassifierInput,
+});
+// result.output === 'direct' | 'indirect' | 'passive' | 'ignore'
+```
+
+### SummarizerAgent
+
+Compresses older conversation history turns into a compact summary. Used by the prompt assembler when conversation history exceeds the token budget.
+
+```typescript
+import { SummarizerAgent } from '@toolpack-sdk/agents/capabilities';
+import type { SummarizerInput, SummarizerOutput } from '@toolpack-sdk/agents/capabilities';
+
+const summarizer = new SummarizerAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
+const result = await summarizer.invokeAgent({
+  message: 'summarize',
+  data: {
+    turns: olderTurns,
+    agentName: 'support-agent',
+    agentId: 'U123',
+    maxTokens: 500,
+    extractDecisions: true,
+  } as SummarizerInput,
+});
+const summary = JSON.parse(result.output) as SummarizerOutput;
+```
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-**Test Coverage:** 285 tests passing across 19 test files.
+**Test Coverage:** 573 tests passing across 29 test files.
 
 ## License
 

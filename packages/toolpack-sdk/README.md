@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 79 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 86 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -18,7 +18,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **79 Built-in Tools** across 10 categories:
+- **86 Built-in Tools** across 11 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -31,6 +31,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 | **`http-tools`** | 5 | HTTP requests — GET, POST, PUT, DELETE, download |
 | **`web-tools`** | 9 | Web interaction — fetch, search (Tavily/Brave/DuckDuckGo), scrape, extract links, map, metadata, sitemap, feed, screenshot |
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
+| **`github-tools`** | 9 | GitHub operations — PR reviews, review threads, file diffs, issue comments, GraphQL, repo contents |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
 | **`mcp-tools`** | 2 | MCP integration — createMcpToolProject, disconnectMcpToolProject |
