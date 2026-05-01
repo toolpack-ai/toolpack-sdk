@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 90 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 97 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -18,7 +18,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **90 Built-in Tools** across 11 categories:
+- **97 Built-in Tools** across 12 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -61,7 +61,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 90 built-in tools
+  tools: true,         // Load all 97 built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -549,7 +549,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 90 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 97 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -1471,7 +1471,7 @@ toolpack-sdk/
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
-│   ├── tools/             # 90 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 97 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
 │   │   ├── git-tools/     # Git operations (9 tools)
