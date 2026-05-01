@@ -1,4 +1,4 @@
-import { CompletionRequest, CompletionResponse, CompletionChunk, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse, Message } from "../../types/index.js";
 export { CompletionRequest, CompletionResponse, CompletionChunk, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { InvalidRequestError } from "../../errors/index.js";
 
@@ -71,5 +71,15 @@ export abstract class ProviderAdapter {
      */
     async deleteFile(_fileId: string): Promise<void> {
         throw new InvalidRequestError(`File deletion API is not supported by ${this.getDisplayName()}`);
+    }
+
+    /**
+     * Estimates the number of tokens for the given messages and model.
+     * @param _messages The messages to count.
+     * @param _model The model to count for.
+     * @returns The number of tokens or null if not supported.
+     */
+    async countTokens(_messages: Message[], _model: string): Promise<number | null> {
+        return null;
     }
 }

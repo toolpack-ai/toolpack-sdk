@@ -120,11 +120,58 @@ export interface WorkflowEvents {
     /** Emitted for progress updates */
     'workflow:progress': (progress: WorkflowProgress) => void;
 
+    /** Emitted when context window usage is high (approaching limit) */
+    'workflow:context_warning': (event: ContextWindowWarningEvent) => void;
+
+    /** Emitted when context window would be exceeded */
+    'workflow:context_exceeded': (event: ContextWindowExceededEvent) => void;
+
+    /** Emitted when messages are pruned to recover context */
+    'workflow:context_pruned': (event: ContextPrunedEvent) => void;
+
+    /** Emitted when conversation is summarized for context recovery */
+    'workflow:conversation_summarized': (event: ConversationSummarizedEvent) => void;
+
     /** Emitted when workflow completes */
     'workflow:completed': (plan: Plan, result: WorkflowResult) => void;
 
     /** Emitted when workflow fails */
     'workflow:failed': (plan: Plan, error: Error) => void;
+}
+
+// ── Context Window Events ────────────────────────────
+
+export interface ContextWindowWarningEvent {
+    currentTokens: number;
+    contextWindow: number;
+    percentage: number;
+    model: string;
+    conversationId?: string;
+}
+
+export interface ContextWindowExceededEvent {
+    currentTokens: number;
+    contextWindow: number;
+    maxOutputTokens: number;
+    model: string;
+    strategy: 'prune' | 'summarize' | 'fail';
+    conversationId?: string;
+}
+
+export interface ContextPrunedEvent {
+    removed: number;
+    tokensReclaimed: number;
+    newTotal: number;
+    conversationId?: string;
+    beforeCount: number;
+    afterCount: number;
+}
+
+export interface ConversationSummarizedEvent {
+    summarized: number;
+    summaryTokens: number;
+    tokensSaved: number;
+    conversationId?: string;
 }
 
 export interface WorkflowProgress {

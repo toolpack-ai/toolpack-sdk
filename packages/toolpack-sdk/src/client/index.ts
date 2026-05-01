@@ -1,7 +1,12 @@
 import { EventEmitter } from 'events';
 import { ProviderAdapter } from "../providers/base/index.js";
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent } from "../types/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, ContextWindowConfig, ProviderModelInfo } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
+import { ContextWindowExceededError, SummarizationError } from '../errors/context-window-errors.js';
+import { countTokens, getSafeOutputReserve } from '../utils/token-counter.js';
+import { pruneMessages } from '../utils/message-pruner.js';
+import { prepareSummarizationRequest, createSummarySystemMessage, parseSummarizationResponse, validateSummarizationResult } from '../utils/message-summarizer.js';
+import { ContextWindowStateManager, createContextWindowStateManager } from '../utils/context-window-state.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolRouter } from '../tools/router.js';
 import type { ToolsConfig, ToolSchema, ToolContext, ToolDefinition } from "../tools/types.js";
@@ -196,6 +201,8 @@ export interface AIClientConfig {
     onToolConfirm?: OnToolConfirmCallback;
     /** Optional conversation ID for tracking context */
     conversationId?: string;
+    /** Context window management configuration */
+    contextWindowConfig?: ContextWindowConfig;
 }
 
 export class AIClient extends EventEmitter {
@@ -215,6 +222,9 @@ export class AIClient extends EventEmitter {
     private onToolConfirm?: OnToolConfirmCallback;
     private currentRound: number = 0;
     private conversationId?: string;
+    private contextWindowConfig?: ContextWindowConfig;
+    private contextWindowStateManager?: ContextWindowStateManager;
+    private providerModelCache: Map<string, ProviderModelInfo[]> = new Map();
 
     constructor(config: AIClientConfig) {
         super();
@@ -233,11 +243,208 @@ export class AIClient extends EventEmitter {
         this.hitlConfig = config.hitlConfig;
         this.onToolConfirm = config.onToolConfirm;
         this.conversationId = config.conversationId;
+        this.contextWindowConfig = config.contextWindowConfig;
+        this.providerModelCache = new Map();
+
+        // Initialize context window state manager if config provided
+        if (this.contextWindowConfig && this.contextWindowConfig.enabled !== false) {
+            this.contextWindowStateManager = createContextWindowStateManager(this.contextWindowConfig);
+        }
 
         // Index tools for BM25 search if registry is provided
         if (this.toolRegistry) {
             this.bm25Engine.index(this.toolRegistry.getAll());
         }
+    }
+
+    private getConversationId(): string {
+        return this.conversationId || 'global';
+    }
+
+    private async getModelInfo(provider: ProviderAdapter, model: string): Promise<ProviderModelInfo | undefined> {
+        const providerKey = (provider as any).name || provider.constructor.name;
+        let models = this.providerModelCache.get(providerKey);
+        if (!models) {
+            try {
+                models = await provider.getModels();
+            } catch {
+                models = [];
+            }
+            this.providerModelCache.set(providerKey, models);
+        }
+
+        return models.find(m => m.id === model || m.displayName === model);
+    }
+
+    private async countRequestTokens(request: CompletionRequest, provider: ProviderAdapter, model: string): Promise<number> {
+        const providerCount = await provider.countTokens(request.messages, model);
+        if (typeof providerCount === 'number' && Number.isFinite(providerCount)) {
+            return providerCount;
+        }
+
+        return countTokens(request.messages, model, provider.getDisplayName().toLowerCase());
+    }
+
+    private async pruneConversation(request: CompletionRequest, provider: ProviderAdapter, targetTokenCount: number): Promise<CompletionRequest> {
+        const retainSystemMessages = this.contextWindowConfig?.retainSystemMessages ?? true;
+        let currentRequest = request;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const currentTokens = await this.countRequestTokens(currentRequest, provider, currentRequest.model);
+            if (currentTokens <= targetTokenCount) {
+                return currentRequest;
+            }
+
+            const tokensToRecover = currentTokens - targetTokenCount;
+            const result = pruneMessages(currentRequest.messages, tokensToRecover, retainSystemMessages);
+            const removedSet = new Set(result.pruneInfo.removedMessages);
+            const filteredMessages = currentRequest.messages.filter(msg => !removedSet.has(msg));
+            const filteredRequest = { ...currentRequest, messages: filteredMessages };
+
+            if (this.contextWindowStateManager) {
+                this.contextWindowStateManager.recordPruneOperation(this.getConversationId(), result.tokensReclaimed);
+            }
+
+            const newTokenCount = await this.countRequestTokens(filteredRequest, provider, filteredRequest.model);
+            if (newTokenCount <= targetTokenCount || filteredMessages.length === currentRequest.messages.length) {
+                return filteredRequest;
+            }
+            currentRequest = filteredRequest;
+        }
+
+        return request;
+    }
+
+    private async pruneToMaxMessageHistory(request: CompletionRequest): Promise<CompletionRequest> {
+        const maxLength = this.contextWindowConfig?.maxMessageHistoryLength;
+        if (!maxLength || request.messages.length <= maxLength) {
+            return request;
+        }
+
+        const retainSystemMessages = this.contextWindowConfig?.retainSystemMessages ?? true;
+        const prunableIndexes: number[] = [];
+        request.messages.forEach((msg, idx) => {
+            if (retainSystemMessages && msg.role === 'system') return;
+            if (msg.role === 'tool') return;
+            prunableIndexes.push(idx);
+        });
+
+        const removeCount = Math.max(0, request.messages.length - maxLength);
+        if (removeCount === 0) {
+            return request;
+        }
+
+        const removeIndexes = new Set(prunableIndexes.slice(0, removeCount));
+        const filteredMessages = request.messages.filter((_, idx) => !removeIndexes.has(idx));
+        return { ...request, messages: filteredMessages };
+    }
+
+    private async summarizeConversation(request: CompletionRequest, provider: ProviderAdapter): Promise<CompletionRequest> {
+        const messages = request.messages;
+        const systemMessages = messages.filter(m => m.role === 'system');
+        const nonSystemMessages = messages.filter(m => m.role !== 'system');
+
+        if (nonSystemMessages.length < 4) {
+            return request;
+        }
+
+        const recentMessages = nonSystemMessages.slice(-4);
+        const messagesToSummarize = nonSystemMessages.slice(0, -4);
+        if (messagesToSummarize.length < 2) {
+            return request;
+        }
+
+        const summarizerModel = this.contextWindowConfig?.summarizerModel || request.model;
+        const summaryRequestMessages = prepareSummarizationRequest(messagesToSummarize, {
+            model: summarizerModel,
+            maxSummaryTokens: 500,
+        });
+
+        const summaryResponse = await provider.generate({
+            model: summarizerModel,
+            messages: summaryRequestMessages,
+            max_tokens: 500,
+            temperature: 0,
+            response_format: 'text',
+        });
+
+        if (!summaryResponse.content) {
+            throw new SummarizationError('Summarization provider returned no summary', this.getConversationId(), messagesToSummarize.length, 'invalid_response');
+        }
+
+        const originalTokenCount = await this.countRequestTokens({ ...request, messages: messagesToSummarize }, provider, summarizerModel);
+        const summarization = parseSummarizationResponse(summaryResponse.content, messagesToSummarize, originalTokenCount);
+        const validation = validateSummarizationResult(summarization);
+
+        if (!validation.valid) {
+            throw new SummarizationError(`Summarization result is invalid: ${validation.issues.join('; ')}`, this.getConversationId(), messagesToSummarize.length, 'invalid_quality', summaryResponse.content);
+        }
+
+        const summaryMessage = createSummarySystemMessage(summarization.summary, messagesToSummarize.length);
+        const summarizedMessages = [...systemMessages, summaryMessage, ...recentMessages];
+
+        if (this.contextWindowStateManager) {
+            this.contextWindowStateManager.recordSummarization(this.getConversationId(), summarization.tokensSaved);
+        }
+
+        return { ...request, messages: summarizedMessages };
+    }
+
+    private async enforceContextWindow(request: CompletionRequest, provider: ProviderAdapter): Promise<CompletionRequest> {
+        if (!this.contextWindowConfig || this.contextWindowConfig.enabled === false) {
+            return request;
+        }
+
+        let managedRequest = await this.pruneToMaxMessageHistory(request);
+        const modelInfo = await this.getModelInfo(provider, managedRequest.model);
+        const contextWindow = modelInfo?.contextWindow ?? 100000;
+        const maxOutputTokens = managedRequest.max_tokens ?? modelInfo?.maxOutputTokens ?? 1024;
+        const outputBuffer = this.contextWindowConfig.outputTokenBuffer ?? 1.15;
+        const reserve = getSafeOutputReserve(maxOutputTokens, outputBuffer);
+        const safeInputLimit = Math.max(0, contextWindow - reserve);
+        const configuredThreshold = Math.floor(contextWindow * ((this.contextWindowConfig.pruneThreshold ?? 85) / 100));
+        const triggerThreshold = Math.min(safeInputLimit, configuredThreshold);
+
+        const currentTokens = await this.countRequestTokens(managedRequest, provider, managedRequest.model);
+        if (this.contextWindowStateManager) {
+            this.contextWindowStateManager.updateTokenCount(this.getConversationId(), currentTokens);
+            if (currentTokens > triggerThreshold) {
+                this.contextWindowStateManager.recordWarning(this.getConversationId());
+            }
+        }
+
+        if (currentTokens <= triggerThreshold) {
+            return managedRequest;
+        }
+
+        const strategy = this.contextWindowConfig.strategy ?? 'prune';
+
+        if (strategy === 'fail' && currentTokens > safeInputLimit) {
+            throw new ContextWindowExceededError(`Context window exceeded by request messages`, this.getConversationId(), currentTokens, safeInputLimit, strategy);
+        }
+
+        if (strategy === 'summarize') {
+            try {
+                const summarizedRequest = await this.summarizeConversation(managedRequest, provider);
+                const summarizedTokens = await this.countRequestTokens(summarizedRequest, provider, summarizedRequest.model);
+                if (summarizedTokens <= safeInputLimit) {
+                    return summarizedRequest;
+                }
+                managedRequest = await this.pruneConversation(summarizedRequest, provider, safeInputLimit);
+            } catch (error) {
+                managedRequest = await this.pruneConversation(managedRequest, provider, safeInputLimit);
+            }
+        } else {
+            managedRequest = await this.pruneConversation(managedRequest, provider, safeInputLimit);
+        }
+
+        const finalTokens = await this.countRequestTokens(managedRequest, provider, managedRequest.model);
+        if (finalTokens > safeInputLimit) {
+            if (strategy === 'fail') {
+                throw new ContextWindowExceededError(`Context window exceeded after attempted cleanup`, this.getConversationId(), finalTokens, safeInputLimit, strategy);
+            }
+        }
+
+        return managedRequest;
     }
 
     /**
@@ -407,7 +614,8 @@ export class AIClient extends EventEmitter {
 
             // Resolve tools to send with the request
             const resolvedProviderName = providerName || this.defaultProvider;
-            const enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            let enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
 
             const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
@@ -618,7 +826,8 @@ export class AIClient extends EventEmitter {
                     // Call the model again with updated messages
                     const rawFollowupReq: any = { ...enrichedRequest, messages, __toolpack_request_id: requestId };
                     // Re-enrich to include any tools discovered in the previous round
-                    const followupReq = await this.enrichRequestWithTools(rawFollowupReq);
+                    let followupReq = await this.enrichRequestWithTools(rawFollowupReq);
+                    followupReq = await this.enforceContextWindow(followupReq, provider);
 
                     if ((followupReq as any).tool_choice === 'required') {
                         (followupReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
@@ -655,7 +864,8 @@ export class AIClient extends EventEmitter {
             modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
             modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest);
 
-            const enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            let enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
 
             const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
@@ -732,7 +942,8 @@ export class AIClient extends EventEmitter {
 
                 const rawRoundReq: any = { ...baseReq, messages };
                 // Re-enrich to include any newly discovered tools from previous rounds
-                const roundReq = await this.enrichRequestWithTools(rawRoundReq);
+                let roundReq = await this.enrichRequestWithTools(rawRoundReq);
+                roundReq = await this.enforceContextWindow(roundReq, provider);
 
                 if (rounds > 0 && (roundReq as any).tool_choice === 'required') {
                     (roundReq as any).tool_choice = lookupOnly ? 'none' : 'auto';

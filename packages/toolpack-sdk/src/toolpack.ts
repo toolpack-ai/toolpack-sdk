@@ -8,7 +8,7 @@ import {
     EmbeddingRequest,
     EmbeddingResponse,
 } from './providers/base/index.js';
-import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
+import { ProviderInfo, ProviderModelInfo, ContextWindowConfig } from "./types/index.js";
 import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
@@ -56,6 +56,9 @@ export interface ToolpackInitConfig {
 
     /** Load built-in tools (fs, http, etc.)? Default: false */
     tools?: boolean;
+
+    /** Context window management configuration for automatic conversation pruning/summarization */
+    contextWindow?: ContextWindowConfig;
 
     /** Custom tool projects to load in addition to built-ins */
     customTools?: ToolProject[];
@@ -380,6 +383,7 @@ export class Toolpack extends EventEmitter {
             hitlConfig: Object.keys(hitlConfig).length > 0 ? hitlConfig : undefined,
             onToolConfirm: config.onToolConfirm,
             conversationId: config.conversationId,
+            contextWindowConfig: config.contextWindow,
         });
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);

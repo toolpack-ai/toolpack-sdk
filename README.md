@@ -16,6 +16,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
 - **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
+- **Multi-Agent Conversations** — Collaborative AI teams with specialized agents, handoffs, and conversation threading
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
 - **79 Built-in Tools** across 10 categories:
@@ -89,6 +90,50 @@ const sdk = await Toolpack.init({
   provider: 'openai',
   tools: true,
 });
+```
+
+### Multi-Agent Conversations
+
+Create collaborative AI teams where specialized agents work together on complex tasks:
+
+```typescript
+import { Toolpack } from 'toolpack-sdk';
+
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+});
+
+// Create a team of specialized agents
+const team = sdk.createAgentTeam({
+  agents: {
+    researcher: {
+      mode: 'chat',
+      systemPrompt: 'You are a research specialist. Use web tools to gather information.',
+      allowedToolCategories: ['network']
+    },
+    coder: {
+      mode: 'coding',
+      systemPrompt: 'You are a coding expert. Focus on writing clean, efficient code.',
+      allowedToolCategories: ['filesystem', 'coding']
+    },
+    reviewer: {
+      mode: 'chat',
+      systemPrompt: 'You are a code reviewer. Analyze code for best practices and issues.',
+      allowedToolCategories: ['filesystem']
+    }
+  },
+  conversationMode: 'collaborative',
+  enableAgentHandoffs: true
+});
+
+// Agents collaborate on complex tasks
+const result = await team.generate(
+  'Research the latest React patterns, implement a todo component, and review the code'
+);
+
+console.log('Final result:', result.content);
+console.log('Conversation had', result.totalRounds, 'rounds');
 ```
 
 ## Providers
