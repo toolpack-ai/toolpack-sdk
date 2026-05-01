@@ -122,6 +122,8 @@ const webSource = new WebUrlSource(['https://docs.example.com'], {
   userAgent: 'MyApp/1.0',         // Custom user agent
   maxChunkSize: 1500,             // Chunk size for web content
   timeoutMs: 30000,               // Request timeout
+  sameDomainOnly: true,           // Only follow links on the same domain (default: true)
+  maxPagesPerDomain: 20,          // Cap pages per domain (default: 10)
 });
 
 const kb = await Knowledge.create({
@@ -285,6 +287,8 @@ new WebUrlSource(['https://example.com', 'https://docs.example.com'], {
   maxChunkSize: 2000,             // Max tokens per chunk
   chunkOverlap: 200,              // Overlap between chunks
   timeoutMs: 30000,               // Request timeout (default: 30000ms)
+  sameDomainOnly: true,           // Only follow links on the same domain (default: true)
+  maxPagesPerDomain: 10,          // Max pages crawled per domain (default: 10)
   namespace: 'web',               // Chunk ID prefix
   metadata: { source: 'web' },    // Added to all chunks
 })
@@ -337,6 +341,67 @@ new ApiDataSource('https://api.example.com/data', {
 - JSON path support
 - Flexible content transformation
 
+### JSONSource
+
+Index data from local JSON files.
+
+```typescript
+import { JSONSource } from '@toolpack-sdk/knowledge';
+
+new JSONSource('./data/products.json', {
+  toContent: (item: any) => `${item.name}\n\n${item.description}`,  // Required
+  filter: (item: any) => item.active === true,                       // Optional: filter items
+  chunkSize: 100,                                                     // Items per chunk (default: 100)
+  namespace: 'products',
+  metadata: { source: 'products-db' },
+})
+```
+
+**Features:**
+- Parses JSON arrays (or single objects)
+- Optional item-level filtering
+- Required `toContent` callback to control what gets embedded
+
+### SQLiteSource
+
+Index rows from a SQLite database. Requires `better-sqlite3`.
+
+```typescript
+import { SQLiteSource } from '@toolpack-sdk/knowledge';
+
+new SQLiteSource('./data/app.db', {
+  query: 'SELECT id, title, body FROM articles WHERE published = 1',  // Optional: defaults to all rows
+  toContent: (row) => `${row.title}\n\n${row.body}`,                  // Required
+  chunkSize: 50,                                                        // Rows per chunk (default: 100)
+  namespace: 'articles',
+  metadata: { source: 'sqlite' },
+  preLoadCSV: {                   // Optional: load a CSV into the DB before querying
+    tableName: 'articles',
+    csvPath: './data/articles.csv',
+    delimiter: ',',
+    headers: true,
+  },
+})
+```
+
+### PostgresSource
+
+Index rows from a PostgreSQL database. Requires `pg`.
+
+```typescript
+import { PostgresSource } from '@toolpack-sdk/knowledge';
+
+new PostgresSource({
+  connectionString: process.env.DATABASE_URL,  // or use host/port/database/user/password
+  query: 'SELECT id, title, content FROM docs WHERE status = $1',
+  toContent: (row) => `${row.title}\n\n${row.content}`,  // Required
+  chunkSize: 50,
+  namespace: 'docs',
+  metadata: { source: 'postgres' },
+  ssl: true,
+})
+```
+
 ## Embedders
 
 ### OllamaEmbedder
@@ -345,10 +410,33 @@ Local embeddings via Ollama. Zero API cost.
 
 ```typescript
 new OllamaEmbedder({
-  model: 'nomic-embed-text',           // or 'mxbai-embed-large'
+  model: 'nomic-embed-text',           // or 'mxbai-embed-large', 'all-minilm', 'bge-m3', etc.
   baseUrl: 'http://localhost:11434',   // default
+  dimensions: 768,                     // optional: override auto-detected dimensions
+  retries: 3,                          // default
+  retryDelay: 1000,                    // ms, default
 })
 ```
+
+Known models: `nomic-embed-text` (768), `mxbai-embed-large` (1024), `all-minilm` (384), `snowflake-arctic-embed` (1024), `bge-m3` (1024), `bge-large` (1024). Pass `dimensions` for any other model.
+
+### OpenRouterEmbedder
+
+Embeddings via OpenRouter, giving access to OpenAI embedding models through a single API key.
+
+```typescript
+import { OpenRouterEmbedder } from '@toolpack-sdk/knowledge';
+
+new OpenRouterEmbedder({
+  model: 'openai/text-embedding-3-small',  // or 'openai/text-embedding-3-large', 'openai/text-embedding-ada-002'
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  dimensions: 1536,                         // optional: override auto-detected dimensions
+  retries: 3,                               // default
+  retryDelay: 1000,                         // ms, default
+})
+```
+
+Known models: `openai/text-embedding-3-small` (1536), `openai/text-embedding-3-large` (3072), `openai/text-embedding-ada-002` (1536). Pass `dimensions` for any other model.
 
 ### OpenAIEmbedder
 

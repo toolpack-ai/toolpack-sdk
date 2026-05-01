@@ -259,7 +259,7 @@ class MyAgent extends BaseAgent {
 
 ## Human-in-the-Loop
 
-Use `ask()` to pause execution and wait for human input (two-way channels only):
+Use `ask()` to pause execution and request human input (two-way channels only). `ask()` sends the question and returns immediately — the user's answer arrives on the **next** invocation, where you check `getPendingAsk()`.
 
 ```typescript
 class ApprovalAgent extends BaseAgent {
@@ -267,22 +267,30 @@ class ApprovalAgent extends BaseAgent {
   mode = 'agent';
 
   async invokeAgent(input) {
-    // Do some work
-    const draft = await this.generateDraft(input.message);
-    
-    // Ask for approval
-    const approval = await this.ask('Approve this draft? (yes/no)');
-    
-    if (approval.output === 'yes') {
-      await this.sendTo('slack', 'Draft approved!');
+    // Turn 2: check if we are waiting for an answer
+    const pending = this.getPendingAsk(input.conversationId);
+    if (pending && input.message) {
+      return this.handlePendingAsk(
+        pending,
+        input.message,
+        async (answer) => {
+          if (answer.toLowerCase() === 'yes') {
+            await this.sendTo('slack', 'Draft approved!');
+            return { output: 'Draft approved and sent.' };
+          }
+          return { output: 'Draft discarded.' };
+        },
+      );
     }
-    
-    return { output: draft };
+
+    // Turn 1: do some work, then ask for approval
+    const draft = await this.run(`Draft a response to: ${input.message}`);
+    return this.ask(`Here is my draft:\n\n${draft.output}\n\nApprove? (yes/no)`);
   }
 }
 ```
 
-**Note:** `ask()` throws an error if called from trigger-only channels (ScheduledChannel, EmailChannel).
+**Note:** `ask()` throws if called from trigger-only channels (ScheduledChannel, EmailChannel). It requires a registry — use `AgentRegistry`, not standalone `agent.start()`.
 
 ## Conversation History
 
@@ -305,11 +313,11 @@ class SupportAgent extends BaseAgent {
 ```
 
 **Features:**
-- Auto-loads last 10 messages before each AI call
-- Auto-stores user and assistant messages
-- Auto-trims to `maxMessages` limit (default: 20)
+- Auto-assembles conversation history before each AI call (up to 3 000-token budget by default)
+- Auto-stores user and assistant messages via the capture interceptor
+- Auto-trims to `maxMessagesPerConversation` limit (default: 500)
 - Zero-config in-memory mode for development
-- `conversation_search` tool is automatically provided as a request-scoped tool when search is enabled
+- `conversation_search` tool is automatically provided as a request-scoped tool whenever a `conversationId` is active
 
 **Memory model:**
 Agent memory is per-conversation by default. The `conversation_search` tool is bound at invocation time to the current conversation — the LLM cannot override this scope, and turns from other conversations are structurally unreachable. Use `knowledge_add` to promote durable facts that should persist across conversations; knowledge is the only cross-conversation bridge.
@@ -410,10 +418,13 @@ Customize built-in agents with your own prompts and logic:
 
 ```typescript
 import { ResearchAgent } from '@toolpack-sdk/agents';
+import { AGENT_MODE } from 'toolpack-sdk';
 
 class FintechResearchAgent extends ResearchAgent {
-  systemPrompt = `You are a fintech research specialist.
-                  Always cite sources and flag regulatory implications.`;
+  mode = {
+    ...AGENT_MODE,
+    systemPrompt: 'You are a fintech research specialist. Always cite sources and flag regulatory implications.',
+  };
 
   async onComplete(result) {
     // Notify team
@@ -458,10 +469,10 @@ abstract class BaseAgent {
   abstract invokeAgent(input: AgentInput): Promise<AgentResult>;
   
   // Built-in methods
-  protected run(message: string): Promise<AgentResult>;
+  protected run(message: string, options?: AgentRunOptions, context?: { conversationId?: string }): Promise<AgentResult>;
   protected sendTo(channelName: string, message: string): Promise<void>;
-  protected ask(question: string, options?: AskOptions): Promise<AgentResult>;
-  protected getPendingAsk(): PendingAsk | null;
+  protected ask(question: string, options?: { context?: Record<string, unknown>; maxRetries?: number; expiresIn?: number }): Promise<AgentResult>;
+  protected getPendingAsk(conversationId?: string): PendingAsk | null;
 }
 ```
 
