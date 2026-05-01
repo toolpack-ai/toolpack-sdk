@@ -1,0 +1,66 @@
+import type { ToolProject } from '../types.js';
+import {
+    k8sApplyManifestTool,
+    k8sDeleteResourceTool,
+    k8sDescribeTool,
+    k8sGetConfigMapTool,
+    k8sGetLogsTool,
+    k8sGetNamespacesTool,
+    k8sListDeploymentsTool,
+    k8sListPodsTool,
+    k8sListServicesTool,
+    k8sSwitchContextTool,
+    k8sWaitForDeploymentTool,
+} from './tools.js';
+
+export {
+    k8sListPodsTool,
+    k8sDescribeTool,
+    k8sGetLogsTool,
+    k8sApplyManifestTool,
+    k8sDeleteResourceTool,
+    k8sListServicesTool,
+    k8sListDeploymentsTool,
+    k8sGetConfigMapTool,
+    k8sSwitchContextTool,
+    k8sGetNamespacesTool,
+    k8sWaitForDeploymentTool,
+};
+
+export const k8sToolsProject: ToolProject = {
+    manifest: {
+        key: 'k8s',
+        name: 'k8s-tools',
+        displayName: 'Kubernetes',
+        version: '1.0.0',
+        description: 'Kubernetes command and cluster inspection tools for working with kubectl and manifests.',
+        author: 'toolpack-sdk',
+        tools: [
+            'k8s.list_pods',
+            'k8s.describe',
+            'k8s.get_logs',
+            'k8s.apply_manifest',
+            'k8s.delete_resource',
+            'k8s.list_services',
+            'k8s.list_deployments',
+            'k8s.get_config_map',
+            'k8s.switch_context',
+            'k8s.get_namespaces',
+            'k8s.wait_for_deployment',
+        ],
+        category: 'kubernetes',
+    },
+    tools: [
+        k8sListPodsTool,
+        k8sDescribeTool,
+        k8sGetLogsTool,
+        k8sApplyManifestTool,
+        k8sDeleteResourceTool,
+        k8sListServicesTool,
+        k8sListDeploymentsTool,
+        k8sGetConfigMapTool,
+        k8sSwitchContextTool,
+        k8sGetNamespacesTool,
+        k8sWaitForDeploymentTool,
+    ],
+};

@@ -11,6 +11,7 @@ export interface ToolParameterProperty {
     default?: any;
     items?: ToolParameterProperty;
     properties?: Record<string, ToolParameterProperty>;
+    additionalProperties?: ToolParameterProperty | boolean;
     required?: string[];
 }
 

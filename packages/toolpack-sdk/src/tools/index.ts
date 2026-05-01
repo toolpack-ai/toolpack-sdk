@@ -87,5 +87,13 @@ export {
     cloudDeployTool, cloudStatusTool, cloudListTool,
 } from './cloud-tools/index.js';
 
+export {
+    k8sToolsProject,
+    k8sListPodsTool, k8sDescribeTool, k8sGetLogsTool,
+    k8sApplyManifestTool, k8sDeleteResourceTool, k8sListServicesTool,
+    k8sListDeploymentsTool, k8sGetConfigMapTool,
+    k8sSwitchContextTool, k8sGetNamespacesTool, k8sWaitForDeploymentTool,
+} from './k8s-tools/index.js';
+
 export{ McpToolManager,createMcpToolProject,disconnectMcpToolProject } from './mcp-tools/index.js';
 export type { McpToolsConfig, McpServerConfig } from './mcp-tools/index.js';
