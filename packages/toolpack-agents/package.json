@@ -45,6 +45,10 @@
     "dist",
     "README.md"
   ],
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "build:dev": "tsup",
@@ -52,7 +56,7 @@
     "test:watch": "vitest",
     "watch": "tsup --watch",
     "lint": "eslint src/**",
-    "publish:npm": "npm run build && npm run test && npm publish --access public"
+    "publish:npm": "npm run build && npm run test && npm publish"
   },
   "keywords": [
     "ai",

@@ -2,8 +2,10 @@
 
 Build production-ready AI agents with channels, workflows, and event-driven architecture.
 
-[![npm version](https://img.shields.io/npm/v/@toolpack-sdk/agents.svg)](https://www.npmjs.com/package/@toolpack-sdk/agents)
+[![npm version](https://img.shields.io/npm/v/@toolpack-sdk/agents/alpha.svg?label=alpha)](https://www.npmjs.com/package/@toolpack-sdk/agents)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+> **Pre-release:** This package is currently in alpha (`2.0.0-alpha.1`). APIs may change before the stable `2.0.0` release.
 
 ## Features
 
@@ -18,7 +20,7 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 ## Installation
 
 ```bash
-npm install @toolpack-sdk/agents
+npm install @toolpack-sdk/agents@alpha
 ```
 
 ## Stable API (Phase 4)

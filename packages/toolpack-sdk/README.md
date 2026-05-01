@@ -9,7 +9,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 
 ## Features
 
-- **Unified API** — Single interface for OpenAI, Anthropic, Google Gemini, Ollama, and custom providers
+- **Unified API** — Single interface for OpenAI, Anthropic, Google Gemini, Ollama, OpenRouter, and custom providers
 - **Streaming** — Real-time response streaming across all providers
 - **Type-Safe** — Comprehensive TypeScript types throughout
 - **Multimodal** — Text and image inputs (vision) across all providers
@@ -141,19 +141,20 @@ See `packages/toolpack-sdk/docs/examples/kubernetes-usage.ts` for a complete exa
 | **Anthropic** | Claude Sonnet 4, Claude 3.5 Haiku, Claude 3 Opus | No embeddings support |
 | **Google Gemini** | Gemini 2.0 Flash, Gemini 1.5 Pro, Gemini 1.5 Flash | Synthetic tool call IDs |
 | **Ollama** | Auto-discovered from locally pulled models | Capability detection via probing |
+| **OpenRouter** | All models at openrouter.ai (auto-discovered) | Access to 300+ models via OpenAI-compatible API |
 
 ### Provider Comparison
 
-| Capability | OpenAI | Anthropic | Gemini | Ollama |
-|------------|--------|-----------|--------|--------|
-| Chat completions | ✅ | ✅ | ✅ | ✅ |
-| Streaming | ✅ | ✅ | ✅ | ✅ |
-| Tool/function calling | ✅ | ✅ | ✅ | ✅ |
-| Multi-round tool loop | ✅ | ✅ | ✅ | ✅ |
-| Embeddings | ✅ | ❌ | ✅ | ✅ |
-| Vision/images | ✅ | ✅ | ✅ | ✅ (model-dependent) |
-| Tool name sanitization | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) |
-| Model discovery | Static list | Static list | Static list | Dynamic (`/api/tags` + `/api/show`) |
+| Capability | OpenAI | Anthropic | Gemini | Ollama | OpenRouter |
+|------------|--------|-----------|--------|--------|------------|
+| Chat completions | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tool/function calling | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Multi-round tool loop | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Embeddings | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Vision/images | ✅ | ✅ | ✅ | ✅ (model-dependent) | ✅ (model-dependent) |
+| Tool name sanitization | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) |
+| Model discovery | Static list | Static list | Static list | Dynamic (`/api/tags` + `/api/show`) | Dynamic (`/models` endpoint) |
 
 #### Provider-Specific Notes
 
@@ -202,6 +203,7 @@ const sdk = await Toolpack.init({
 See `docs/MCP_INTEGRATION.md` and `docs/examples/mcp-integration-example.ts` for full instructions and best practices.
 - **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GOOGLE_GENERATIVE_AI_KEY` or `TOOLPACK_GEMINI_KEY`.
 - **Ollama**: Auto-discovers all locally pulled models when registered as `{ ollama: {} }`. Uses `/api/show` and tool probing to detect capabilities (tool calling, vision, embeddings) per model. Models without tool support are automatically stripped of tools and given a system instruction to prevent hallucinated tool usage. Uses synthetic tool call IDs (`ollama_<timestamp>_<random>`). Embeddings use the modern `/api/embed` batch endpoint. Legacy per-model registration (`{ 'ollama-llama3': {} }`) is also supported.
+- **OpenRouter**: Routes requests to any of the 300+ models available on [openrouter.ai](https://openrouter.ai) via an OpenAI-compatible API. Models are discovered dynamically from the `/models` endpoint. Tool calling is fully supported; models that reject `tool_choice: 'none'` have tools stripped gracefully instead. No embeddings support. Optional `siteUrl` and `siteName` config for OpenRouter's attribution leaderboard. API key read from `OPENROUTER_API_KEY` or `TOOLPACK_OPENROUTER_KEY`.
 
 ### Custom Providers
 
@@ -1054,6 +1056,7 @@ const response = await sdk.generate({
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_GENERATIVE_AI_KEY="AIza..."
+export OPENROUTER_API_KEY="sk-or-..."
 
 # SDK logging (override — prefer toolpack.config.json instead)
 export TOOLPACK_SDK_LOG_FILE="./toolpack.log"    # Log file path (also enables logging)
@@ -1468,6 +1471,7 @@ toolpack-sdk/
 │   │   ├── openai/        # OpenAI adapter
 │   │   ├── anthropic/     # Anthropic adapter
 │   │   ├── gemini/        # Google Gemini adapter
+│   │   ├── openrouter/    # OpenRouter adapter (OpenAI-compatible, dynamic model discovery)
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
@@ -1497,7 +1501,7 @@ toolpack-sdk/
 
 **Current Version:** 0.1.0
 
-- ✓ **4 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama (+ custom provider API)
+- ✓ **5 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama, OpenRouter (+ custom provider API)
 - ✓ **90 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes
 - ✓ **Workflow Engine** — AI-driven planning, step execution, retries, dynamic steps, progress events
 - ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support

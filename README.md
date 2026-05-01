@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 79 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 97 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -9,17 +9,16 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 
 ## Features
 
-- **Unified API** — Single interface for OpenAI, Anthropic, Google Gemini, Ollama, and custom providers
+- **Unified API** — Single interface for OpenAI, Anthropic, Google Gemini, Ollama, OpenRouter, and custom providers
 - **Streaming** — Real-time response streaming across all providers
 - **Type-Safe** — Comprehensive TypeScript types throughout
 - **Multimodal** — Text and image inputs (vision) across all providers
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
 - **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
-- **Multi-Agent Conversations** — Collaborative AI teams with specialized agents, handoffs, and conversation threading
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **79 Built-in Tools** across 10 categories:
+- **97 Built-in Tools** across 12 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -32,8 +31,10 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 | **`http-tools`** | 5 | HTTP requests — GET, POST, PUT, DELETE, download |
 | **`web-tools`** | 9 | Web interaction — fetch, search (Tavily/Brave/DuckDuckGo), scrape, extract links, map, metadata, sitemap, feed, screenshot |
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
+| **`github-tools`** | 9 | GitHub operations — PR reviews, review threads, file diffs, issue comments, GraphQL, repo contents |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
+| **`k8s-tools`** | 11 | Kubernetes cluster inspection and management via kubectl |
 | **`mcp-tools`** | 2 | MCP integration — createMcpToolProject, disconnectMcpToolProject |
 
 ## Quick Start
@@ -60,7 +61,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 79 built-in tools
+  tools: true,         // Load all 97 built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -92,49 +93,43 @@ const sdk = await Toolpack.init({
 });
 ```
 
-### Multi-Agent Conversations
+## Kubernetes Tools
 
-Create collaborative AI teams where specialized agents work together on complex tasks:
+Toolpack SDK now includes a dedicated Kubernetes tool category that exposes `kubectl`-backed operations when `tools: true` is enabled. Use these tools to inspect cluster state, fetch pod logs, apply manifests, and wait for rollout status.
 
 ```typescript
-import { Toolpack } from 'toolpack-sdk';
-
 const sdk = await Toolpack.init({
   provider: 'openai',
   tools: true,
+  defaultMode: 'agent',
 });
 
-// Create a team of specialized agents
-const team = sdk.createAgentTeam({
-  agents: {
-    researcher: {
-      mode: 'chat',
-      systemPrompt: 'You are a research specialist. Use web tools to gather information.',
-      allowedToolCategories: ['network']
+const podsResponse = await sdk.generate({
+  model: 'gpt-4o',
+  messages: [
+    {
+      role: 'user',
+      content: 'List pods in the default namespace using Kubernetes tools.',
     },
-    coder: {
-      mode: 'coding',
-      systemPrompt: 'You are a coding expert. Focus on writing clean, efficient code.',
-      allowedToolCategories: ['filesystem', 'coding']
-    },
-    reviewer: {
-      mode: 'chat',
-      systemPrompt: 'You are a code reviewer. Analyze code for best practices and issues.',
-      allowedToolCategories: ['filesystem']
-    }
-  },
-  conversationMode: 'collaborative',
-  enableAgentHandoffs: true
+  ],
 });
+console.log(podsResponse.content);
 
-// Agents collaborate on complex tasks
-const result = await team.generate(
-  'Research the latest React patterns, implement a todo component, and review the code'
-);
-
-console.log('Final result:', result.content);
-console.log('Conversation had', result.totalRounds, 'rounds');
+const applyResponse = await sdk.generate({
+  model: 'gpt-4o',
+  messages: [
+    {
+      role: 'user',
+      content: 'Apply the manifest at ./deploy/my-app.yaml to the staging namespace using Kubernetes tools.',
+    },
+  ],
+});
+console.log(applyResponse.content);
 ```
+
+> Requires `kubectl` installed and configured with a valid kubeconfig.
+
+See `packages/toolpack-sdk/docs/examples/kubernetes-usage.ts` for a complete example.
 
 ## Providers
 
@@ -146,19 +141,20 @@ console.log('Conversation had', result.totalRounds, 'rounds');
 | **Anthropic** | Claude Sonnet 4, Claude 3.5 Haiku, Claude 3 Opus | No embeddings support |
 | **Google Gemini** | Gemini 2.0 Flash, Gemini 1.5 Pro, Gemini 1.5 Flash | Synthetic tool call IDs |
 | **Ollama** | Auto-discovered from locally pulled models | Capability detection via probing |
+| **OpenRouter** | All models at openrouter.ai (auto-discovered) | Access to 300+ models via OpenAI-compatible API |
 
 ### Provider Comparison
 
-| Capability | OpenAI | Anthropic | Gemini | Ollama |
-|------------|--------|-----------|--------|--------|
-| Chat completions | ✅ | ✅ | ✅ | ✅ |
-| Streaming | ✅ | ✅ | ✅ | ✅ |
-| Tool/function calling | ✅ | ✅ | ✅ | ✅ |
-| Multi-round tool loop | ✅ | ✅ | ✅ | ✅ |
-| Embeddings | ✅ | ❌ | ✅ | ✅ |
-| Vision/images | ✅ | ✅ | ✅ | ✅ (model-dependent) |
-| Tool name sanitization | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) |
-| Model discovery | Static list | Static list | Static list | Dynamic (`/api/tags` + `/api/show`) |
+| Capability | OpenAI | Anthropic | Gemini | Ollama | OpenRouter |
+|------------|--------|-----------|--------|--------|------------|
+| Chat completions | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tool/function calling | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Multi-round tool loop | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Embeddings | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Vision/images | ✅ | ✅ | ✅ | ✅ (model-dependent) | ✅ (model-dependent) |
+| Tool name sanitization | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) | ✅ (auto) |
+| Model discovery | Static list | Static list | Static list | Dynamic (`/api/tags` + `/api/show`) | Dynamic (`/models` endpoint) |
 
 #### Provider-Specific Notes
 
@@ -207,6 +203,7 @@ const sdk = await Toolpack.init({
 See `docs/MCP_INTEGRATION.md` and `docs/examples/mcp-integration-example.ts` for full instructions and best practices.
 - **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GOOGLE_GENERATIVE_AI_KEY` or `TOOLPACK_GEMINI_KEY`.
 - **Ollama**: Auto-discovers all locally pulled models when registered as `{ ollama: {} }`. Uses `/api/show` and tool probing to detect capabilities (tool calling, vision, embeddings) per model. Models without tool support are automatically stripped of tools and given a system instruction to prevent hallucinated tool usage. Uses synthetic tool call IDs (`ollama_<timestamp>_<random>`). Embeddings use the modern `/api/embed` batch endpoint. Legacy per-model registration (`{ 'ollama-llama3': {} }`) is also supported.
+- **OpenRouter**: Routes requests to any of the 300+ models available on [openrouter.ai](https://openrouter.ai) via an OpenAI-compatible API. Models are discovered dynamically from the `/models` endpoint. Tool calling is fully supported; models that reject `tool_choice: 'none'` have tools stripped gracefully instead. No embeddings support. Optional `siteUrl` and `siteName` config for OpenRouter's attribution leaderboard. API key read from `OPENROUTER_API_KEY` or `TOOLPACK_OPENROUTER_KEY`.
 
 ### Custom Providers
 
@@ -554,7 +551,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 79 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 97 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -1059,6 +1056,7 @@ const response = await sdk.generate({
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_GENERATIVE_AI_KEY="AIza..."
+export OPENROUTER_API_KEY="sk-or-..."
 
 # SDK logging (override — prefer toolpack.config.json instead)
 export TOOLPACK_SDK_LOG_FILE="./toolpack.log"    # Log file path (also enables logging)
@@ -1281,6 +1279,7 @@ interface CompletionRequest {
   temperature?: number;
   max_tokens?: number;
   tools?: ToolCallRequest[];
+  requestTools?: RequestToolDefinition[];  // Request-scoped tools
   tool_choice?: 'auto' | 'none' | 'required';
 }
 
@@ -1310,6 +1309,115 @@ interface ProviderModelInfo {
   costTier?: string;            // e.g., 'low', 'medium', 'high', 'premium'
 }
 ```
+
+### Request-Scoped Tools
+
+Request-scoped tools are dynamic tools attached to a single completion request. Unlike globally registered tools in the ToolRegistry, they:
+
+- **Don't pollute the shared registry** — Each request can have its own tools
+- **Can close over request-specific state** — e.g., `conversationId`, user context
+- **Are safe for multi-agent/multi-request usage** — No cross-request contamination
+- **Execute through the same SDK orchestration** — Events, logging, HITL all work
+
+#### Built-in Request-Scoped Tools
+
+**Knowledge Tools** (when `knowledge` is configured):
+- `knowledge_search` — Search the knowledge base for relevant information
+- `knowledge_add` — Add new content to the knowledge base at runtime
+
+**Conversation Tools** (when using `ConversationHistory`):
+- `conversation_search` — Search conversation history for past messages
+
+#### Creating Custom Request Tools
+
+```typescript
+import { RequestToolDefinition, ConversationHistory } from 'toolpack-sdk';
+
+// Example: Session-specific calculator
+const createCalculatorTool = (sessionId: string): RequestToolDefinition => ({
+  name: 'calculate',
+  displayName: 'Calculator',
+  description: 'Perform mathematical calculations',
+  category: 'math',
+  parameters: {
+    type: 'object',
+    properties: {
+      expression: { type: 'string', description: 'Math expression to evaluate' },
+    },
+    required: ['expression'],
+  },
+  execute: async (args) => {
+    // Can safely close over sessionId
+    console.log(`Session ${sessionId}: calculating ${args.expression}`);
+    
+    // Simple eval (use a proper math library in production)
+    const result = eval(args.expression);
+    return { result, sessionId };
+  },
+});
+
+// Use in a request
+const result = await sdk.generate({
+  messages: [{ role: 'user', content: 'What is 15 * 23?' }],
+  model: 'gpt-4',
+  requestTools: [createCalculatorTool('user-123')],
+});
+```
+
+#### Using ConversationHistory with Request Tools
+
+```typescript
+import { ConversationHistory } from 'toolpack-sdk';
+
+const history = new ConversationHistory('./chat.db');
+
+// Add some messages
+await history.addUserMessage('conv-1', 'What is the API rate limit?');
+await history.addAssistantMessage('conv-1', 'The rate limit is 100 requests per minute.');
+
+// Use conversation search in a request
+const result = await sdk.generate({
+  messages: [
+    { role: 'user', content: 'What did we discuss about rate limits?' }
+  ],
+  model: 'gpt-4',
+  requestTools: [
+    history.toTool('conv-1'),  // Scoped to conversation 'conv-1'
+  ],
+});
+
+// AI can now call conversation_search to find the earlier discussion
+```
+
+#### Request Tools vs Registry Tools
+
+| Feature | Request Tools | Registry Tools |
+|---------|---------------|----------------|
+| **Scope** | Single request | All requests |
+| **State** | Can close over request state | Stateless |
+| **Registration** | Per-request via `requestTools` | Global via `ToolRegistry` |
+| **Use Case** | Dynamic, stateful tools | Reusable, static tools |
+| **Priority** | Higher (checked first) | Lower |
+| **Examples** | `conversation_search`, `knowledge_add` | `fs.read_file`, `web.search` |
+
+#### Automatic Guidance Injection
+
+When request-scoped tools are present, the SDK automatically injects usage guidance into the system prompt:
+
+```
+Knowledge Base:
+- Use `knowledge_search` when you need factual or domain-specific information.
+- Use `knowledge_add` when you learn durable information that should be saved.
+
+Conversation History:
+- Only recent messages may be present in context.
+- Use `conversation_search` to find details from earlier in this conversation.
+```
+
+This guidance is:
+- **Per-request** — Only injected when tools are actually present
+- **Derived from effective tool set** — Reflects the actual tools available
+- **Idempotent** — Won't duplicate if already present
 
 ## Error Handling
 
@@ -1363,10 +1471,11 @@ toolpack-sdk/
 │   │   ├── openai/        # OpenAI adapter
 │   │   ├── anthropic/     # Anthropic adapter
 │   │   ├── gemini/        # Google Gemini adapter
+│   │   ├── openrouter/    # OpenRouter adapter (OpenAI-compatible, dynamic model discovery)
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
-│   ├── tools/             # 79 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 97 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
 │   │   ├── git-tools/     # Git operations (9 tools)
@@ -1377,6 +1486,7 @@ toolpack-sdk/
 │   │   ├── system-tools/  # System info (5 tools)
 │   │   ├── diff-tools/    # Patch operations (3 tools)
 │   │   ├── cloud-tools/   # Deployments (3 tools)
+│   │   ├── k8s-tools/     # Kubernetes management (11 tools)
 │   │   ├── registry.ts    # Tool registry and loading
 │   │   ├── router.ts      # Tool routing and filtering
 │   │   └── search/        # BM25 tool discovery engine (internal)
@@ -1391,8 +1501,8 @@ toolpack-sdk/
 
 **Current Version:** 0.1.0
 
-- ✓ **4 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama (+ custom provider API)
-- ✓ **79 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system
+- ✓ **5 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama, OpenRouter (+ custom provider API)
+- ✓ **90 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes
 - ✓ **Workflow Engine** — AI-driven planning, step execution, retries, dynamic steps, progress events
 - ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support
 - ✓ **Tool Search** — BM25-based on-demand tool discovery for large tool libraries
