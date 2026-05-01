@@ -164,7 +164,7 @@ export class MockKnowledge {
     // Simple keyword matching
     const keywords = text.toLowerCase().split(/\s+/);
 
-    let results = this.chunks
+    const results = this.chunks
       .filter(chunk => {
         // Apply metadata filter if provided
         if (filter) {

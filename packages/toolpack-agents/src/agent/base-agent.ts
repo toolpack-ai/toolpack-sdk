@@ -593,15 +593,13 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
         detachStepUpdates = this._attachWorkflowStepUpdates(channel, input);
 
-        let result: AgentOutput;
-
         const chain = composeChain(
           this._getEffectiveInterceptors(),
           this, channel, this._registry ?? null
         );
         const chainResult = await executeChain(chain, input);
         if (chainResult === null) return;
-        result = { output: chainResult.output, metadata: chainResult.metadata };
+        const result: AgentOutput = { output: chainResult.output, metadata: chainResult.metadata };
 
         await channel.send({
           output: result.output,
