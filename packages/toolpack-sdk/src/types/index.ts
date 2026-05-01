@@ -293,3 +293,67 @@ export interface ProviderInfo {
     /** Available models from this provider */
     models: ProviderModelInfo[];
 }
+
+// ── Context Window Management Types ────────────────────────────
+
+/**
+ * Strategy for handling context window limit scenarios
+ */
+export type ContextWindowStrategy = 'prune' | 'summarize' | 'fail';
+
+/**
+ * Configuration for automatic context window management
+ */
+export interface ContextWindowConfig {
+    /** Master switch for context window management. Default: true */
+    enabled?: boolean;
+
+    /** Strategy when context limit is approached or exceeded. Default: 'prune' */
+    strategy?: ContextWindowStrategy;
+
+    /**
+     * Percentage of context window to trigger pruning/summarization.
+     * When current tokens exceed this percentage, cleanup is initiated.
+     * Default: 85
+     */
+    pruneThreshold?: number;
+
+    /**
+     * Optional maximum message history length as fallback limit.
+     * Useful for caps independent of token counting.
+     * When set, removes messages when count exceeds this.
+     */
+    maxMessageHistoryLength?: number;
+
+    /**
+     * Model to use for conversation summarization (if strategy is 'summarize').
+     * If omitted, uses the same model as the current request.
+     * Example: 'gpt-4.1-mini' for faster/cheaper summaries
+     */
+    summarizerModel?: string;
+
+    /**
+     * Whether to always retain system messages (never prune them).
+     * Default: true
+     */
+    retainSystemMessages?: boolean;
+
+    /**
+     * Percentage buffer above actual maxOutputTokens to reserve for safety.
+     * Default: 1.15 (15% buffer)
+     */
+    outputTokenBuffer?: number;
+}
+
+/**
+ * Tracks context window state per conversation for monitoring
+ */
+export interface ContextWindowState {
+    conversationId?: string;
+    estimatedTokens: number;
+    lastUpdated: number;
+    pruneCount: number;
+    lastPrunedAt?: number;
+    warningsSent: number;
+    summarizationCount: number;
+}

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ModeConfig } from '../modes/mode-types.js';
+import { ContextWindowConfig } from '../types/index.js';
 import { SDKError } from '../errors/index.js';
 
 const CONFIG_FILENAME = 'toolpack.config.json';
@@ -80,6 +81,9 @@ export interface ToolpackConfig {
 
     /** Human-in-the-loop configuration for tool confirmation */
     hitl?: HitlConfig;
+
+    /** Context window management configuration for automatic conversation pruning/summarization */
+    contextWindow?: ContextWindowConfig;
 }
 
 // ============================================================================
