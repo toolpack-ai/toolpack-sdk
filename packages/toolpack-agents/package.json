@@ -1,6 +1,6 @@
 {
   "name": "@toolpack-sdk/agents",
-  "version": "1.4.0",
+  "version": "2.0.0-alpha.1",
   "description": "Agent layer for the Toolpack SDK - build, compose, and deploy AI agents with a consistent, extensible pattern",
   "engines": {
     "node": ">=20"
@@ -79,11 +79,11 @@
     "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
   },
   "peerDependencies": {
-    "@toolpack-sdk/knowledge": "^1.4.0",
+    "@toolpack-sdk/knowledge": "^2.0.0-alpha.1",
     "better-sqlite3": "^11.x",
     "discord.js": "^14.x",
     "nodemailer": "^6.x",
-    "toolpack-sdk": "^1.4.0",
+    "toolpack-sdk": "^2.0.0-alpha.1",
     "twilio": "^5.x"
   },
   "peerDependenciesMeta": {
