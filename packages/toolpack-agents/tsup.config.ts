@@ -9,6 +9,8 @@ export default defineConfig({
     'channels/index': 'src/channels/index.ts',
     'testing/index': 'src/testing/index.ts',
     'registry/index': 'src/registry/index.ts',
+    'capabilities/index': 'src/capabilities/index.ts',
+    'interceptors/index': 'src/interceptors/index.ts',
   },
   dts: true,
   format: ['esm', 'cjs'],

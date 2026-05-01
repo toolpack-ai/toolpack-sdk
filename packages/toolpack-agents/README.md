@@ -42,23 +42,9 @@ The following APIs are stable and follow semantic versioning. Breaking changes w
 ## Quick Start
 
 ```typescript
-import { Toolpack } from 'toolpack-sdk';
 import { BaseAgent, AgentRegistry, SlackChannel } from '@toolpack-sdk/agents';
 
-// 1. Create an agent
-class SupportAgent extends BaseAgent {
-  name = 'support-agent';
-  description = 'Customer support agent';
-  mode = 'chat';
-
-  async invokeAgent(input) {
-    const result = await this.run(input.message);
-    await this.sendTo('slack', result.output);
-    return result;
-  }
-}
-
-// 2. Set up channel
+// 1. Create a channel
 const slack = new SlackChannel({
   name: 'slack',
   token: process.env.SLACK_BOT_TOKEN,
@@ -66,16 +52,26 @@ const slack = new SlackChannel({
   channel: '#support',
 });
 
-// 3. Register and run
-const registry = new AgentRegistry([
-  { agent: SupportAgent, channels: [slack] },
-]);
+// 2. Create an agent (channels live on the agent)
+class SupportAgent extends BaseAgent {
+  name = 'support-agent';
+  description = 'Customer support agent';
+  mode = 'chat';
+  channels = [slack];
 
-const sdk = await Toolpack.init({
-  provider: 'openai',
-  tools: true,
-  agents: registry,
-});
+  async invokeAgent(input) {
+    const result = await this.run(input.message);
+    return result;
+  }
+}
+
+// 3. Single-agent: start directly
+const agent = new SupportAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
+await agent.start();
+
+// OR multi-agent: use AgentRegistry
+// const registry = new AgentRegistry([agent]);
+// await registry.start();
 ```
 
 ## Built-in Agents
@@ -86,7 +82,7 @@ Web research for summarization, fact-finding, and trend monitoring.
 ```typescript
 import { ResearchAgent } from '@toolpack-sdk/agents';
 
-const agent = new ResearchAgent(sdk);
+const agent = new ResearchAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
 const result = await agent.invokeAgent({
   message: 'Summarize recent AI developments',
 });
@@ -100,7 +96,7 @@ Code generation, refactoring, debugging, and test writing.
 ```typescript
 import { CodingAgent } from '@toolpack-sdk/agents';
 
-const agent = new CodingAgent(sdk);
+const agent = new CodingAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
 const result = await agent.invokeAgent({
   message: 'Refactor the auth module',
 });
@@ -114,7 +110,7 @@ Database queries, reporting, data analysis, and CSV generation.
 ```typescript
 import { DataAgent } from '@toolpack-sdk/agents';
 
-const agent = new DataAgent(sdk);
+const agent = new DataAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
 const result = await agent.invokeAgent({
   message: 'Generate weekly signups report',
 });
@@ -128,7 +124,7 @@ Web browsing, form interaction, and content extraction.
 ```typescript
 import { BrowserAgent } from '@toolpack-sdk/agents';
 
-const agent = new BrowserAgent(sdk);
+const agent = new BrowserAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
 const result = await agent.invokeAgent({
   message: 'Extract prices from acme.com/products',
 });
@@ -179,9 +175,11 @@ Runs agents on cron schedules. Supports full cron expressions.
 const scheduler = new ScheduledChannel({
   name: 'daily-report',
   cron: '0 9 * * 1-5', // 9am weekdays
-  notify: 'slack:#reports',
+  notify: 'webhook:https://hooks.example.com/daily-report',
   message: 'Generate daily report',
 });
+// For Slack delivery, attach a named SlackChannel to the same agent and
+// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
 ```
 
 ### DiscordChannel (Two-way)
@@ -291,14 +289,11 @@ class ApprovalAgent extends BaseAgent {
 Store conversation history separately from domain knowledge:
 
 ```typescript
-import { ConversationHistory } from '@toolpack-sdk/agents';
+import { InMemoryConversationStore } from '@toolpack-sdk/agents';
 
 class SupportAgent extends BaseAgent {
-  // In-memory (development)
-  conversationHistory = new ConversationHistory();
-  
-  // SQLite (production) - requires: npm install better-sqlite3
-  // conversationHistory = new ConversationHistory('./history.db');
+  // In-memory store (development/single-process)
+  conversationHistory = new InMemoryConversationStore();
 
   async invokeAgent(input) {
     // History is automatically loaded before AI call
@@ -315,26 +310,62 @@ class SupportAgent extends BaseAgent {
 - Auto-trims to `maxMessages` limit (default: 20)
 - Zero-config in-memory mode for development
 - Optional SQLite persistence for production
+- `conversation_search` tool is automatically provided as a request-scoped tool when search is enabled
+
+**Memory model:**
+Agent memory is per-conversation by default. The `conversation_search` tool is bound at invocation time to the current conversation — the LLM cannot override this scope, and turns from other conversations are structurally unreachable. Use `knowledge_add` to promote durable facts that should persist across conversations; knowledge is the only cross-conversation bridge.
 
 ## Knowledge Integration
 
-Integrate knowledge bases for RAG (domain knowledge, not conversation history):
+Integrate knowledge bases for RAG (domain knowledge, not conversation history).
+Knowledge is configured at the SDK level and automatically available to all agents:
 
 ```typescript
+import { Toolpack } from 'toolpack-sdk';
 import { Knowledge, MemoryProvider } from '@toolpack-sdk/knowledge';
 
-class SmartAgent extends BaseAgent {
-  knowledge = await Knowledge.create({
-    provider: new MemoryProvider(),
-  });
+// Configure knowledge at SDK level
+const knowledge = await Knowledge.create({
+  provider: new MemoryProvider(),
+});
 
+const toolpack = await Toolpack.init({
+  provider: 'openai',
+  knowledge, // Available to all agents using this toolpack
+});
+
+class SmartAgent extends BaseAgent {
   async invokeAgent(input) {
-    // Knowledge is automatically available as knowledge_search tool
+    // Both `knowledge_search` and `knowledge_add` tools are
+    // automatically available as request-scoped tools.
+    // The AI can use them to retrieve or store information.
     const result = await this.run(input.message);
     return result;
   }
 }
 ```
+
+**Available Tools:**
+- `knowledge_search` — Search the knowledge base for relevant information
+- `knowledge_add` — Add new information to the knowledge base at runtime
+
+The SDK automatically injects usage guidance into the system prompt when these tools are available.
+
+**Knowledge as the cross-conversation bridge:**
+
+`knowledge_add` is the *only* path by which information crosses conversation boundaries. Conversation history is scoped to the current conversation and inaccessible elsewhere; anything promoted via `knowledge_add` becomes available in all future conversations for that agent.
+
+Promote when:
+- A task surfaces a fact useful beyond the current conversation
+- A user states a durable preference
+- A decision is made that future conversations should respect
+
+Do **not** promote:
+- Routine task outputs (e.g., "answered a weather question")
+- Context that is specific to this conversation only
+- Confidential information whose visibility should remain inside the current conversation
+
+Because every promotion is an explicit agent action visible in traces, the knowledge base stays auditable and intentional. If you need per-entry visibility controls (e.g., scoping a knowledge entry to a subset of channels), that is a future extension — for now, apply developer discipline: only promote what every future conversation is permitted to see.
 
 ## Multi-Channel Routing
 
@@ -386,15 +417,17 @@ class FintechResearchAgent extends ResearchAgent {
                   Always cite sources and flag regulatory implications.`;
 
   async onComplete(result) {
-    // Store in knowledge base
-    if (this.knowledge) {
-      await this.knowledge.add(result.output, { category: 'fintech' });
-    }
-    
     // Notify team
     await this.sendTo('slack-research', result.output);
   }
 }
+
+// Knowledge is configured at SDK level, not on the agent.
+// The AI can use `knowledge_add` to store information during execution.
+const toolpack = await Toolpack.init({
+  provider: 'openai',
+  knowledge: await Knowledge.create({ provider: new MemoryProvider() }),
+});
 ```
 
 ## Peer Dependencies
@@ -437,12 +470,13 @@ abstract class BaseAgent {
 
 ```typescript
 class AgentRegistry {
-  constructor(registrations: AgentRegistration[]);
-  start(toolpack: Toolpack): void;
+  constructor(agents: BaseAgent[]);
+  start(): Promise<void>;
   stop(): Promise<void>;
   sendTo(channelName: string, output: AgentOutput): Promise<void>;
   getAgent(name: string): AgentInstance | undefined;
   getChannel(name: string): ChannelInterface | undefined;
+  invoke(agentName: string, input: AgentInput): Promise<AgentResult>;
 }
 ```
 
@@ -472,13 +506,12 @@ Agents can delegate tasks to other agents without tight coupling.
 import { AgentRegistry, BaseAgent } from '@toolpack-sdk/agents';
 import type { AgentInput, AgentResult } from '@toolpack-sdk/agents';
 
-const registry = new AgentRegistry([
-  { agent: EmailAgent, channels: [slack] },
-  { agent: DataAgent, channels: [] },
-]);
-
-// Inside EmailAgent
 class EmailAgent extends BaseAgent {
+  name = 'email-agent';
+  description = 'Sends email reports';
+  mode = 'chat';
+  channels = [slack]; // channels are class properties, not constructor args
+
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
     // Delegate to DataAgent and wait for result
     const report = await this.delegateAndWait('data-agent', {
@@ -491,6 +524,11 @@ class EmailAgent extends BaseAgent {
     };
   }
 }
+
+const emailAgent = new EmailAgent({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const dataAgent = new DataAgent({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const registry = new AgentRegistry([emailAgent, dataAgent]);
+await registry.start();
 ```
 
 ### Cross-Process Delegation (JSON-RPC)
@@ -500,8 +538,8 @@ class EmailAgent extends BaseAgent {
 import { AgentJsonRpcServer } from '@toolpack-sdk/agents';
 
 const server = new AgentJsonRpcServer({ port: 3000 });
-server.registerAgent('data-agent', new DataAgent(toolpack));
-server.registerAgent('research-agent', new ResearchAgent(toolpack));
+server.registerAgent('data-agent', new DataAgent({ apiKey: process.env.ANTHROPIC_API_KEY! }));
+server.registerAgent('research-agent', new ResearchAgent({ apiKey: process.env.ANTHROPIC_API_KEY! }));
 server.listen();
 ```
 
@@ -510,9 +548,8 @@ server.listen();
 import { AgentRegistry, JsonRpcTransport, BaseAgent } from '@toolpack-sdk/agents';
 import type { AgentInput, AgentResult } from '@toolpack-sdk/agents';
 
-const registry = new AgentRegistry([
-  { agent: EmailAgent, channels: [slack] },
-], {
+const emailAgent = new EmailAgent({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const registry = new AgentRegistry([emailAgent], {
   transport: new JsonRpcTransport({
     agents: {
       'data-agent': 'http://localhost:3000',

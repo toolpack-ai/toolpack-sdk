@@ -5,7 +5,6 @@ import type {
   AgentOutput,
   AgentRunOptions,
   WorkflowStep,
-  AgentRegistration,
   IAgentRegistry,
   AgentInstance,
   ChannelInterface,
@@ -126,26 +125,27 @@ describe('Agent Types', () => {
     });
   });
 
-  describe('AgentRegistration', () => {
-    it('should define AgentRegistration structure', () => {
-      // Type-only test - verify the interface can be used
-      type TestRegistration = AgentRegistration<'test'>;
-
-      // The type exists and can be referenced
-      expect(true).toBe(true);
-    });
-  });
-
   describe('IAgentRegistry', () => {
     it('should define IAgentRegistry structure', () => {
-      // Create a mock implementation
       const mockRegistry: IAgentRegistry = {
-        start: () => {},
+        start: async () => {},
+        stop: async () => {},
         sendTo: async () => {},
+        getAgent: () => undefined,
+        getAllAgents: () => [],
+        getChannel: () => undefined,
+        invoke: async () => ({ output: '' }),
+        getPendingAsk: () => undefined,
+        addPendingAsk: (ask) => ({ ...ask, id: 'test', askedAt: new Date(), retries: 0, status: 'pending' }),
+        resolvePendingAsk: async () => {},
+        hasPendingAsks: () => false,
+        incrementRetries: () => undefined,
+        cleanupExpiredAsks: () => 0,
       };
 
       expect(mockRegistry.start).toBeDefined();
       expect(mockRegistry.sendTo).toBeDefined();
+      expect(mockRegistry.invoke).toBeDefined();
     });
   });
 

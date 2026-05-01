@@ -1,6 +1,7 @@
-import type { Toolpack } from 'toolpack-sdk';
+import { BaseAgentOptions } from './../agent/types.js';
 import { BaseAgent } from '../agent/base-agent.js';
 import { AgentInput, AgentResult } from '../agent/types.js';
+import { AGENT_MODE, type ModeConfig } from 'toolpack-sdk';
 
 /**
  * Built-in research agent for web research and information gathering.
@@ -14,25 +15,29 @@ import { AgentInput, AgentResult } from '../agent/types.js';
  * });
  * ```
  */
-export class ResearchAgent extends BaseAgent {
-  name = 'research-agent';
-  description = 'Web research agent for summarization, fact-finding, competitive analysis, and trend monitoring';
-  mode = 'agent';
-
-  systemPrompt = [
+const RESEARCH_AGENT_MODE: ModeConfig = {
+  ...AGENT_MODE,
+  name: 'research-agent-mode',
+  systemPrompt: [
     'You are a research agent specialized in web research and information gathering.',
     'Use web.search to find relevant information, web.fetch to retrieve content, and web.scrape when needed.',
     'Always cite your sources with URLs.',
     'Provide comprehensive, well-structured summaries.',
     'Flag any conflicting information or uncertainty in your findings.',
-  ].join(' ');
+  ].join(' '),
+};
 
-  constructor(toolpack: Toolpack) {
-    super(toolpack);
+export class ResearchAgent extends BaseAgent {
+  name = 'research-agent';
+  description = 'Web research agent for summarization, fact-finding, competitive analysis, and trend monitoring';
+  mode = RESEARCH_AGENT_MODE;
+
+  constructor(options: BaseAgentOptions) {
+    super(options);
   }
 
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
-    const result = await this.run(input.message || '');
+    const result = await this.run(input.message || '', undefined, { conversationId: input.conversationId });
     await this.onComplete(result);
     return result;
   }

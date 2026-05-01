@@ -1,5 +1,5 @@
-import { appendFileSync } from 'fs';
-import { join } from 'path';
+import { appendFileSync, mkdirSync } from 'fs';
+import { dirname, isAbsolute, join, resolve } from 'path';
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
 
@@ -15,6 +15,7 @@ export const LEVEL_VALUES: Record<LogLevel, number> = {
 let _enabled = false;
 let _level: LogLevel = 'info';
 let _logFile = join(process.cwd(), 'toolpack-sdk.log');
+let _console = false;
 
 export interface LoggingConfig {
     /** Enable file logging.  Default: false */
@@ -23,6 +24,8 @@ export interface LoggingConfig {
     filePath?: string;
     /** Log level. Default: 'info' */
     level?: LogLevel;
+    /** Mirror log output to console (stderr for error/warn, stdout for others). Default: false */
+    console?: boolean;
 }
 
 function parseLevel(value: string | undefined): LogLevel | undefined {
@@ -63,6 +66,29 @@ export function initLogger(config?: LoggingConfig): void {
     if (process.env.TOOLPACK_SDK_LOG_LEVEL) {
         _level = parseLevel(process.env.TOOLPACK_SDK_LOG_LEVEL) || _level;
     }
+    if (process.env.TOOLPACK_SDK_LOG_CONSOLE !== undefined) {
+        _console = process.env.TOOLPACK_SDK_LOG_CONSOLE === 'true';
+    }
+    if (config?.console !== undefined && process.env.TOOLPACK_SDK_LOG_CONSOLE === undefined) {
+        _console = config.console;
+    }
+
+    // Normalize log file path and ensure its parent directory exists so appendFileSync
+    // doesn't throw ENOENT for relative/nested paths like "./toolpack/logs/kael-debug.log".
+    if (_enabled) {
+        try {
+            _logFile = isAbsolute(_logFile) ? _logFile : resolve(process.cwd(), _logFile);
+            mkdirSync(dirname(_logFile), { recursive: true });
+            // Emit a sentinel line so it's obvious logging is working.
+            appendFileSync(
+                _logFile,
+                `[${new Date().toISOString()}] [INFO] [Logger] initialized level=${_level} file=${_logFile}\n`
+            );
+        } catch (err) {
+            console.warn(`[Toolpack Warning] Failed to initialize log file "${_logFile}": ${(err as Error).message}`);
+            _enabled = false;
+        }
+    }
 }
 
 // ── Public API (unchanged signatures) ────────────────────────────
@@ -83,8 +109,12 @@ export function shouldLog(level: LogLevel): boolean {
 function writeLog(level: LogLevel, message: string): void {
     if (!shouldLog(level)) return;
     const timestamp = new Date().toISOString();
-    const entry = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
-    appendFileSync(_logFile, entry);
+    const entry = `[${timestamp}] [${level.toUpperCase()}] ${redact(message)}`;
+    appendFileSync(_logFile, entry + '\n');
+    if (_console) {
+        const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+        fn(entry);
+    }
 }
 
 // ── Level API ────────────────────────────────────────────────────
@@ -110,7 +140,12 @@ export function redact(text: string): string {
         .replace(/\bsk-[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
         .replace(/\bsk-proj-[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
         .replace(/\bAIza[0-9A-Za-z_-]{10,}\b/g, '[REDACTED]')
-        .replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/g, 'Bearer [REDACTED]');
+        .replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/g, 'Bearer [REDACTED]')
+        // GitHub tokens
+        .replace(/\bghs_[A-Za-z0-9]{10,}\b/g, 'ghs_[REDACTED]')
+        .replace(/\bghp_[A-Za-z0-9]{10,}\b/g, 'ghp_[REDACTED]')
+        .replace(/\bghu_[A-Za-z0-9]{10,}\b/g, 'ghu_[REDACTED]')
+        .replace(/\bghr_[A-Za-z0-9]{10,}\b/g, 'ghr_[REDACTED]');
 }
 
 export function safePreview(value: unknown, maxLen = 200): string {

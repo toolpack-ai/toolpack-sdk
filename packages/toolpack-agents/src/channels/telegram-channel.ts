@@ -1,5 +1,5 @@
 import { BaseChannel } from './base-channel.js';
-import { AgentInput, AgentOutput } from '../agent/types.js';
+import { AgentInput, AgentOutput, Participant } from '../agent/types.js';
 
 /**
  * Configuration options for TelegramChannel.
@@ -26,6 +26,19 @@ export class TelegramChannel extends BaseChannel {
   private pollingInterval?: NodeJS.Timeout;
   private server?: any; // HTTP server for webhook mode
 
+  /**
+   * The bot's Telegram user id (numeric, as a string), populated by the
+   * startup self-check (`getMe`) when `listen()` is called.
+   *
+   * Pass this to `AssemblerOptions.agentAliases` so the assembler's
+   * addressed-only mode can match `text_mention` entities whose user id
+   * equals this value.
+   */
+  botUserId?: string;
+
+  /** The bot's @username (without the @), populated by the `getMe` check. */
+  botUsername?: string;
+
   constructor(config: TelegramChannelConfig) {
     super();
     this.name = config.name;
@@ -37,10 +50,49 @@ export class TelegramChannel extends BaseChannel {
    * Uses either webhook or polling mode depending on configuration.
    */
   listen(): void {
+    // Run async — failure is logged but does not prevent the channel from listening.
+    this.runStartupCheck().catch(() => {});
     if (this.config.webhookUrl) {
       this.startWebhook();
     } else {
       this.startPolling();
+    }
+  }
+
+  /**
+   * Calls Telegram's `getMe` API to verify the token and log the bot's
+   * identity. Stores `botUserId` and `botUsername` for use in
+   * `AssemblerOptions.agentAliases`. Non-fatal — a failed check logs a
+   * warning but does not stop the channel.
+   */
+  private async runStartupCheck(): Promise<void> {
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${this.config.token}/getMe`
+      );
+
+      const data = await response.json() as {
+        ok: boolean;
+        result?: {
+          id?: number;
+          username?: string;
+          first_name?: string;
+        };
+        description?: string;
+      };
+
+      if (data.ok && data.result) {
+        const bot = data.result;
+        this.botUserId = bot.id != null ? String(bot.id) : undefined;
+        this.botUsername = bot.username;
+        console.log(
+          `[TelegramChannel] Connected as @${bot.username} (id: ${bot.id}, name: ${bot.first_name})`
+        );
+      } else {
+        console.warn(`[TelegramChannel] getMe failed: ${data.description ?? 'unknown error'}. Check your bot token.`);
+      }
+    } catch (err) {
+      console.warn('[TelegramChannel] Startup self-check failed (network error):', err);
     }
   }
 
@@ -95,10 +147,42 @@ export class TelegramChannel extends BaseChannel {
     const chat = (message.chat as Record<string, unknown>) || {};
     const from = (message.from as Record<string, unknown>) || {};
 
+    // Telegram's user IDs are numbers, convert to string for Participant.id
+    const userId = from.id != null ? String(from.id) : undefined;
+    const displayName =
+      (from.first_name as string | undefined) ||
+      (from.username as string | undefined) ||
+      userId;
+
+    const participant: Participant | undefined = userId
+      ? { kind: 'user', id: userId, displayName: displayName ?? userId }
+      : undefined;
+
+    // Extract @-mentions from Telegram message entities.
+    // `text_mention` entities carry a `user` object with a numeric id — these
+    // are the only mention type where we can resolve the user id without an
+    // additional API call. Regular `mention` entities (by @username) are logged
+    // but not yet resolved to user ids in v1.
+    const entities = (message.entities as Array<Record<string, unknown>> | undefined) ?? [];
+    const mentions: string[] = [];
+    for (const entity of entities) {
+      if (entity.type === 'text_mention' && entity.user) {
+        const mentionUser = entity.user as Record<string, unknown>;
+        if (mentionUser.id != null) {
+          mentions.push(String(mentionUser.id));
+        }
+      }
+    }
+
+    // chat.type: 'private' (DM), 'group', 'supergroup', 'channel'
+    const chatType = chat.type as string | undefined;
+    const chatIdStr = chat.id != null ? String(chat.id) : '';
+
     return {
       message: text,
-      conversationId: String(chat.id || ''),
+      conversationId: chatIdStr,
       data: update,
+      participant,
       context: {
         chatId: chat.id,
         userId: from.id,
@@ -106,6 +190,17 @@ export class TelegramChannel extends BaseChannel {
         firstName: from.first_name,
         lastName: from.last_name,
         messageId: message.message_id,
+        // 'private' maps to scope: 'dm'; 'group'/'supergroup' map to scope: 'channel'.
+        // Read by defaultGetScope in capture-history.
+        channelType: chatType,
+        // Platform channel id — same as conversationId for Telegram (chat.id).
+        channelId: chatIdStr,
+        // Human-readable group/channel name. Absent for private (DM) chats.
+        channelName: chat.title as string | undefined,
+        // Mention user ids extracted from text_mention entities. Read by the
+        // capture interceptor's default getMentions() and written to
+        // StoredMessage.metadata.mentions for addressed-only mode.
+        mentions: mentions.length > 0 ? mentions : undefined,
       },
     };
   }
@@ -130,7 +225,7 @@ export class TelegramChannel extends BaseChannel {
    * Poll for updates from Telegram.
    */
   private async pollUpdates(): Promise<void> {
-    const url = `https://api.telegram.org/bot${this.config.token}/getUpdates?offset=${this.offset + 1}&limit=100`;
+    const url = `https://api.telegram.org/bot${this.config.token}/getUpdates?offset=${this.offset}&limit=100`;
 
     const response = await fetch(url);
     if (!response.ok) {

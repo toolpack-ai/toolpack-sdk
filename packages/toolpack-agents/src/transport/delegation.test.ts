@@ -4,19 +4,26 @@ import { AgentRegistry } from '../agent/agent-registry.js';
 import { LocalTransport } from './local-transport.js';
 import { JsonRpcTransport } from './jsonrpc-transport.js';
 import { AgentJsonRpcServer } from './jsonrpc-server.js';
-import type { AgentInput, AgentResult } from '../agent/types.js';
+import type { AgentInput, AgentResult, BaseAgentOptions } from '../agent/types.js';
 import type { Toolpack } from 'toolpack-sdk';
+import { CHAT_MODE, CODING_MODE } from 'toolpack-sdk';
 
 // Mock Toolpack
 const createMockToolpack = (): Toolpack => ({
   generate: vi.fn().mockResolvedValue({ content: 'Mock response' }),
+  setMode: vi.fn(),
+  registerMode: vi.fn(),
 } as unknown as Toolpack);
 
 // Test agents
 class DataAgent extends BaseAgent {
   name = 'data-agent';
   description = 'Generates data reports';
-  mode = 'code';
+  mode = CODING_MODE;
+
+  constructor(options: BaseAgentOptions) {
+    super(options);
+  }
 
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
     return {
@@ -29,7 +36,11 @@ class DataAgent extends BaseAgent {
 class EmailAgent extends BaseAgent {
   name = 'email-agent';
   description = 'Sends emails';
-  mode = 'chat';
+  mode = CHAT_MODE;
+
+  constructor(options: BaseAgentOptions) {
+    super(options);
+  }
 
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
     // Test delegation
@@ -52,7 +63,11 @@ class EmailAgent extends BaseAgent {
 class CoordinatorAgent extends BaseAgent {
   name = 'coordinator';
   description = 'Coordinates other agents';
-  mode = 'chat';
+  mode = CHAT_MODE;
+
+  constructor(options: BaseAgentOptions) {
+    super(options);
+  }
 
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
     // Fire-and-forget delegation
@@ -71,14 +86,13 @@ describe('Agent Delegation', () => {
     let toolpack: Toolpack;
     let registry: AgentRegistry;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       toolpack = createMockToolpack();
-      registry = new AgentRegistry([
-        { agent: DataAgent, channels: [] },
-        { agent: EmailAgent, channels: [] },
-        { agent: CoordinatorAgent, channels: [] },
-      ]);
-      registry.start(toolpack);
+      const dataAgent = new DataAgent({ toolpack });
+      const emailAgent = new EmailAgent({ toolpack });
+      const coordinatorAgent = new CoordinatorAgent({ toolpack });
+      registry = new AgentRegistry([dataAgent, emailAgent, coordinatorAgent]);
+      await registry.start();
     });
 
     it('should delegate to another agent and wait for result', async () => {
@@ -95,9 +109,8 @@ describe('Agent Delegation', () => {
     });
 
     it('should include delegatedBy in context', async () => {
-      const dataAgent = registry.getAgent('data-agent');
       const emailAgent = registry.getAgent('email-agent');
-      
+
       // Manually test delegation with context
       const result = await (emailAgent as any).delegateAndWait('data-agent', {
         message: 'Generate report',
@@ -118,7 +131,7 @@ describe('Agent Delegation', () => {
 
     it('should throw error if agent not found', async () => {
       const transport = new LocalTransport(registry);
-      
+
       await expect(
         transport.invoke('non-existent-agent', {
           message: 'test',
@@ -128,9 +141,9 @@ describe('Agent Delegation', () => {
     });
 
     it('should throw error if registry not set', async () => {
-      const agent = new DataAgent(toolpack);
+      const agent = new DataAgent({ toolpack });
       // Don't register with registry
-      
+
       await expect(
         (agent as any).delegateAndWait('email-agent', { message: 'test' })
       ).rejects.toThrow('Agent not registered');
@@ -144,10 +157,10 @@ describe('Agent Delegation', () => {
 
     beforeEach(async () => {
       toolpack = createMockToolpack();
-      
+
       // Start JSON-RPC server with agents
       server = new AgentJsonRpcServer({ port: SERVER_PORT });
-      server.registerAgent('data-agent', new DataAgent(toolpack));
+      server.registerAgent('data-agent', new DataAgent({ toolpack }));
       server.listen();
 
       // Wait for server to start
@@ -180,13 +193,12 @@ describe('Agent Delegation', () => {
         },
       });
 
-      const registry = new AgentRegistry([
-        { agent: EmailAgent, channels: [] },
-      ], { transport });
-      registry.start(toolpack);
+      const emailAgent = new EmailAgent({ toolpack });
+      const registry = new AgentRegistry([emailAgent], { transport });
+      await registry.start();
 
-      const emailAgent = registry.getAgent('email-agent');
-      const result = await emailAgent!.invokeAgent({
+      const retrievedEmailAgent = registry.getAgent('email-agent');
+      const result = await retrievedEmailAgent!.invokeAgent({
         message: 'Send email with report',
         conversationId: 'test-rpc-2',
       });
@@ -248,10 +260,10 @@ describe('Agent Delegation', () => {
 
     beforeEach(async () => {
       toolpack = createMockToolpack();
-      
+
       // Start JSON-RPC server with DataAgent
       server = new AgentJsonRpcServer({ port: SERVER_PORT });
-      server.registerAgent('data-agent', new DataAgent(toolpack));
+      server.registerAgent('data-agent', new DataAgent({ toolpack }));
       server.listen();
 
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -269,13 +281,12 @@ describe('Agent Delegation', () => {
         },
       });
 
-      const registry = new AgentRegistry([
-        { agent: EmailAgent, channels: [] },
-      ], { transport });
-      registry.start(toolpack);
+      const emailAgent = new EmailAgent({ toolpack });
+      const registry = new AgentRegistry([emailAgent], { transport });
+      await registry.start();
 
-      const emailAgent = registry.getAgent('email-agent');
-      const result = await emailAgent!.invokeAgent({
+      const retrievedEmailAgent = registry.getAgent('email-agent');
+      const result = await retrievedEmailAgent!.invokeAgent({
         message: 'Send email with report',
         conversationId: 'test-hybrid-1',
       });
@@ -300,14 +311,14 @@ describe('Agent Delegation', () => {
     });
 
     it('should register multiple agents', () => {
-      server.registerAgent('data-agent', new DataAgent(toolpack));
-      server.registerAgent('email-agent', new EmailAgent(toolpack));
-      
+      server.registerAgent('data-agent', new DataAgent({ toolpack }));
+      server.registerAgent('email-agent', new EmailAgent({ toolpack }));
+
       expect((server as any).agents.size).toBe(2);
     });
 
     it('should handle invalid JSON-RPC requests', async () => {
-      server.registerAgent('data-agent', new DataAgent(toolpack));
+      server.registerAgent('data-agent', new DataAgent({ toolpack }));
       server.listen();
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -328,7 +339,7 @@ describe('Agent Delegation', () => {
     });
 
     it('should handle unknown methods', async () => {
-      server.registerAgent('data-agent', new DataAgent(toolpack));
+      server.registerAgent('data-agent', new DataAgent({ toolpack }));
       server.listen();
       await new Promise(resolve => setTimeout(resolve, 100));
 

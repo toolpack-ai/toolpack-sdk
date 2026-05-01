@@ -9,6 +9,7 @@ const createMockToolpack = () => {
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
     }),
     setMode: vi.fn(),
+    registerMode: vi.fn(),
   } as unknown as Toolpack;
 };
 
@@ -18,19 +19,19 @@ describe('ResearchAgent', () => {
 
   beforeEach(() => {
     mockToolpack = createMockToolpack();
-    agent = new ResearchAgent(mockToolpack);
+    agent = new ResearchAgent({ toolpack: mockToolpack });
   });
 
   it('should have correct configuration', () => {
     expect(agent.name).toBe('research-agent');
     expect(agent.description).toContain('research');
-    expect(agent.mode).toBe('agent');
+    expect(agent.mode.name).toBe('research-agent-mode');
   });
 
   it('should have research-focused system prompt', () => {
-    expect(agent.systemPrompt).toContain('research');
-    expect(agent.systemPrompt).toContain('web.search');
-    expect(agent.systemPrompt).toContain('sources');
+    expect(agent.mode.systemPrompt).toContain('research');
+    expect(agent.mode.systemPrompt).toContain('web.search');
+    expect(agent.mode.systemPrompt).toContain('sources');
   });
 
   it('should invoke agent with message', async () => {
@@ -40,7 +41,7 @@ describe('ResearchAgent', () => {
 
     const result = await agent.invokeAgent(input);
 
-    expect(mockToolpack.setMode).toHaveBeenCalledWith('agent');
+    expect(mockToolpack.setMode).toHaveBeenCalledWith('research-agent-mode');
     expect(result).toBeDefined();
     expect(result.output).toBeDefined();
   });

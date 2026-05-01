@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentRegistry } from './agent-registry.js';
 import { BaseAgent } from './base-agent.js';
-import { AgentInput, AgentResult, AgentOutput } from './types.js';
+import { AgentInput, AgentResult, BaseAgentOptions } from './types.js';
 import { BaseChannel } from '../channels/base-channel.js';
 import type { Toolpack } from 'toolpack-sdk';
+import { CHAT_MODE } from 'toolpack-sdk';
 
 // Mock Toolpack
 const createMockToolpack = () => {
@@ -13,6 +14,7 @@ const createMockToolpack = () => {
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     }),
     setMode: vi.fn(),
+    registerMode: vi.fn(),
   } as unknown as Toolpack;
 };
 
@@ -20,7 +22,11 @@ const createMockToolpack = () => {
 class TestAgent extends BaseAgent<'test_intent'> {
   name = 'test-agent';
   description = 'A test agent';
-  mode = 'chat';
+  mode = CHAT_MODE;
+
+  constructor(options: BaseAgentOptions) {
+    super(options);
+  }
 
   async invokeAgent(input: AgentInput<'test_intent'>): Promise<AgentResult> {
     return {
@@ -35,25 +41,20 @@ class TestChannel extends BaseChannel {
   handler?: (input: AgentInput) => Promise<void>;
   sent: { output: string; metadata?: Record<string, unknown> }[] = [];
 
-  listen(): void {
-    // Simulated listen - in real implementation this would set up event listeners
-  }
+  listen(): void {}
 
   async send(output: { output: string; metadata?: Record<string, unknown> }): Promise<void> {
     this.sent.push(output as { output: string; metadata?: Record<string, unknown> });
   }
 
   normalize(incoming: unknown): AgentInput {
-    return {
-      message: String(incoming),
-    };
+    return { message: String(incoming) };
   }
 
   onMessage(handler: (input: AgentInput) => Promise<void>): void {
     this.handler = handler;
   }
 
-  // Expose for testing
   async triggerMessage(input: AgentInput): Promise<void> {
     if (this.handler) {
       await this.handler(input);
@@ -63,73 +64,63 @@ class TestChannel extends BaseChannel {
 
 describe('AgentRegistry', () => {
   describe('constructor', () => {
-    it('should create with empty registrations', () => {
+    it('should create with empty agents list', () => {
       const registry = new AgentRegistry([]);
       expect(registry).toBeDefined();
     });
 
-    it('should create with registrations', () => {
+    it('should create with agent instances', () => {
+      const mockToolpack = createMockToolpack();
       const channel = new TestChannel();
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
+
+      const registry = new AgentRegistry([agent]);
       expect(registry).toBeDefined();
     });
   });
 
   describe('start', () => {
-    it('should instantiate agents and start channels', () => {
+    it('should bind message handlers and start channels', async () => {
       const mockToolpack = createMockToolpack();
       const channel = new TestChannel();
       const spyListen = vi.spyOn(channel, 'listen');
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
       expect(spyListen).toHaveBeenCalled();
       expect(channel.handler).toBeDefined();
     });
 
-    it('should set up agent registry reference', () => {
+    it('should set agent registry reference', async () => {
       const mockToolpack = createMockToolpack();
       const channel = new TestChannel();
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
-      const agent = registry.getAgent('test-agent');
-      expect(agent).toBeDefined();
-      expect(agent?._registry).toBe(registry);
+      const retrieved = registry.getAgent('test-agent');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?._registry).toBe(registry);
     });
 
-    it('should set channel name if provided', () => {
+    it('should register named channels for sendTo() routing', async () => {
       const mockToolpack = createMockToolpack();
       const channel = new TestChannel();
       channel.name = 'test-channel';
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
       const retrievedChannel = registry.getChannel('test-channel');
       expect(retrievedChannel).toBe(channel);
@@ -142,14 +133,11 @@ describe('AgentRegistry', () => {
       const channel = new TestChannel();
       channel.name = 'my-channel';
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
       await registry.sendTo('my-channel', { output: 'Hello!' });
 
@@ -158,15 +146,8 @@ describe('AgentRegistry', () => {
     });
 
     it('should throw for unknown channel', async () => {
-      const mockToolpack = createMockToolpack();
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [],
-        },
-      ]);
-
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([]);
+      await registry.start();
 
       await expect(registry.sendTo('unknown', { output: 'test' }))
         .rejects.toThrow('No channel registered with name "unknown"');
@@ -174,65 +155,52 @@ describe('AgentRegistry', () => {
   });
 
   describe('getAgent', () => {
-    it('should return agent by name', () => {
+    it('should return agent by name', async () => {
       const mockToolpack = createMockToolpack();
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
-      const agent = registry.getAgent('test-agent');
-      expect(agent).toBeDefined();
-      expect(agent?.name).toBe('test-agent');
+      const retrieved = registry.getAgent('test-agent');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.name).toBe('test-agent');
     });
 
-    it('should return undefined for unknown agent', () => {
+    it('should return undefined for unknown agent', async () => {
       const mockToolpack = createMockToolpack();
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
 
-      const agent = registry.getAgent('unknown');
-      expect(agent).toBeUndefined();
+      expect(registry.getAgent('unknown')).toBeUndefined();
     });
   });
 
   describe('getAllAgents', () => {
-    it('should return all agents', () => {
+    it('should return all agents', async () => {
       const mockToolpack = createMockToolpack();
 
-      // Create a second test agent class
       class TestAgent2 extends BaseAgent {
         name = 'test-agent-2';
         description = 'Another test agent';
-        mode = 'chat';
+        mode = CHAT_MODE;
+
+        constructor(options: BaseAgentOptions) {
+          super(options);
+        }
 
         async invokeAgent(): Promise<AgentResult> {
           return { output: 'Test 2' };
         }
       }
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [],
-        },
-        {
-          agent: TestAgent2,
-          channels: [],
-        },
-      ]);
+      const agent1 = new TestAgent({ toolpack: mockToolpack });
+      const agent2 = new TestAgent2({ toolpack: mockToolpack });
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent1, agent2]);
+      await registry.start();
 
       const agents = registry.getAllAgents();
       expect(agents).toHaveLength(2);
@@ -244,14 +212,11 @@ describe('AgentRegistry', () => {
   describe('stop', () => {
     it('should clear agents and channels', async () => {
       const mockToolpack = createMockToolpack();
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
+
       expect(registry.getAgent('test-agent')).toBeDefined();
 
       await registry.stop();
@@ -272,14 +237,11 @@ describe('AgentRegistry', () => {
       const channel = new StoppableChannel();
       channel.name = 'stoppable';
 
-      const registry = new AgentRegistry([
-        {
-          agent: TestAgent,
-          channels: [channel],
-        },
-      ]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
 
-      registry.start(mockToolpack);
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
       await registry.stop();
 
       expect(channel.stopped).toBe(true);
@@ -309,7 +271,7 @@ describe('AgentRegistry', () => {
 
       it('should queue multiple asks for same conversation', () => {
         const registry = new AgentRegistry([]);
-        
+
         const ask1 = registry.addPendingAsk({
           conversationId: 'test-conv',
           agentName: 'test-agent',
@@ -318,7 +280,7 @@ describe('AgentRegistry', () => {
           maxRetries: 2,
           channelName: 'test-channel',
         });
-        
+
         const ask2 = registry.addPendingAsk({
           conversationId: 'test-conv',
           agentName: 'test-agent',
@@ -390,11 +352,10 @@ describe('AgentRegistry', () => {
 
         await registry.resolvePendingAsk(ask.id, 'Answer');
 
-        // After resolving, the ask should be dequeued
         expect(registry.getPendingAsk('test-conv')).toBeUndefined();
       });
 
-      it('should dequeue next ask when resolving', async () => {
+      it('should auto-send next ask when resolving', async () => {
         const registry = new AgentRegistry([]);
         const ask1 = registry.addPendingAsk({
           conversationId: 'test-conv',
@@ -404,7 +365,7 @@ describe('AgentRegistry', () => {
           maxRetries: 2,
           channelName: 'test-channel',
         });
-        
+
         registry.addPendingAsk({
           conversationId: 'test-conv',
           agentName: 'test-agent',
@@ -414,20 +375,14 @@ describe('AgentRegistry', () => {
           channelName: 'test-channel',
         });
 
-        // First ask should be at front
         expect(registry.getPendingAsk('test-conv')?.question).toBe('First question?');
 
-        // Mock sendTo to capture auto-send
         const sendToMock = vi.fn().mockResolvedValue(undefined);
         registry.sendTo = sendToMock;
 
-        // Resolve first ask - should auto-send second
         await registry.resolvePendingAsk(ask1.id, 'Answer 1');
 
-        // Second ask should be sent automatically
         expect(sendToMock).toHaveBeenCalledWith('test-channel', { output: 'Second question?' });
-
-        // Second ask should now be at front
         expect(registry.getPendingAsk('test-conv')?.question).toBe('Second question?');
       });
     });
@@ -446,25 +401,20 @@ describe('AgentRegistry', () => {
 
         expect(ask.retries).toBe(0);
 
-        const newCount = registry.incrementRetries(ask.id);
-        expect(newCount).toBe(1);
-
-        const newCount2 = registry.incrementRetries(ask.id);
-        expect(newCount2).toBe(2);
+        expect(registry.incrementRetries(ask.id)).toBe(1);
+        expect(registry.incrementRetries(ask.id)).toBe(2);
       });
 
       it('should return undefined for non-existent ask', () => {
         const registry = new AgentRegistry([]);
-        const result = registry.incrementRetries('non-existent-id');
-        expect(result).toBeUndefined();
+        expect(registry.incrementRetries('non-existent-id')).toBeUndefined();
       });
     });
 
-    describe('stop', () => {
-      it('should clear pending asks on stop', () => {
-        const mockToolpack = createMockToolpack();
+    describe('stop clears pending asks', () => {
+      it('should clear pending asks on stop', async () => {
         const registry = new AgentRegistry([]);
-        
+
         registry.addPendingAsk({
           conversationId: 'test-conv',
           agentName: 'test-agent',
@@ -474,10 +424,10 @@ describe('AgentRegistry', () => {
           channelName: 'test-channel',
         });
 
-        registry.start(mockToolpack);
         expect(registry.hasPendingAsks('test-conv')).toBe(true);
 
-        registry.stop();
+        await registry.stop();
+
         expect(registry.hasPendingAsks('test-conv')).toBe(false);
       });
     });

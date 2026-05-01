@@ -8,16 +8,16 @@ import {
     EmbeddingRequest,
     EmbeddingResponse,
 } from './providers/base/index.js';
-import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
+import { ProviderInfo, ProviderModelInfo, RequestToolDefinition } from "./types/index.js";
 import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
+import { OpenRouterAdapter } from './providers/openrouter/index.js';
 import { getOllamaBaseUrl, loadConfig, discoverConfigPath } from './providers/config.js';
 import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadToolsConfig, loadFullConfig, ToolProject } from './tools/index.js';
-import { ToolDefinition } from './tools/types.js';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
@@ -39,6 +39,12 @@ export interface ProviderOptions {
 
     /** Base URL override (for OpenAI-compatible endpoints or custom Ollama host) */
     baseUrl?: string;
+
+    /** OpenRouter only: your site URL for the leaderboard/attribution header */
+    siteUrl?: string;
+
+    /** OpenRouter only: your site name for the leaderboard/attribution header */
+    siteName?: string;
 }
 
 export interface ToolpackInitConfig {
@@ -98,19 +104,13 @@ export interface ToolpackInitConfig {
 
     /**
      * Optional Knowledge instance for RAG (Retrieval-Augmented Generation).
-     * When provided, the knowledge base will be registered as a tool that the AI can use to search documentation.
+     * When provided, knowledge_search and knowledge_add tools are automatically available
+     * as request-scoped tools that the AI can use to retrieve and store information.
      * Can be null if initialization fails - will be gracefully skipped.
      *
      * Accepts any object with a `toTool()` method (e.g. `Knowledge` from `@toolpack-sdk/knowledge`).
      */
-    knowledge?: KnowledgeInstance | null;
-
-    /**
-     * Optional AgentRegistry for registering and running AI agents.
-     * When provided, the SDK will start all agent channels and route incoming messages to the appropriate agents.
-     * Requires the `@toolpack-sdk/agents` package as a peer dependency.
-     */
-    agents?: AgentRegistryInstance | null;
+    knowledge?: KnowledgeInstance | KnowledgeInstance[] | null;
 
     /**
      * Human-in-the-loop configuration for tool confirmation.
@@ -151,17 +151,9 @@ export interface KnowledgeInstance {
         };
         execute: (params: { query: string; limit?: number; threshold?: number; filter?: Record<string, string | number | boolean | { $in: unknown[] } | { $gt: number } | { $lt: number }> }) => Promise<any>;
     };
+    add(content: string, metadata?: Record<string, unknown>): Promise<string>;
     query(text: string, options?: Record<string, unknown>): Promise<any[]>;
     stop(): Promise<void>;
-}
-
-/**
- * Duck-typed interface for AgentRegistry instances to avoid circular dependency
- * with the @toolpack-sdk/agents package.
- */
-export interface AgentRegistryInstance {
-    start(toolpack: Toolpack): void;
-    stop?(): Promise<void>;
 }
 
 export class Toolpack extends EventEmitter {
@@ -169,6 +161,7 @@ export class Toolpack extends EventEmitter {
     private activeProviderName: string;
     private modeRegistry: ModeRegistry;
     private workflowExecutor: WorkflowExecutor;
+    private knowledgeLayers: KnowledgeInstance[] = [];
     public customProviderNames: Set<string> = new Set();
     private mcpToolProject: ToolProject | null = null;
 
@@ -187,6 +180,151 @@ export class Toolpack extends EventEmitter {
         // Initialize WorkflowExecutor
         this.workflowExecutor = new WorkflowExecutor(this.client, DEFAULT_WORKFLOW_CONFIG, this.client.getQueryClassifier());
         this.forwardWorkflowEvents();
+    }
+
+    private buildKnowledgeRequestTools(): RequestToolDefinition[] {
+        if (this.knowledgeLayers.length === 0) {
+            return [];
+        }
+
+        // Single layer: delegate directly to its tool (preserves original behavior)
+        if (this.knowledgeLayers.length === 1) {
+            const knowledgeSearchTool = this.knowledgeLayers[0].toTool();
+            const knowledgeAddTool: RequestToolDefinition = {
+                name: 'knowledge_add',
+                displayName: 'Add to Knowledge',
+                description: 'Add important new information to the knowledge base for future reference.',
+                category: 'knowledge',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        content: {
+                            type: 'string',
+                            description: 'The content to add to the knowledge base.',
+                        },
+                        metadata: {
+                            type: 'object',
+                            description: 'Optional metadata such as source, category, or tags.',
+                        },
+                    },
+                    required: ['content'],
+                },
+                execute: async (args: Record<string, any>) => {
+                    const id = await this.knowledgeLayers[0].add(args.content, args.metadata);
+                    return {
+                        success: true,
+                        id,
+                        message: 'Content added to knowledge base successfully.',
+                    };
+                },
+            };
+            return [knowledgeSearchTool as unknown as RequestToolDefinition, knowledgeAddTool];
+        }
+
+        // Multiple layers: merge search results; add always targets first layer
+        const knowledgeSearchTool: RequestToolDefinition = {
+            name: 'knowledge_search',
+            displayName: 'Knowledge Search',
+            description: `Search across ${this.knowledgeLayers.length} knowledge layers for relevant information.`,
+            category: 'search',
+            cacheable: false,
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'Search query to find relevant information',
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum number of results to return (default: 10)',
+                    },
+                    threshold: {
+                        type: 'number',
+                        description: 'Minimum similarity threshold 0-1 (default: 0.7)',
+                    },
+                    filter: {
+                        type: 'object',
+                        description: 'Optional metadata filters',
+                    },
+                },
+                required: ['query'],
+            },
+            execute: async (args: Record<string, any>) => {
+                // Delegate to each KB's own tool so the result shape matches the
+                // single-layer path exactly ({ content, score, metadata, ... }).
+                // Pass params through verbatim so each KB applies its own defaults.
+                const perLayerResults = await Promise.all(
+                    this.knowledgeLayers.map(async (kb, index) => {
+                        const tool = kb.toTool();
+                        const hits = await tool.execute({
+                            query: args.query,
+                            limit: args.limit,
+                            threshold: args.threshold,
+                            filter: args.filter,
+                        });
+                        return (hits as any[]).map(h => ({ ...h, _layer: index }));
+                    })
+                );
+
+                const allHits = perLayerResults.flat();
+                allHits.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+
+                // Cap the merged list; if no limit was requested, fall back to 10
+                // (matches the tool's documented default).
+                const cap = args.limit ?? 10;
+                return allHits.slice(0, cap);
+            },
+        };
+
+        const knowledgeAddTool: RequestToolDefinition = {
+            name: 'knowledge_add',
+            displayName: 'Add to Knowledge',
+            description: 'Add important new information to the primary knowledge base for future reference.',
+            category: 'knowledge',
+            parameters: {
+                type: 'object',
+                properties: {
+                    content: {
+                        type: 'string',
+                        description: 'The content to add to the knowledge base.',
+                    },
+                    metadata: {
+                        type: 'object',
+                        description: 'Optional metadata such as source, category, or tags.',
+                    },
+                },
+                required: ['content'],
+            },
+            execute: async (args: Record<string, any>) => {
+                // Always add to the first (primary) layer
+                const id = await this.knowledgeLayers[0].add(args.content, args.metadata);
+                return {
+                    success: true,
+                    id,
+                    message: 'Content added to knowledge base successfully.',
+                };
+            },
+        };
+
+        return [knowledgeSearchTool, knowledgeAddTool];
+    }
+
+    private prepareRequest(request: CompletionRequest): CompletionRequest {
+        const requestTools = [...this.buildKnowledgeRequestTools(), ...(request.requestTools || [])];
+        if (requestTools.length === 0) {
+            return request;
+        }
+
+        const merged = new Map<string, RequestToolDefinition>();
+        for (const tool of requestTools) {
+            merged.set(tool.name, tool);
+        }
+
+        return {
+            ...request,
+            requestTools: Array.from(merged.values()),
+        };
     }
 
     /**
@@ -210,30 +348,6 @@ export class Toolpack extends EventEmitter {
         }
         if (config.customTools) {
             await registry.loadProjects(config.customTools);
-        }
-
-        // Register knowledge base as a tool if provided
-        if (config.knowledge && typeof config.knowledge.toTool === 'function') {
-            try {
-                const knowledgeTool = config.knowledge.toTool();
-                const knowledgeProject: ToolProject = {
-                    manifest: {
-                        key: 'knowledge',
-                        name: 'knowledge',
-                        displayName: 'Knowledge Base',
-                        version: '1.0.0',
-                        description: 'RAG-powered knowledge base search',
-                        tools: ['knowledge_search'],
-                        category: 'search',
-                    },
-                    tools: [knowledgeTool as unknown as ToolDefinition],
-                };
-                await registry.loadProjects([knowledgeProject]);
-                logInfo('[Knowledge] Registered knowledge_search tool');
-            } catch (error) {
-                logError(`[Knowledge] Failed to register knowledge tool: ${error}`);
-                // Continue without knowledge tool rather than failing completely
-            }
         }
 
         // Load MCP tools from config if provided
@@ -399,6 +513,15 @@ export class Toolpack extends EventEmitter {
         });
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);
+        // Normalize knowledge to array; null becomes empty array for clean iteration.
+        // Filter out null/undefined entries and any entry missing the expected methods
+        // so that a bad item at config-time can't crash us at tool-execution time.
+        const k = config.knowledge;
+        const rawLayers = k == null ? [] : (Array.isArray(k) ? k : [k]);
+        instance.knowledgeLayers = rawLayers.filter(
+            (x): x is KnowledgeInstance =>
+                !!x && typeof (x as KnowledgeInstance).toTool === 'function'
+        );
         instance.customProviderNames = customProviderNames;
         instance.mcpToolProject = mcpToolProject;
         // 5. Set default mode (and workflow config)
@@ -411,18 +534,6 @@ export class Toolpack extends EventEmitter {
             }
         }
 
-        // 6. Start agent registry if provided
-        if (config.agents) {
-            try {
-                logInfo('[Agents] Starting agent registry');
-                config.agents.start(instance);
-                logInfo('[Agents] Agent registry started successfully');
-            } catch (error) {
-                logError(`[Agents] Failed to start agent registry: ${error}`);
-                // Continue without agents rather than failing completely
-            }
-        }
-
         return instance;
     }
 
@@ -431,7 +542,7 @@ export class Toolpack extends EventEmitter {
      */
     private static async createProvider(name: string, opts: ProviderOptions, configPath?: string, skipIfNoKey = false): Promise<ProviderAdapter | null> {
         // 1. API Providers
-        if (['openai', 'anthropic', 'gemini'].includes(name)) {
+        if (['openai', 'anthropic', 'gemini', 'openrouter'].includes(name)) {
             const envKey = `TOOLPACK_${name.toUpperCase()}_KEY`;
             const apiKey = opts.apiKey || process.env[envKey] || process.env[`${name.toUpperCase()}_API_KEY`];
 
@@ -446,6 +557,7 @@ export class Toolpack extends EventEmitter {
                 case 'openai': return new OpenAIAdapter(apiKey, opts.baseUrl);
                 case 'anthropic': return new AnthropicAdapter(apiKey, opts.baseUrl);
                 case 'gemini': return new GeminiAdapter(apiKey);
+                case 'openrouter': return new OpenRouterAdapter(apiKey, { siteUrl: opts.siteUrl, siteName: opts.siteName });
             }
         }
 
@@ -485,6 +597,8 @@ export class Toolpack extends EventEmitter {
         } else {
             req = request;
         }
+
+        req = this.prepareRequest(req);
 
         const mode = this.getMode();
         if (mode?.workflow?.planning?.enabled || mode?.workflow?.steps?.enabled) {
@@ -555,17 +669,18 @@ export class Toolpack extends EventEmitter {
     }
 
     async *stream(request: CompletionRequest, providerName?: string): AsyncGenerator<CompletionChunk> {
+        const preparedRequest = this.prepareRequest(request);
         const mode = this.getMode();
         const provider = providerName || this.activeProviderName;
 
         // If mode has workflow enabled, use WorkflowExecutor.stream()
         if (mode?.workflow?.planning?.enabled || mode?.workflow?.steps?.enabled) {
-            yield* this.workflowExecutor.stream(request, provider);
+            yield* this.workflowExecutor.stream(preparedRequest, provider);
             return;
         }
 
         // Direct streaming (no workflow)
-        yield* this.client.stream(request, providerName);
+        yield* this.client.stream(preparedRequest, providerName);
     }
 
     async embed(request: EmbeddingRequest, providerName?: string): Promise<EmbeddingResponse> {

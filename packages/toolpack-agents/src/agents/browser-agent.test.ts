@@ -9,6 +9,7 @@ const createMockToolpack = () => {
       usage: { prompt_tokens: 80, completion_tokens: 40, total_tokens: 120 },
     }),
     setMode: vi.fn(),
+    registerMode: vi.fn(),
   } as unknown as Toolpack;
 };
 
@@ -18,19 +19,19 @@ describe('BrowserAgent', () => {
 
   beforeEach(() => {
     mockToolpack = createMockToolpack();
-    agent = new BrowserAgent(mockToolpack);
+    agent = new BrowserAgent({ toolpack: mockToolpack });
   });
 
   it('should have correct configuration', () => {
     expect(agent.name).toBe('browser-agent');
     expect(agent.description).toContain('Browser');
-    expect(agent.mode).toBe('chat');
+    expect(agent.mode.name).toBe('browser-agent-mode');
   });
 
   it('should have browser-focused system prompt', () => {
-    expect(agent.systemPrompt).toContain('browser');
-    expect(agent.systemPrompt).toContain('web.fetch');
-    expect(agent.systemPrompt).toContain('extraction');
+    expect(agent.mode.systemPrompt).toContain('browser');
+    expect(agent.mode.systemPrompt).toContain('web.fetch');
+    expect(agent.mode.systemPrompt).toContain('extraction');
   });
 
   it('should invoke agent with browser task', async () => {
@@ -40,7 +41,7 @@ describe('BrowserAgent', () => {
 
     const result = await agent.invokeAgent(input);
 
-    expect(mockToolpack.setMode).toHaveBeenCalledWith('chat');
+    expect(mockToolpack.setMode).toHaveBeenCalledWith('browser-agent-mode');
     expect(result).toBeDefined();
     expect(result.output).toBeDefined();
   });

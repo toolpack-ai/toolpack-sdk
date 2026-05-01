@@ -1,9 +1,6 @@
 import { BaseChannel } from './base-channel.js';
 import { AgentInput, AgentOutput } from '../agent/types.js';
-import cronParserModule from 'cron-parser';
-
-// Type assertion for cron-parser which has incorrect type definitions
-const cronParser = cronParserModule as any;
+import { CronExpressionParser } from 'cron-parser';
 
 /**
  * Configuration options for ScheduledChannel.
@@ -12,9 +9,10 @@ export interface ScheduledChannelConfig {
   /** Optional name for the channel - required for sendTo() routing */
   name?: string;
 
-  /** 
+  /**
    * Cron expression - supports full cron syntax including wildcards, ranges, steps, and lists.
-   * Examples: '0 9 * * 1-5' for 9am weekdays, or '* /15 * * * *' for every 15 minutes
+   * Supports both 5-field (min hour dom month dow) and 6-field (sec min hour dom month dow) expressions.
+   * Examples: '0 9 * * 1-5' for 9am weekdays, or '0 * /15 * * * *' for every 15 minutes (6-field)
    */
   cron: string;
 
@@ -24,7 +22,30 @@ export interface ScheduledChannelConfig {
   /** Optional message to send to the agent on each trigger */
   message?: string;
 
-  /** Where to deliver the output: 'slack:#channel', 'webhook:https://...', or 'console' for logging only */
+  /**
+   * Where to deliver the output. Supported protocols:
+   *
+   * - `webhook:<https-url>` — POSTs JSON `{ output, metadata, timestamp }` to the URL.
+   *
+   * For Slack delivery, attach a named `SlackChannel` to the same agent and
+   * route from inside `run()`:
+   *
+   * ```ts
+   * agent.channels = [
+   *   new ScheduledChannel({ name: 'daily', cron: '0 9 * * 1-5', notify: 'webhook:...' }),
+   *   new SlackChannel({ name: 'kore-slack', channel: '#project-kore', token, signingSecret }),
+   * ];
+   *
+   * async run(input) {
+   *   const report = await this.buildReport();
+   *   await this.sendTo('kore-slack', report);
+   *   return { output: report };
+   * }
+   * ```
+   *
+   * This keeps Slack credentials, thread routing, and multi-channel listening
+   * in one place (`SlackChannel`) instead of duplicated inside `ScheduledChannel`.
+   */
   notify: string;
 }
 
@@ -45,7 +66,7 @@ export class ScheduledChannel extends BaseChannel {
     
     // Validate cron expression on construction
     try {
-      cronParser.parse(config.cron);
+      CronExpressionParser.parse(config.cron);
     } catch (error) {
       throw new Error(`Invalid cron expression '${config.cron}': ${(error as Error).message}`);
     }
@@ -67,23 +88,26 @@ export class ScheduledChannel extends BaseChannel {
     // Split only on the first colon to preserve URLs like https://...
     const colonIndex = this.config.notify.indexOf(':');
     if (colonIndex === -1) {
-      throw new Error(`Invalid notify format: ${this.config.notify}. Expected format: 'slack:#channel' or 'webhook:https://...'`);
+      throw new Error(`Invalid notify format: ${this.config.notify}. Expected format: 'webhook:https://...'`);
     }
 
     const protocol = this.config.notify.substring(0, colonIndex);
     const destination = this.config.notify.substring(colonIndex + 1);
 
     if (!protocol || !destination) {
-      throw new Error(`Invalid notify format: ${this.config.notify}. Expected format: 'slack:#channel' or 'webhook:https://...'`);
+      throw new Error(`Invalid notify format: ${this.config.notify}. Expected format: 'webhook:https://...'`);
     }
 
     switch (protocol.toLowerCase()) {
-      case 'slack':
-        await this.sendToSlack(destination, output);
-        break;
       case 'webhook':
         await this.sendToWebhook(destination, output);
         break;
+      case 'slack':
+        throw new Error(
+          `ScheduledChannel no longer supports the 'slack:' notify protocol. ` +
+          `Attach a named SlackChannel to the agent and route from inside run() via ` +
+          `this.sendTo('<channelName>', output). See ScheduledChannelConfig.notify docs.`
+        );
       default:
         throw new Error(`Unknown notify protocol: ${protocol}`);
     }
@@ -113,20 +137,6 @@ export class ScheduledChannel extends BaseChannel {
   }
 
   /**
-   * Send output to Slack.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async sendToSlack(channel: string, _output: AgentOutput): Promise<void> {
-    // This would need a Slack token, which should be configured elsewhere
-    // For now, this is a stub that throws an informative error
-    throw new Error(
-      `Slack notification requires configuration. ` +
-      `Please use a named SlackChannel registered with AgentRegistry. ` +
-      `Target channel: ${channel}`
-    );
-  }
-
-  /**
    * Send output to a webhook URL.
    */
   private async sendToWebhook(url: string, output: AgentOutput): Promise<void> {
@@ -151,7 +161,7 @@ export class ScheduledChannel extends BaseChannel {
    * Calculate next run time using cron-parser.
    */
   private getNextRunTime(): Date {
-    const interval = cronParser.parse(this.config.cron, {
+    const interval = CronExpressionParser.parse(this.config.cron, {
       currentDate: new Date(),
     });
     
@@ -164,6 +174,12 @@ export class ScheduledChannel extends BaseChannel {
   private scheduleNextRun(): void {
     const nextRun = this.getNextRunTime();
     const delay = nextRun.getTime() - Date.now();
+
+    if (delay <= 0) {
+      // Next run is in the past (race condition) — reschedule immediately
+      this.scheduleNextRun();
+      return;
+    }
 
     console.log(`[ScheduledChannel] Next run scheduled for ${nextRun.toISOString()}`);
 

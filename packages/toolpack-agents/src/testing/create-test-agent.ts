@@ -1,6 +1,6 @@
 import type { Toolpack } from 'toolpack-sdk';
 import { BaseAgent } from '../agent/base-agent.js';
-import type { AgentInput } from '../agent/types.js';
+import type { AgentInput, BaseAgentOptions } from '../agent/types.js';
 import { MockChannel } from './mock-channel.js';
 
 /**
@@ -68,7 +68,7 @@ export interface TestAgentResult<TAgent extends BaseAgent> {
  * @returns Test agent setup with agent, channel, and mock toolpack
  */
 export function createTestAgent<TAgent extends BaseAgent>(
-  AgentClass: new (toolpack: Toolpack) => TAgent,
+  AgentClass: new (options: BaseAgentOptions) => TAgent,
   options: CreateTestAgentOptions = {}
 ): TestAgentResult<TAgent> {
   const mockResponses: MockResponse[] = [...(options.mockResponses ?? [])];
@@ -78,7 +78,7 @@ export function createTestAgent<TAgent extends BaseAgent>(
   const toolpack = createMockToolpack(mockResponses, defaultResponse, options.provider, options.model);
 
   // Create agent instance
-  const agent = new AgentClass(toolpack);
+  const agent = new AgentClass({ toolpack });
 
   // Create mock channel
   const channel = new MockChannel();
@@ -165,6 +165,9 @@ function createMockToolpack(
     setMode: () => {
       // No-op in tests
     },
+    registerMode: () => {
+      // No-op in tests
+    },
     // Add any other required Toolpack methods as no-ops or mocks
     setProvider: () => {},
     setModel: () => {},
@@ -197,6 +200,7 @@ export function createMockToolpackSimple(response = 'Mock AI response'): Toolpac
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     }),
     setMode: () => {},
+    registerMode: () => {},
     setProvider: () => {},
     setModel: () => {},
   } as unknown as Toolpack;
@@ -230,6 +234,7 @@ export function createMockToolpackSequence(responses: string[]): Toolpack {
       };
     },
     setMode: () => {},
+    registerMode: () => {},
     setProvider: () => {},
     setModel: () => {},
   } as unknown as Toolpack;

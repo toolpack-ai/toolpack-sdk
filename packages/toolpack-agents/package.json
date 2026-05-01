@@ -28,6 +28,16 @@
       "types": "./dist/registry/index.d.ts",
       "import": "./dist/registry/index.js",
       "require": "./dist/registry/index.cjs"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities/index.d.ts",
+      "import": "./dist/capabilities/index.js",
+      "require": "./dist/capabilities/index.cjs"
+    },
+    "./interceptors": {
+      "types": "./dist/interceptors/index.d.ts",
+      "import": "./dist/interceptors/index.js",
+      "require": "./dist/interceptors/index.cjs"
     }
   },
   "types": "dist/index.d.ts",

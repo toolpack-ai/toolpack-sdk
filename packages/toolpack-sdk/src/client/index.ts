@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { ProviderAdapter } from "../providers/base/index.js";
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent } from "../types/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, RequestToolDefinition } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolRouter } from '../tools/router.js';
@@ -8,7 +8,7 @@ import type { ToolsConfig, ToolSchema, ToolContext, ToolDefinition } from "../to
 import { DEFAULT_TOOLS_CONFIG } from "../tools/types.js";
 import type { HitlConfig } from '../providers/config.js';
 import { ModeConfig } from '../modes/mode-types.js';
-import { BM25SearchEngine, isToolSearchTool, generateToolCategoriesPrompt } from '../tools/search/index.js';
+import { BM25SearchEngine, isToolSearchTool, getToolSearchSchema, generateToolCategoriesPrompt } from '../tools/search/index.js';
 import { generateBaseAgentContext } from './base-agent-context.js';
 import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
@@ -29,6 +29,11 @@ function logRequestMessages(requestId: string, messages: CompletionRequest['mess
         const preview = safePreview((m as any).content, 300);
         logDebug(`[AIClient][${requestId}]  #${i} role=${(m as any).role} content=${preview}`);
     });
+}
+
+interface EnrichedRequestResult {
+    request: CompletionRequest;
+    requestToolMap: Map<string, RequestToolDefinition>;
 }
 
 function inferNeedsTools(messages: CompletionRequest['messages']): boolean {
@@ -407,7 +412,9 @@ export class AIClient extends EventEmitter {
 
             // Resolve tools to send with the request
             const resolvedProviderName = providerName || this.defaultProvider;
-            const enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest);
+            const enrichedRequest = initialEnrichment.request;
+            const requestToolMap = initialEnrichment.requestToolMap;
 
             const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
@@ -444,7 +451,7 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const outboundReq: any = { ...enrichedRequest, __toolpack_request_id: requestId };
+            const outboundReq: any = { ...this.stripRequestTools(enrichedRequest), __toolpack_request_id: requestId };
 
             logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
@@ -454,7 +461,7 @@ export class AIClient extends EventEmitter {
             logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
 
             // Auto-execute tool call loop
-            if (this.toolsConfig.enabled && this.toolsConfig.autoExecute && this.toolRegistry) {
+            if (this.toolsConfig.autoExecute && (this.toolRegistry || requestToolMap.size > 0)) {
                 // Classify query to adjust maxToolRounds
                 const userMessage = extractLastUserText(enrichedRequest.messages);
                 const classification = this.queryClassifier.classify(userMessage);
@@ -525,7 +532,7 @@ export class AIClient extends EventEmitter {
                         logInfo(`[AIClient][${requestId}] Using parallel execution for ${toolCallsToExecute.length} tools`);
                         const toolResults = await this.toolOrchestrator.executeWithDependencies(
                             toolCallsToExecute,
-                            (toolCall) => this.executeTool(toolCall),
+                            (toolCall) => this.executeTool(toolCall, requestToolMap),
                             5 // maxConcurrent
                         );
 
@@ -584,7 +591,7 @@ export class AIClient extends EventEmitter {
                                 continue;
                             }
 
-                            const result = await this.executeTool(toolCall);
+                            const result = await this.executeTool(toolCall, requestToolMap);
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
 
                             // Check budget before adding
@@ -618,7 +625,7 @@ export class AIClient extends EventEmitter {
                     // Call the model again with updated messages
                     const rawFollowupReq: any = { ...enrichedRequest, messages, __toolpack_request_id: requestId };
                     // Re-enrich to include any tools discovered in the previous round
-                    const followupReq = await this.enrichRequestWithTools(rawFollowupReq);
+                    const followupReq = this.stripRequestTools((await this.enrichRequestWithTools(rawFollowupReq)).request);
 
                     if ((followupReq as any).tool_choice === 'required') {
                         (followupReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
@@ -655,7 +662,9 @@ export class AIClient extends EventEmitter {
             modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
             modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest);
 
-            const enrichedRequest = await this.enrichRequestWithTools(modeAwareRequest);
+            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest);
+            const enrichedRequest = initialEnrichment.request;
+            const requestToolMap = initialEnrichment.requestToolMap;
 
             const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
@@ -692,12 +701,12 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const baseReq: any = { ...enrichedRequest, __toolpack_request_id: requestId };
+            const baseReq: any = { ...this.stripRequestTools(enrichedRequest), __toolpack_request_id: requestId };
 
             logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
-            if (!this.toolsConfig.enabled || !this.toolsConfig.autoExecute || !this.toolRegistry) {
+            if (!this.toolsConfig.autoExecute || (!this.toolRegistry && requestToolMap.size === 0)) {
                 yield* provider.stream(baseReq);
                 return;
             }
@@ -730,9 +739,9 @@ export class AIClient extends EventEmitter {
                 logInfo(`[AIClient][${requestId}] stream() round_start ${rounds}/${maxRounds}`);
                 let lastFinishReason: string | null = null;
 
-                const rawRoundReq: any = { ...baseReq, messages };
+                const rawRoundReq: any = { ...enrichedRequest, messages };
                 // Re-enrich to include any newly discovered tools from previous rounds
-                const roundReq = await this.enrichRequestWithTools(rawRoundReq);
+                const roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq)).request);
 
                 if (rounds > 0 && (roundReq as any).tool_choice === 'required') {
                     (roundReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
@@ -842,7 +851,7 @@ export class AIClient extends EventEmitter {
                         if (!toolDone) heartbeatChunks.push({ delta: '' });
                     }, 500);
 
-                    const result = await this.executeTool(toolCall);
+                    const result = await this.executeTool(toolCall, requestToolMap);
                     toolDone = true;
                     clearInterval(heartbeatInterval);
                     const duration = Date.now() - startTime;
@@ -921,16 +930,20 @@ export class AIClient extends EventEmitter {
      * Enrich a request with tools based on the router config.
      * Applies mode-based tool filtering when an active mode is set.
      */
-    private async enrichRequestWithTools(request: CompletionRequest): Promise<CompletionRequest> {
+    private async enrichRequestWithTools(request: CompletionRequest): Promise<EnrichedRequestResult> {
         // If mode blocks ALL tools, return request with no tools
         if (this.activeMode?.blockAllTools) {
             logInfo(`[AIClient] Mode "${this.activeMode.displayName}" blocks all tools`);
-            return request;
+            return { request, requestToolMap: new Map() };
         }
 
-        if (!this.toolsConfig.enabled || (!this.toolRegistry && (request.tools?.length || 0) === 0)) {
-            logDebug(`[AIClient] Tools disabled or no registry`);
-            return request;
+        const requestToolMap = this.buildRequestToolMap(request.requestTools);
+        const requestToolSchemas = Array.from(requestToolMap.values()).map(tool => this.requestToolToSchema(tool));
+        const hasRequestTools = requestToolMap.size > 0;
+
+        if (!this.toolsConfig.enabled && !hasRequestTools) {
+            logDebug(`[AIClient] Tools disabled and no request-scoped tools`);
+            return { request, requestToolMap };
         }
 
         // Merge mode-specific tool search config with global config
@@ -952,7 +965,12 @@ export class AIClient extends EventEmitter {
         if (request.tools && request.tools.length > 0) {
             if (!resolvedToolsConfig.toolSearch?.enabled || !this.toolRegistry) {
                 logDebug(`[AIClient] Request already has ${request.tools.length} tools`);
-                return request;
+                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(requestToolSchemas));
+                const nextRequest = tools === request.tools ? request : { ...request, tools };
+                return {
+                    request: this.injectRequestToolGuidance(nextRequest, tools),
+                    requestToolMap,
+                };
             }
 
             let schemas = await this.toolRouter.resolve(
@@ -986,24 +1004,40 @@ export class AIClient extends EventEmitter {
 
             if (newTools.length === 0) {
                 logDebug(`[AIClient] Request already has ${request.tools.length} tools (no new discoveries)`);
-                return request;
+                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(requestToolSchemas));
+                const nextRequest = tools === request.tools ? request : { ...request, tools };
+                return {
+                    request: this.injectRequestToolGuidance(nextRequest, tools),
+                    requestToolMap,
+                };
             }
 
             let enrichedRequest: CompletionRequest = {
                 ...request,
-                tools: [...request.tools, ...newTools],
+                tools: this.mergeToolCallRequests(
+                    [...request.tools, ...newTools],
+                    this.schemasToToolCallRequests(requestToolSchemas)
+                ),
             };
 
             if (resolvedToolsConfig.toolSearch?.enabled && this.toolRegistry) {
                 enrichedRequest = this.injectToolSearchPrompt(enrichedRequest);
             }
 
-            return enrichedRequest;
+            return {
+                request: this.injectRequestToolGuidance(enrichedRequest, enrichedRequest.tools),
+                requestToolMap,
+            };
         }
 
         if (!this.toolRegistry) {
             logDebug('[AIClient] Tool registry not configured, skipping tool resolution');
-            return request;
+            const tools = this.schemasToToolCallRequests(requestToolSchemas);
+            const nextRequest = tools.length > 0 ? { ...request, tools } : request;
+            return {
+                request: this.injectRequestToolGuidance(nextRequest, tools),
+                requestToolMap,
+            };
         }
 
         const activeRegistry = this.toolRegistry;
@@ -1026,18 +1060,11 @@ export class AIClient extends EventEmitter {
             }
         }
 
-        if (schemas.length === 0) {
-            return request;
-        }
+        const tools = this.schemasToToolCallRequests(this.mergeSchemas(schemas, requestToolSchemas));
 
-        const tools: ToolCallRequest[] = schemas.map(s => ({
-            type: 'function',
-            function: {
-                name: s.name,
-                description: s.description,
-                parameters: s.parameters,
-            },
-        }));
+        if (tools.length === 0) {
+            return { request, requestToolMap };
+        }
 
         let enrichedRequest: CompletionRequest = { ...request, tools };
 
@@ -1046,7 +1073,130 @@ export class AIClient extends EventEmitter {
             enrichedRequest = this.injectToolSearchPrompt(enrichedRequest);
         }
 
-        return enrichedRequest;
+        return {
+            request: this.injectRequestToolGuidance(enrichedRequest, tools),
+            requestToolMap,
+        };
+    }
+
+    private buildRequestToolMap(requestTools?: RequestToolDefinition[]): Map<string, RequestToolDefinition> {
+        const map = new Map<string, RequestToolDefinition>();
+        for (const tool of requestTools || []) {
+            map.set(tool.name, tool);
+        }
+        return map;
+    }
+
+    private requestToolToSchema(tool: RequestToolDefinition): ToolSchema {
+        return {
+            name: tool.name,
+            displayName: tool.displayName,
+            description: tool.description,
+            parameters: tool.parameters as any,
+            category: tool.category,
+            cacheable: tool.cacheable,
+        };
+    }
+
+    private mergeSchemas(base: ToolSchema[], overrides: ToolSchema[]): ToolSchema[] {
+        const merged = new Map<string, ToolSchema>();
+        for (const schema of base) {
+            merged.set(schema.name, schema);
+        }
+        for (const schema of overrides) {
+            merged.set(schema.name, schema);
+        }
+        return Array.from(merged.values());
+    }
+
+    private schemasToToolCallRequests(schemas: ToolSchema[]): ToolCallRequest[] {
+        return schemas.map(schema => ({
+            type: 'function',
+            function: {
+                name: schema.name,
+                description: schema.description,
+                parameters: schema.parameters,
+            },
+        }));
+    }
+
+    private mergeToolCallRequests(base: ToolCallRequest[], overrides: ToolCallRequest[]): ToolCallRequest[] {
+        if (overrides.length === 0) {
+            return base;
+        }
+        const merged = new Map<string, ToolCallRequest>();
+        for (const tool of base) {
+            merged.set(tool.function.name, tool);
+        }
+        for (const tool of overrides) {
+            merged.set(tool.function.name, tool);
+        }
+        return Array.from(merged.values());
+    }
+
+    private injectRequestToolGuidance(request: CompletionRequest, effectiveTools?: ToolCallRequest[]): CompletionRequest {
+        const toolNames = new Set((effectiveTools || request.tools || []).map(tool => tool.function.name));
+        if (toolNames.size === 0) {
+            return request;
+        }
+
+        // Use a marker to detect if guidance has already been injected
+        const GUIDANCE_MARKER = '<!-- TOOLPACK_REQUEST_TOOL_GUIDANCE -->';
+        
+        const sections: string[] = [];
+
+        if (toolNames.has('knowledge_search') || toolNames.has('knowledge_add')) {
+            const lines = ['Knowledge Base:'];
+            if (toolNames.has('knowledge_search')) {
+                lines.push('- Use `knowledge_search` when you need factual or domain-specific information that may already be stored.');
+            }
+            if (toolNames.has('knowledge_add')) {
+                lines.push('- Use `knowledge_add` when you encounter a durable fact, user preference, or decision that future conversations should know. Do not add confidential information, routine task outputs, or context that is specific to this conversation only.');
+            }
+            sections.push(lines.join('\n'));
+        }
+
+        if (toolNames.has('conversation_search')) {
+            sections.push(
+                'Conversation History:\n- Only recent messages may be present in context.\n- Use `conversation_search` to find relevant details from earlier in this conversation when needed.'
+            );
+        }
+
+        if (sections.length === 0) {
+            return request;
+        }
+
+        const guidance = `${GUIDANCE_MARKER}\n${sections.join('\n\n')}`;
+        const systemIndex = request.messages.findIndex(message => message.role === 'system');
+
+        if (systemIndex >= 0) {
+            const messages = request.messages.map((message, index) => {
+                if (index !== systemIndex) return message;
+                const existingContent = typeof message.content === 'string' ? message.content : '';
+                
+                // Check for marker instead of full text for more robust deduplication
+                if (existingContent.includes(GUIDANCE_MARKER)) {
+                    return message; // Already injected
+                }
+                
+                return {
+                    ...message,
+                    content: `${existingContent}\n\n${guidance}`.trim(),
+                };
+            });
+            return { ...request, messages };
+        }
+
+        return {
+            ...request,
+            messages: [{ role: 'system', content: guidance }, ...request.messages],
+        };
+    }
+
+    private stripRequestTools(request: CompletionRequest): CompletionRequest {
+        const { requestTools, ...rest } = request;
+        void requestTools;
+        return rest;
     }
 
     /**
@@ -1058,6 +1208,20 @@ export class AIClient extends EventEmitter {
             // Check explicit blocks first (highest priority)
             if (mode.blockedTools.includes(schema.name)) return false;
             if (mode.blockedToolCategories.includes(schema.category)) return false;
+
+            // Keep tool.search available in tool-search mode even when category allowlists are restrictive.
+            // Explicit blocks above still win.
+            if (isToolSearchTool(schema.name)) {
+                const toolSearchEnabledInMode = mode.toolSearch?.enabled;
+                const toolSearchEnabled =
+                    toolSearchEnabledInMode !== undefined
+                        ? toolSearchEnabledInMode
+                        : (this.toolsConfig.toolSearch?.enabled ?? false);
+
+                if (toolSearchEnabled) {
+                    return true;
+                }
+            }
 
             // If allowlists are specified, tool must match at least one
             const hasAllowedTools = mode.allowedTools.length > 0;
@@ -1268,7 +1432,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
      * Execute a single tool call via the registry.
      * Emits 'tool:started', 'tool:completed', and 'tool:failed' events.
      */
-    private async executeTool(toolCall: ToolCallResult): Promise<string> {
+    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>): Promise<string> {
         const startTime = Date.now();
 
         // Emit started event
@@ -1281,7 +1445,10 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
 
         logInfo(`[AIClient] Executing tool: ${toolCall.name} with args: ${safePreview(toolCall.arguments, 500)}`);
 
-        if (!this.toolRegistry) {
+        const requestTool = requestToolMap.get(toolCall.name);
+        const registryTool = requestTool ? undefined : this.toolRegistry?.get(toolCall.name);
+
+        if (!requestTool && !this.toolRegistry) {
             const error = 'No tool registry configured';
             this.emit('tool:failed', {
                 toolName: toolCall.name,
@@ -1318,7 +1485,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             return result;
         }
 
-        const tool = this.toolRegistry.get(toolCall.name);
+        const tool = requestTool || registryTool;
         if (!tool) {
             logWarn(`[AIClient] Tool '${toolCall.name}' not found in registry`);
 
@@ -1343,27 +1510,27 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             let args = toolCall.arguments;
 
             // Human-in-the-loop confirmation check
-            if (tool.confirmation && this.onToolConfirm && !this.isBypassed(tool)) {
+            if (registryTool?.confirmation && this.onToolConfirm && !this.isBypassed(registryTool)) {
                 // Emit confirmation requested event
                 this.emit('tool:confirmation_requested', {
-                    tool,
+                    tool: registryTool,
                     args,
-                    level: tool.confirmation.level,
-                    reason: tool.confirmation.reason,
+                    level: registryTool.confirmation.level,
+                    reason: registryTool.confirmation.reason,
                 } as ToolConfirmationRequestedEvent);
 
                 // Wait for user decision
-                const decision = await this.onToolConfirm(tool, args, {
+                const decision = await this.onToolConfirm(registryTool, args, {
                     roundNumber: this.currentRound,
                     conversationId: this.conversationId,
                 });
 
                 // Emit confirmation resolved event
                 this.emit('tool:confirmation_resolved', {
-                    tool,
+                    tool: registryTool,
                     args,
-                    level: tool.confirmation.level,
-                    reason: tool.confirmation.reason,
+                    level: registryTool.confirmation.level,
+                    reason: registryTool.confirmation.reason,
                     decision,
                 } as ToolConfirmationResolvedEvent);
 
@@ -1401,7 +1568,9 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 config: this.toolsConfig?.additionalConfigurations ?? {},
                 log: (msg) => logInfo(`[Tool] ${msg}`),
             };
-            const result = await tool.execute(args, ctx);
+            const result = requestTool
+                ? await requestTool.execute(args)
+                : await tool.execute(args, ctx);
             const duration = Date.now() - startTime;
 
             // Emit completed event
@@ -1424,11 +1593,12 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 timestamp: Date.now(),
             } as ToolLogEvent);
 
-            logInfo(`[AIClient] Tool ${toolCall.name} executed successfully in ${duration}ms result_len=${result?.length ?? 0}`);
+            const resultLength = typeof result === 'string' ? result.length : JSON.stringify(result).length;
+            logInfo(`[AIClient] Tool ${toolCall.name} executed successfully in ${duration}ms result_len=${resultLength}`);
             if (shouldLog('debug')) {
                 logDebug(`[AIClient] Tool ${toolCall.name} result_preview=${safePreview(result, 400)}`);
             }
-            return result;
+            return typeof result === 'string' ? result : JSON.stringify(result);
         } catch (error: any) {
             const duration = Date.now() - startTime;
             const errorMsg = error.message || 'Tool execution failed';
@@ -1541,10 +1711,44 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
     private executeToolSearch(args: Record<string, any>): string {
         const { query, category } = args;
         const limit = this.toolsConfig.toolSearch?.searchResultLimit ?? 5;
+        const requestedCategory = typeof category === 'string' && category.length > 0 ? category : undefined;
 
-        logInfo(`[AIClient] Executing tool.search: query="${query}" category=${category || 'all'} limit=${limit}`);
+        if (this.activeMode) {
+            const searchAllowed = this.filterSchemasByMode([getToolSearchSchema()], this.activeMode).length > 0;
+            if (!searchAllowed) {
+                logWarn('[AIClient] tool.search blocked by active mode');
+                return JSON.stringify({
+                    query,
+                    found: 0,
+                    tools: [],
+                    hint: 'tool.search is not allowed in the current mode.',
+                });
+            }
+        }
 
-        const results = this.bm25Engine.search(query, { limit, category });
+        logInfo(`[AIClient] Executing tool.search: query="${query}" category=${requestedCategory || 'all'} limit=${limit}`);
+
+        // Oversample so mode filtering (allowed/blocked tools and categories) does not starve the
+        // final result set when allowlists are restrictive. We slice down to the configured limit below.
+        const oversampleLimit = this.activeMode ? Math.max(limit * 4, limit) : limit;
+        let results = this.bm25Engine.search(query, { limit: oversampleLimit, category: requestedCategory });
+
+        if (this.activeMode && results.length > 0) {
+            const allowedSchemas = this.filterSchemasByMode(results.map(result => result.tool), this.activeMode);
+            const allowedToolNames = new Set(allowedSchemas.map(schema => schema.name));
+            const beforeCount = results.length;
+
+            results = results.filter(result => allowedToolNames.has(result.toolName));
+
+            const filteredCount = beforeCount - results.length;
+            if (filteredCount > 0) {
+                logDebug(`[AIClient] tool.search filtered out ${filteredCount} disallowed results for mode "${this.activeMode.displayName}"`);
+            }
+        }
+
+        if (results.length > limit) {
+            results = results.slice(0, limit);
+        }
 
         // Record discovered tools in the cache
         const toolNames = results.map(r => r.toolName);

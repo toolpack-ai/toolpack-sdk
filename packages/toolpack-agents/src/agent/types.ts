@@ -1,5 +1,21 @@
-import type { Toolpack } from 'toolpack-sdk';
+import type { Toolpack, Participant, ModeConfig } from 'toolpack-sdk';
 import type { EventEmitter } from 'events';
+import type { Interceptor } from '../interceptors/types.js';
+
+export type { Participant };
+
+/**
+ * Options for constructing a BaseAgent.
+ *
+ * - `{ apiKey, provider?, model? }` — agent creates and owns its own Toolpack instance.
+ *   The instance is initialised lazily in `start()`.
+ * - `{ toolpack }` — agent uses a shared Toolpack instance (e.g. passed from AgentRegistry
+ *   for multi-agent setups where API client and config are shared).
+ */
+export type BaseAgentOptions =
+  | { apiKey: string; provider?: string; model?: string }
+  | { toolpack: Toolpack };
+
 
 /**
  * Input structure for agent invocation.
@@ -20,6 +36,13 @@ export interface AgentInput<TIntent extends string = string> {
 
   /** Channel-agnostic thread/session identifier for conversation continuity */
   conversationId?: string;
+
+  /**
+   * The participant who produced this message, as populated by the channel
+   * during `normalize()` or resolved later via `channel.resolveParticipant`.
+   * Interceptors such as `participant-resolver` read and/or enrich this.
+   */
+  participant?: Participant;
 }
 
 /**
@@ -87,8 +110,14 @@ export interface AgentInstance<TIntent extends string = string> extends EventEmi
   /** Human-readable description of the agent's purpose */
   description: string;
 
-  /** LLM mode used by this agent (chat, code, planning, etc.) */
-  mode: string;
+  /** LLM mode used by this agent (full ModeConfig or a registered mode name) */
+  mode: ModeConfig | string;
+
+  /** Channels this agent listens on and sends responses to */
+  channels: ChannelInterface[];
+
+  /** Interceptors applied to every inbound message before invokeAgent is called */
+  interceptors: Interceptor[];
 
   /**
    * Main entry point for agent execution.
@@ -97,7 +126,23 @@ export interface AgentInstance<TIntent extends string = string> extends EventEmi
    */
   invokeAgent(input: AgentInput<TIntent>): Promise<AgentResult>;
 
-  /** Internal reference to the agent registry (set by AgentRegistry) */
+  /**
+   * Start the agent: initialise Toolpack (if not provided), bind message handlers
+   * to all configured channels, and begin listening.
+   */
+  start(): Promise<void>;
+
+  /** Stop all channels and release owned resources. */
+  stop(): Promise<void>;
+
+  /**
+   * Ensure the internal Toolpack instance is ready.
+   * Called by AgentRegistry before start() so the toolpack is available
+   * when _registry is set.
+   */
+  _ensureToolpack(): Promise<void>;
+
+  /** Internal reference to the agent registry (set before start() by AgentRegistry) */
   _registry?: IAgentRegistry;
 
   /** Name of the channel that triggered this agent */
@@ -148,6 +193,24 @@ export interface ChannelInterface {
    * @param handler Function to process incoming AgentInput
    */
   onMessage(handler: (input: AgentInput) => Promise<void>): void;
+
+  /**
+   * Optional hook to resolve richer `Participant` details (e.g. display name)
+   * for a normalized input.
+   *
+   * Design:
+   * - **Lazy.** Called at render/interceptor time, not during `normalize()`,
+   *   so capture stays cheap.
+   * - **Cacheable.** Implementations should cache per-process and invalidate
+   *   on explicit platform signals (e.g. Slack `user_change`).
+   * - **Fallback-safe.** If resolution fails, return `undefined` so the
+   *   pipeline can fall back to the id. Must never throw on miss.
+   *
+   * The returned participant is merged into `input.participant` by the
+   * `participant-resolver` interceptor. If the channel cannot resolve
+   * anything, it should return `undefined`.
+   */
+  resolveParticipant?(input: AgentInput): Promise<Participant | undefined> | Participant | undefined;
 }
 
 /**
@@ -155,17 +218,6 @@ export interface ChannelInterface {
  * @deprecated Use ChannelInterface for new code
  */
 export type BaseChannel = ChannelInterface;
-
-/**
- * Registration entry for an agent with its associated channels.
- */
-export interface AgentRegistration<TIntent extends string = string> {
-  /** Agent class constructor */
-  agent: new (toolpack: Toolpack) => AgentInstance<TIntent>;
-
-  /** Channels that can trigger this agent */
-  channels: ChannelInterface[];
-}
 
 /**
  * Represents a pending human-in-the-loop question.
@@ -215,10 +267,11 @@ export interface PendingAsk {
  */
 export interface IAgentRegistry {
   /**
-   * Start the registry and initialize all agents and channels.
-   * @param toolpack The Toolpack instance to pass to agents
+   * Start all registered agents and their channels.
+   * Each agent initialises its own Toolpack instance (or uses the shared one it was
+   * constructed with) before channels begin listening.
    */
-  start(toolpack: Toolpack): void;
+  start(): Promise<void>;
 
   /**
    * Send output to a specific channel by name.
@@ -239,6 +292,22 @@ export interface IAgentRegistry {
    * @returns Array of all agent instances
    */
   getAllAgents(): AgentInstance[];
+
+  /**
+   * Get a registered channel by name.
+   * @param name The channel name
+   * @returns The channel interface or undefined if not found
+   */
+  getChannel(name: string): ChannelInterface | undefined;
+
+  /**
+   * Invoke an agent by name through the transport layer.
+   * Used internally by delegate() and delegateAndWait() on BaseAgent.
+   * @param agentName The target agent's name
+   * @param input The invocation input
+   * @returns The agent's result
+   */
+  invoke(agentName: string, input: AgentInput): Promise<AgentResult>;
 
   /**
    * Get a pending ask for a conversation.

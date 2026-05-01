@@ -9,6 +9,7 @@ import {
 import { captureEvents } from './capture-events.js';
 import { BaseAgent } from '../agent/base-agent.js';
 import type { AgentInput, AgentResult } from '../agent/types.js';
+import { CHAT_MODE } from 'toolpack-sdk';
 
 describe('testing utilities', () => {
   describe('MockChannel', () => {
@@ -229,7 +230,7 @@ describe('testing utilities', () => {
     class TestAgent extends BaseAgent {
       name = 'test-agent';
       description = 'A test agent';
-      mode = 'chat';
+      mode = CHAT_MODE;
 
       async invokeAgent(input: AgentInput): Promise<AgentResult> {
         const result = await this.run(input.message || '');
@@ -318,7 +319,7 @@ describe('testing utilities', () => {
     class EventfulAgent extends BaseAgent {
       name = 'eventful-agent';
       description = 'An agent that emits events';
-      mode = 'chat';
+      mode = CHAT_MODE;
 
       async invokeAgent(input: AgentInput): Promise<AgentResult> {
         this.emit('agent:start', { message: input.message });
@@ -329,7 +330,7 @@ describe('testing utilities', () => {
 
     it('should capture agent events', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -341,7 +342,7 @@ describe('testing utilities', () => {
 
     it('should get events by name', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -353,7 +354,7 @@ describe('testing utilities', () => {
 
     it('should get first and last events', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -364,7 +365,7 @@ describe('testing utilities', () => {
 
     it('should clear events', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -376,7 +377,7 @@ describe('testing utilities', () => {
 
     it('should assert event presence', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -391,7 +392,7 @@ describe('testing utilities', () => {
 
     it('should assert event absence', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       await agent.invokeAgent({ message: 'Test' });
@@ -405,7 +406,7 @@ describe('testing utilities', () => {
 
     it('should stop capturing and remove listeners', async () => {
       const toolpack = createMockToolpackSimple();
-      const agent = new EventfulAgent(toolpack);
+      const agent = new EventfulAgent({ toolpack });
       const capture = captureEvents(agent);
 
       capture.stop();

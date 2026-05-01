@@ -22,15 +22,17 @@ export interface MockKnowledgeOptions {
  *
  * @example
  * ```ts
- * const knowledge = createMockKnowledge({
+ * const knowledge = await createMockKnowledge({
  *   initialChunks: [
  *     { content: 'Lead: Acme Corp, score: 85', metadata: { source: 'crm' } },
  *   ],
  * });
  *
- * // Use with agent
- * const agent = new MyAgent(toolpack);
- * agent.knowledge = knowledge;
+ * // Use with SDK
+ * const toolpack = await Toolpack.init({
+ *   provider: 'openai',
+ *   knowledge, // Available to all agents
+ * });
  * ```
  */
 export async function createMockKnowledge(

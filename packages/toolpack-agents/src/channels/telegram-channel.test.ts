@@ -106,6 +106,63 @@ describe('TelegramChannel', () => {
     });
   });
 
+  describe('normalize - participant', () => {
+    it('populates participant with stringified id and first_name as displayName', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'hi',
+          chat: { id: 123456789 },
+          from: { id: 987654321, first_name: 'Alice', username: 'alice_tg' },
+          message_id: 1,
+        },
+      });
+      expect(input.participant).toEqual({
+        kind: 'user',
+        id: '987654321',        // number coerced to string
+        displayName: 'Alice',   // first_name takes precedence
+      });
+    });
+
+    it('falls back to username when first_name is absent', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'hi',
+          chat: { id: 111 },
+          from: { id: 222, username: 'bob_bot' },
+          message_id: 2,
+        },
+      });
+      expect(input.participant?.displayName).toBe('bob_bot');
+    });
+
+    it('falls back to stringified id when no name fields present', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'hi',
+          chat: { id: 111 },
+          from: { id: 333 },
+          message_id: 3,
+        },
+      });
+      expect(input.participant?.displayName).toBe('333');
+    });
+
+    it('leaves participant undefined when from is absent', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'system message',
+          chat: { id: 111 },
+          message_id: 4,
+        },
+      });
+      expect(input.participant).toBeUndefined();
+    });
+  });
+
   describe('send', () => {
     it('should call Telegram API with chatId from metadata', async () => {
       const channel = new TelegramChannel(baseConfig);
@@ -253,6 +310,157 @@ describe('TelegramChannel', () => {
 
       // Cleanup
       channel.stop().catch(() => {}); // Ignore any errors during cleanup
+    });
+
+    it('advances offset correctly — no double-increment that would skip updates', async () => {
+      const channel = new TelegramChannel(baseConfig);
+
+      global.fetch = vi.fn()
+        // First poll: returns update_id 1 and 3
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            result: [
+              { update_id: 1, message: { text: 'a', chat: { id: 100 }, from: { id: 1 }, message_id: 1 } },
+              { update_id: 3, message: { text: 'b', chat: { id: 100 }, from: { id: 1 }, message_id: 2 } },
+            ],
+          }),
+        } as Response)
+        // Second poll — offset must be 4 (last update_id + 1), not 5 (which would skip update_id=4)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ ok: true, result: [] }),
+        } as Response);
+
+      await (channel as any).pollUpdates();
+      await (channel as any).pollUpdates();
+
+      const secondCallUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[1][0] as string;
+      expect(secondCallUrl).toContain('offset=4');
+    });
+  });
+
+  describe('normalize — channel context', () => {
+    it('sets channelType to "private" for DM chats so defaultGetScope returns dm scope', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'private message',
+          chat: { id: 555, type: 'private' },
+          from: { id: 100 },
+          message_id: 1,
+        },
+      });
+      expect(input.context?.channelType).toBe('private');
+    });
+
+    it('sets channelType to "group" for group chats', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'group message',
+          chat: { id: 777, type: 'group', title: 'Project Kore' },
+          from: { id: 100 },
+          message_id: 2,
+        },
+      });
+      expect(input.context?.channelType).toBe('group');
+    });
+
+    it('sets channelName from chat.title for group chats', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'hi team',
+          chat: { id: 777, type: 'group', title: 'Project Kore' },
+          from: { id: 100 },
+          message_id: 3,
+        },
+      });
+      expect(input.context?.channelName).toBe('Project Kore');
+    });
+
+    it('sets channelName to undefined for private chats (DMs have no title)', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'hey',
+          chat: { id: 555, type: 'private' },
+          from: { id: 100, first_name: 'Alice' },
+          message_id: 4,
+        },
+      });
+      expect(input.context?.channelName).toBeUndefined();
+    });
+
+    it('produces empty string conversationId when chat.id is null', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'msg',
+          chat: { id: null, type: 'group' },
+          from: { id: 100 },
+          message_id: 1,
+        },
+      });
+      expect(input.conversationId).toBe('');
+    });
+
+    it('sets channelId to the stringified chat id', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'msg',
+          chat: { id: 12345, type: 'group' },
+          from: { id: 100 },
+          message_id: 5,
+        },
+      });
+      expect(input.context?.channelId).toBe('12345');
+    });
+  });
+
+  describe('normalize — mentions', () => {
+    it('extracts text_mention entity user ids into context.mentions', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'Hey can you help?',
+          chat: { id: 100 },
+          from: { id: 200 },
+          entities: [
+            { type: 'text_mention', user: { id: 42 } },
+            { type: 'text_mention', user: { id: 99 } },
+          ],
+        },
+      });
+      expect(input.context?.mentions).toEqual(['42', '99']);
+    });
+
+    it('sets context.mentions to undefined when no text_mention entities exist', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'plain message',
+          chat: { id: 100 },
+          from: { id: 200 },
+          entities: [{ type: 'mention', offset: 0, length: 5 }], // @username — no user id
+        },
+      });
+      expect(input.context?.mentions).toBeUndefined();
+    });
+
+    it('sets context.mentions to undefined when entities array is absent', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        message: {
+          text: 'no entities here',
+          chat: { id: 100 },
+          from: { id: 200 },
+        },
+      });
+      expect(input.context?.mentions).toBeUndefined();
     });
   });
 });

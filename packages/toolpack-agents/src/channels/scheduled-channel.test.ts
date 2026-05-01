@@ -5,7 +5,7 @@ import { AgentInput, AgentOutput } from '../agent/types.js';
 describe('ScheduledChannel', () => {
   const baseConfig: ScheduledChannelConfig = {
     cron: '0 9 * * 1-5',
-    notify: 'slack:#ops',
+    notify: 'webhook:https://hooks.example.com/report',
   };
 
   describe('constructor', () => {
@@ -29,7 +29,7 @@ describe('ScheduledChannel', () => {
       expect(() => {
         new ScheduledChannel({
           cron: 'invalid',
-          notify: 'slack:#ops',
+          notify: 'webhook:https://hooks.example.com/x',
         });
       }).toThrow('Invalid cron expression');
     });
@@ -76,13 +76,16 @@ describe('ScheduledChannel', () => {
   });
 
   describe('send', () => {
-    it('should throw for slack notification without proper setup', async () => {
-      const channel = new ScheduledChannel(baseConfig);
+    it("rejects the removed 'slack:' notify protocol with a migration hint", async () => {
+      const channel = new ScheduledChannel({
+        cron: '0 9 * * 1-5',
+        notify: 'slack:#ops',
+      });
 
       await expect(channel.send({
         output: 'Daily report',
         metadata: {},
-      })).rejects.toThrow('Slack notification requires configuration');
+      })).rejects.toThrow(/no longer supports the 'slack:' notify protocol/);
     });
 
     it('should send to webhook URL', async () => {
@@ -161,7 +164,7 @@ describe('ScheduledChannel', () => {
     it('should parse standard cron with 5 parts', () => {
       const channel = new ScheduledChannel({
         cron: '0 9 * * 1-5',
-        notify: 'slack:#ops',
+        notify: 'webhook:https://example.com',
       });
 
       expect(channel).toBeDefined();
@@ -170,7 +173,7 @@ describe('ScheduledChannel', () => {
     it('should support wildcards', () => {
       const channel = new ScheduledChannel({
         cron: '* * * * *',
-        notify: 'slack:#ops',
+        notify: 'webhook:https://example.com',
       });
 
       expect(channel).toBeDefined();

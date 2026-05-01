@@ -774,9 +774,11 @@ import { ScheduledChannel } from '@toolpack-sdk/agents';
 const scheduler = new ScheduledChannel({
   name: 'daily-report',
   cron: '0 9 * * 1-5', // 9am weekdays
-  notify: 'slack:#reports',
+  notify: 'webhook:https://hooks.example.com/daily-report',
   message: 'Generate the daily sales report',
 });
+// For Slack delivery, attach a named SlackChannel to the same agent and
+// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
 ```
 - ⏰ Triggers agents on cron schedules
 - ✅ Full cron expression support (ranges, steps, lists, combinations)

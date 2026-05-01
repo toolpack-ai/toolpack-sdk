@@ -32,5 +32,8 @@ export type { OllamaEmbedderOptions } from './embedders/ollama.js';
 export { OpenAIEmbedder } from './embedders/openai.js';
 export type { OpenAIEmbedderOptions } from './embedders/openai.js';
 
+export { OpenRouterEmbedder } from './embedders/openrouter.js';
+export type { OpenRouterEmbedderOptions } from './embedders/openrouter.js';
+
 // Utility functions
 export { keywordSearch, combineScores } from './utils/keyword.js';

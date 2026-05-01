@@ -774,9 +774,11 @@ import { ScheduledChannel } from '@toolpack-sdk/agents';
 const scheduler = new ScheduledChannel({
   name: 'daily-report',
   cron: '0 9 * * 1-5', // 9am weekdays
-  notify: 'slack:#reports',
+  notify: 'webhook:https://hooks.example.com/daily-report',
   message: 'Generate the daily sales report',
 });
+// For Slack delivery, attach a named SlackChannel to the same agent and
+// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
 ```
 - ⏰ Triggers agents on cron schedules
 - ✅ Full cron expression support (ranges, steps, lists, combinations)
@@ -1234,6 +1236,7 @@ interface CompletionRequest {
   temperature?: number;
   max_tokens?: number;
   tools?: ToolCallRequest[];
+  requestTools?: RequestToolDefinition[];  // Request-scoped tools
   tool_choice?: 'auto' | 'none' | 'required';
 }
 
@@ -1263,6 +1266,115 @@ interface ProviderModelInfo {
   costTier?: string;            // e.g., 'low', 'medium', 'high', 'premium'
 }
 ```
+
+### Request-Scoped Tools
+
+Request-scoped tools are dynamic tools attached to a single completion request. Unlike globally registered tools in the ToolRegistry, they:
+
+- **Don't pollute the shared registry** — Each request can have its own tools
+- **Can close over request-specific state** — e.g., `conversationId`, user context
+- **Are safe for multi-agent/multi-request usage** — No cross-request contamination
+- **Execute through the same SDK orchestration** — Events, logging, HITL all work
+
+#### Built-in Request-Scoped Tools
+
+**Knowledge Tools** (when `knowledge` is configured):
+- `knowledge_search` — Search the knowledge base for relevant information
+- `knowledge_add` — Add new content to the knowledge base at runtime
+
+**Conversation Tools** (when using `ConversationHistory`):
+- `conversation_search` — Search conversation history for past messages
+
+#### Creating Custom Request Tools
+
+```typescript
+import { RequestToolDefinition, ConversationHistory } from 'toolpack-sdk';
+
+// Example: Session-specific calculator
+const createCalculatorTool = (sessionId: string): RequestToolDefinition => ({
+  name: 'calculate',
+  displayName: 'Calculator',
+  description: 'Perform mathematical calculations',
+  category: 'math',
+  parameters: {
+    type: 'object',
+    properties: {
+      expression: { type: 'string', description: 'Math expression to evaluate' },
+    },
+    required: ['expression'],
+  },
+  execute: async (args) => {
+    // Can safely close over sessionId
+    console.log(`Session ${sessionId}: calculating ${args.expression}`);
+    
+    // Simple eval (use a proper math library in production)
+    const result = eval(args.expression);
+    return { result, sessionId };
+  },
+});
+
+// Use in a request
+const result = await sdk.generate({
+  messages: [{ role: 'user', content: 'What is 15 * 23?' }],
+  model: 'gpt-4',
+  requestTools: [createCalculatorTool('user-123')],
+});
+```
+
+#### Using ConversationHistory with Request Tools
+
+```typescript
+import { ConversationHistory } from 'toolpack-sdk';
+
+const history = new ConversationHistory('./chat.db');
+
+// Add some messages
+await history.addUserMessage('conv-1', 'What is the API rate limit?');
+await history.addAssistantMessage('conv-1', 'The rate limit is 100 requests per minute.');
+
+// Use conversation search in a request
+const result = await sdk.generate({
+  messages: [
+    { role: 'user', content: 'What did we discuss about rate limits?' }
+  ],
+  model: 'gpt-4',
+  requestTools: [
+    history.toTool('conv-1'),  // Scoped to conversation 'conv-1'
+  ],
+});
+
+// AI can now call conversation_search to find the earlier discussion
+```
+
+#### Request Tools vs Registry Tools
+
+| Feature | Request Tools | Registry Tools |
+|---------|---------------|----------------|
+| **Scope** | Single request | All requests |
+| **State** | Can close over request state | Stateless |
+| **Registration** | Per-request via `requestTools` | Global via `ToolRegistry` |
+| **Use Case** | Dynamic, stateful tools | Reusable, static tools |
+| **Priority** | Higher (checked first) | Lower |
+| **Examples** | `conversation_search`, `knowledge_add` | `fs.read_file`, `web.search` |
+
+#### Automatic Guidance Injection
+
+When request-scoped tools are present, the SDK automatically injects usage guidance into the system prompt:
+
+```
+Knowledge Base:
+- Use `knowledge_search` when you need factual or domain-specific information.
+- Use `knowledge_add` when you learn durable information that should be saved.
+
+Conversation History:
+- Only recent messages may be present in context.
+- Use `conversation_search` to find details from earlier in this conversation.
+```
+
+This guidance is:
+- **Per-request** — Only injected when tools are actually present
+- **Derived from effective tool set** — Reflects the actual tools available
+- **Idempotent** — Won't duplicate if already present
 
 ## Error Handling
 

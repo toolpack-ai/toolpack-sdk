@@ -1,9 +1,12 @@
 import { EventEmitter } from 'events';
-import type { Toolpack } from 'toolpack-sdk';
-import type { Knowledge } from '@toolpack-sdk/knowledge';
-import { AgentInput, AgentResult, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk } from './types.js';
+import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig } from 'toolpack-sdk';
+import { Toolpack, InMemoryConversationStore } from 'toolpack-sdk';
+import type { Interceptor } from '../interceptors/types.js';
+import { composeChain, executeChain } from '../interceptors/chain.js';
+import { createCaptureInterceptor, CAPTURE_INTERCEPTOR_MARKER } from '../interceptors/builtins/capture-history.js';
+import { assemblePrompt } from '../history/assembler.js';
+import type { AgentInput, AgentResult, AgentOutput, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk, ChannelInterface, BaseAgentOptions } from './types.js';
 import { AgentError } from './errors.js';
-import { ConversationHistory } from '../conversation-history/index.js';
 
 /**
  * Abstract base class for all agents.
@@ -17,13 +20,18 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   /** Human-readable description of what this agent does */
   abstract description: string;
 
-  /** Mode this agent runs in (from toolpack-sdk modes) */
-  abstract mode: string;
+  /**
+   * Mode this agent runs in. Each agent owns a full ModeConfig including its
+   * system prompt, allowed tools, workflow, and tool-search policy. The mode
+   * is registered with the Toolpack on first run and activated for every
+   * invocation.
+   *
+   * Use built-in modes (AGENT_MODE, CHAT_MODE, CODING_MODE) as a base, or
+   * compose a custom ModeConfig.
+   */
+  abstract mode: ModeConfig | string;
 
   // --- Optional identity properties ---
-  /** System prompt injected on every run */
-  systemPrompt?: string;
-
   /** Provider override (e.g., 'anthropic', 'openai') - inherits from Toolpack if not set */
   provider?: string;
 
@@ -34,228 +42,247 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   /** Workflow configuration merged on top of mode config */
   workflow?: Record<string, unknown>;
 
-  /** Knowledge base for this agent - auto-injected as knowledge_search tool in run() */
-  knowledge?: Knowledge;
-
-  /** Conversation history storage - separate from domain knowledge */
-  conversationHistory?: ConversationHistory;
-
-  // --- Internal references (set by AgentRegistry) ---
-  /** Reference to the registry for channel routing */
-  _registry?: IAgentRegistry;
-
-  /** Name of the channel that triggered this invocation */
-  _triggeringChannel?: string;
-
-  /** Current conversation ID for this invocation */
-  _conversationId?: string;
-
-  /** Whether the triggering channel is a trigger channel (ScheduledChannel has no human recipient) */
-  _isTriggerChannel?: boolean;
+  /**
+   * Conversation history store. Auto-initialised to `InMemoryConversationStore` in the
+   * constructor so subclass field initialisers (e.g. `interceptors = [createCaptureInterceptor({
+   * store: this.conversationHistory })]`) can reference it safely. Replace with a
+   * database-backed implementation for production persistence.
+   */
+  conversationHistory: ConversationStore;
 
   /**
-   * Constructor receives the shared Toolpack instance.
-   * @param toolpack The Toolpack SDK instance
+   * Options forwarded to `assemblePrompt()` when `run()` builds LLM context from history.
+   * Defaults to `assemblePrompt`'s own defaults (addressed-only mode on, 3 000-token budget).
    */
-  constructor(protected readonly toolpack: Toolpack) {
+  assemblerOptions?: AssemblerOptions;
+
+  /** Channels this agent listens on and sends responses to */
+  channels: ChannelInterface[] = [];
+
+  /** Interceptors applied to every inbound message before invokeAgent is called */
+  interceptors: Interceptor[] = [];
+
+  // --- Internal references ---
+  /** Reference to the registry for sendTo() and delegation support */
+  _registry?: IAgentRegistry;
+
+  /**
+   * Invocation-scoped context fields — set by `_bindChannel` immediately before
+   * calling `invokeAgent` and read inside `run()`, `ask()`, and `delegate()`.
+   *
+   * KNOWN LIMITATION: these are instance-level fields, not async-local storage.
+   * Two different conversations processed concurrently by the same agent can
+   * clobber each other's values. The conversation lock serialises within a single
+   * conversationId, but distinct conversationIds run concurrently.
+   *
+   * Fix: replace with `AsyncLocalStorage` in a future release. For now, agents
+   * that call `this.run()` while processing multiple concurrent conversations
+   * should pass `conversationId` explicitly to avoid relying on these fields.
+   */
+  _triggeringChannel?: string;
+  _conversationId?: string;
+  _isTriggerChannel?: boolean;
+
+  protected toolpack!: Toolpack;
+
+  private readonly _initConfig?: { apiKey: string; provider?: string; model?: string };
+  private _ownedToolpack = false;
+  private readonly _conversationLocks = new Map<string, Promise<void>>();
+
+  constructor(options: BaseAgentOptions) {
     super();
+    // Auto-init here (before child field initialisers run) so that subclass
+    // field expressions like `interceptors = [createCaptureInterceptor({ store:
+    // this.conversationHistory })]` see a live store, not undefined.
+    this.conversationHistory = new InMemoryConversationStore();
+    if ('toolpack' in options) {
+      this.toolpack = options.toolpack;
+    } else {
+      this._initConfig = options;
+    }
+  }
+
+  /**
+   * Ensure the Toolpack instance is ready.
+   * No-op if the toolpack was provided at construction time.
+   * Creates and owns the instance from `apiKey` if it was not.
+   */
+  async _ensureToolpack(): Promise<void> {
+    if (this.toolpack) return;
+    if (!this._initConfig) {
+      throw new Error(`[${this.name ?? 'agent'}] Cannot start: no apiKey or toolpack provided`);
+    }
+    this.toolpack = await Toolpack.init({
+      provider: this._initConfig.provider ?? 'anthropic',
+      apiKey: this._initConfig.apiKey,
+      model: this._initConfig.model,
+    });
+    this._ownedToolpack = true;
+  }
+
+  /**
+   * Start the agent: initialise Toolpack (if needed), bind message handlers to all
+   * configured channels, and begin listening.
+   *
+   * When using AgentRegistry, the registry calls this after setting `_registry`.
+   * For standalone single-agent deployments, call this directly.
+   */
+  async start(): Promise<void> {
+    await this._ensureToolpack();
+    // Register and activate the agent's mode as the Toolpack default so the
+    // startup log reflects the agent (e.g. "Kael") instead of the built-in
+    // default ("Chat").
+    if (this.mode) {
+      if (typeof this.mode === 'string') {
+        this.toolpack.setMode(this.mode);
+      } else {
+        this.toolpack.registerMode(this.mode);
+        this.toolpack.setMode(this.mode.name);
+      }
+    }
+    for (const channel of this.channels) {
+      this._bindChannel(channel);
+      channel.listen();
+    }
+  }
+
+  /**
+   * Stop all channels and release resources owned by this agent.
+   */
+  async stop(): Promise<void> {
+    for (const channel of this.channels) {
+      if ('stop' in channel && typeof (channel as { stop?: unknown }).stop === 'function') {
+        await (channel as { stop: () => Promise<void> }).stop();
+      }
+    }
+    if (this._ownedToolpack) {
+      await this.toolpack.disconnect?.();
+    }
   }
 
   /**
    * Main entry point for agent invocation.
    * Implement this to handle incoming messages and route to appropriate logic.
-   * @param input The normalized input from the channel
-   * @returns The agent's result
    */
   abstract invokeAgent(input: AgentInput<TIntent>): Promise<AgentResult>;
 
   /**
    * Execute the agent using the Toolpack SDK.
-   * This is the execution engine that bridges agents to the SDK.
-   * @param message The message to process
-   * @param options Optional overrides for this run
-   * @returns The execution result
+   *
+   * @param message - The user message to process.
+   * @param _options - Optional per-run workflow overrides.
+   * @param context - Optional context overrides. Supply `conversationId` here when
+   *   invoking from `invokeAgent()` to avoid the instance-level `_conversationId`
+   *   race that occurs when the same agent handles multiple concurrent conversations.
    */
-  protected async run(message: string, options?: AgentRunOptions): Promise<AgentResult> {
-    // Note: options can be used for per-run workflow overrides in future
-    void options;
+  protected async run(
+    message: string,
+    _options?: AgentRunOptions,
+    context?: { conversationId?: string },
+  ): Promise<AgentResult> {
+    // Prefer the explicitly supplied conversationId; fall back to the
+    // instance-level field (set by _bindChannel) for channel-driven invocations.
+    const convId = context?.conversationId ?? this._conversationId;
 
-    // Fire lifecycle hooks and emit events
-    await this.onBeforeRun({ message, conversationId: this._conversationId } as AgentInput<TIntent>);
+    await this.onBeforeRun({ message, conversationId: convId } as AgentInput<TIntent>);
     this.emit('agent:start', { message });
 
     try {
-      // Set the agent's mode on the toolpack instance
-      // This configures the workflow, system prompt, and available tools
-      this.toolpack.setMode(this.mode);
-
-      // ── Build dynamic system prompt ──────────────────────────────────────
-      // Start with the agent's own system prompt (if any), then append
-      // guidance for each meta-tool that is configured.  These instructions
-      // are always sent regardless of toolsConfig so the AI knows when to
-      // reach for knowledge / conversation history.
-      let systemPromptContent = this.systemPrompt || '';
-
-      if (this.knowledge) {
-        systemPromptContent +=
-          '\n\n**Knowledge Base:** You have access to a domain-specific knowledge base. ' +
-          'When you need factual information that may be stored there, call the ' +
-          '`knowledge_search` tool with a concise query before answering.';
+      // Register-then-activate. registerMode is idempotent for the same name,
+      // so calling it on every run is cheap and avoids requiring callers to
+      // pre-wire the mode in Toolpack.init({ customModes }).
+      if (typeof this.mode === 'string') {
+        this.toolpack.setMode(this.mode);
+      } else {
+        this.toolpack.registerMode(this.mode);
+        this.toolpack.setMode(this.mode.name);
       }
 
-      if (this.conversationHistory?.isSearchEnabled && this._conversationId) {
-        systemPromptContent +=
-          `\n\n**Conversation History Search:** Only the most recent ` +
-          `${this.conversationHistory.getHistoryLimit()} messages are shown above. ` +
-          'When you need to recall details from earlier in the conversation, call the ' +
-          '`conversation_search` tool with a relevant query.';
-      }
-
-      // ── Build messages array ─────────────────────────────────────────────
+      // System prompt is now owned by the mode and injected by the Toolpack
+      // client (see injectModeSystemPrompt). BaseAgent no longer pushes its
+      // own system message.
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
 
-      if (systemPromptContent) {
-        messages.push({ role: 'system', content: systemPromptContent });
-      }
-
-      // Fetch recent conversation history (respects configured limit)
-      if (this.conversationHistory && this._conversationId) {
+      // Load history via assemblePrompt: proper multi-participant projection,
+      // addressed-only mode, token budget, and rolling summary support.
+      // Writes are handled exclusively by the capture-history interceptor —
+      // run() is a read-only consumer of history.
+      if (convId) {
         try {
-          const history = await this.conversationHistory.getHistory(this._conversationId);
-          messages.push(...history);
+          const assembled = await assemblePrompt(
+            this.conversationHistory,
+            convId,
+            this.name,
+            this.name,
+            this._resolveAssemblerOptions(),
+          );
+          messages.push(...assembled.messages);
         } catch {
-          // If history fetch fails, continue without it
+          // History fetch failure is non-fatal — continue without context.
         }
       }
 
-      // Current user message (always last before the AI call)
       messages.push({ role: 'user', content: message });
 
-      // Store user message in conversation history BEFORE AI call
-      if (this.conversationHistory && this._conversationId) {
-        try {
-          await this.conversationHistory.addUserMessage(
-            this._conversationId,
-            message,
-            this.name
-          );
-        } catch {
-          // If history storage fails, continue without crashing
-        }
-      }
-
-      // ── Build meta-tools ─────────────────────────────────────────────────
-      // Meta-tools (knowledge_search, conversation_search) are agent
-      // infrastructure — they bypass toolsConfig and are ALWAYS injected
-      // when the corresponding feature is configured on this agent.
-      // Regular developer tools continue to be managed by toolsConfig/ToolRegistry.
-      const metaTools: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
-      const metaToolExecutors = new Map<string, (args: Record<string, any>) => Promise<unknown>>();
-
-      const knowledgeTool = this.knowledge?.toTool();
-      if (knowledgeTool) {
-        metaTools.push({
-          type: 'function' as const,
-          function: {
-            name: knowledgeTool.name,
-            description: knowledgeTool.description,
-            parameters: knowledgeTool.parameters as Record<string, unknown>,
+      // Expose a search tool when a conversation is active so the LLM can
+      // retrieve specific past turns beyond the assembled context window.
+      const requestTools: RequestToolDefinition[] = [];
+      if (convId) {
+        const store = this.conversationHistory;
+        requestTools.push({
+          name: 'conversation_search',
+          displayName: 'Conversation Search',
+          description: 'Search past conversation history for specific information, questions, or topics mentioned earlier in this conversation.',
+          category: 'search',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Keywords or phrases to search for in conversation history.' },
+              limit: { type: 'number', description: 'Maximum number of results to return (default: 5).' },
+            },
+            required: ['query'],
+          },
+          execute: async (args: Record<string, unknown>) => {
+            // Pillar 2 invariant: `convId` is closure-captured from run() intentionally.
+            // Do NOT accept `args.conversationId` or any other channel/conversation
+            // identifier from the LLM — doing so would let an adversarial prompt
+            // reach turns from a different conversation. See §1.6 of
+            // development/plan-docs/AGENT_CONFIDENTIALITY_AND_KNOWLEDGE.md.
+            const results = await store.search(convId, String(args.query ?? ''), {
+              limit: typeof args.limit === 'number' ? args.limit : 5,
+            });
+            return {
+              results: results.map(m => ({
+                role: m.participant.kind === 'agent' ? 'assistant' : 'user',
+                content: m.content,
+                timestamp: m.timestamp,
+              })),
+              count: results.length,
+            };
           },
         });
-        metaToolExecutors.set(knowledgeTool.name, knowledgeTool.execute as (args: Record<string, any>) => Promise<unknown>);
       }
 
-      if (this.conversationHistory?.isSearchEnabled && this._conversationId) {
-        const conversationSearchTool = this.conversationHistory.toTool(this._conversationId);
-        metaTools.push({
-          type: 'function' as const,
-          function: {
-            name: conversationSearchTool.name,
-            description: conversationSearchTool.description,
-            parameters: conversationSearchTool.parameters as Record<string, unknown>,
-          },
-        });
-        metaToolExecutors.set(conversationSearchTool.name, conversationSearchTool.execute as (args: Record<string, any>) => Promise<unknown>);
-      }
-
-      // ── First AI call ────────────────────────────────────────────────────
-      // Pass meta-tools explicitly so they are available even when
-      // tools.enabled = false in toolsConfig.
-      let result = await this.toolpack.generate(
+      const result = await this.toolpack.generate(
         {
           messages,
           model: this.model || '',
-          tools: metaTools.length > 0 ? metaTools : undefined,
+          requestTools: requestTools.length > 0 ? requestTools : undefined,
         },
         this.provider
       );
 
-      // ── Meta-tool execution loop ─────────────────────────────────────────
-      // AIClient auto-executes tools from its ToolRegistry, but meta-tools
-      // live outside that registry so we handle their calls here.
-      if (result.tool_calls && result.tool_calls.length > 0) {
-        for (const toolCall of result.tool_calls) {
-          messages.push({
-            role: 'assistant',
-            content: '',
-            tool_calls: [{ id: toolCall.id, type: 'function', function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) } }],
-          } as any);
-
-          const executor = metaToolExecutors.get(toolCall.name);
-          let toolResult: unknown;
-          if (executor) {
-            try {
-              toolResult = await executor(toolCall.arguments);
-            } catch (err) {
-              toolResult = { error: (err as Error).message };
-            }
-          } else {
-            toolResult = { error: `Meta-tool '${toolCall.name}' not found` };
-          }
-
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(toolResult),
-          } as any);
-        }
-
-        // Second AI call — get final answer now that tool results are injected
-        result = await this.toolpack.generate(
-          { messages, model: this.model || '' },
-          this.provider
-        );
-      }
-
-      // ── Persist assistant response ───────────────────────────────────────
-      if (this.conversationHistory && this._conversationId) {
-        try {
-          if (result.content) {
-            await this.conversationHistory.addAssistantMessage(
-              this._conversationId,
-              result.content,
-              this.name
-            );
-          }
-        } catch {
-          // If history storage fails, continue without crashing
-        }
-      }
-
-      // Convert SDK result to AgentResult
       const agentResult: AgentResult = {
         output: result.content || '',
         steps: this.extractSteps(result),
         metadata: result.usage ? { usage: result.usage } : undefined,
       };
 
-      // Fire completion hooks and emit events
       await this.onComplete(agentResult);
       this.emit('agent:complete', agentResult);
 
       return agentResult;
     } catch (error) {
-      // Fire error hooks and emit events
       await this.onError(error as Error);
       this.emit('agent:error', error);
       throw error;
@@ -263,10 +290,25 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   }
 
   /**
-   * Send a message to a named channel.
-   * The channel must be registered with a name in AgentRegistry.
-   * @param channelName The registered name of the target channel
-   * @param message The message to send
+   * Returns extra identity strings (platform user ids, bot ids) that should
+   * be treated as this agent for the purposes of `addressed-only` mode in
+   * `assemblePrompt`.
+   *
+   * The default implementation collects `botUserId` from every attached channel
+   * that exposes it (e.g. `SlackChannel` after `auth.test` resolves). Override
+   * this to add further aliases.
+   */
+  protected getAgentAliases(): string[] {
+    const aliases: string[] = [];
+    for (const channel of this.channels) {
+      const botUserId = (channel as unknown as { botUserId?: string }).botUserId;
+      if (botUserId) aliases.push(botUserId);
+    }
+    return aliases;
+  }
+
+  /**
+   * Send a message to a named channel via the registry.
    */
   protected async sendTo(channelName: string, message: string): Promise<void> {
     if (!this._registry) {
@@ -277,11 +319,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Ask the user a question and pause execution.
-   * Phase 2 implementation: Enqueues question in PendingAsksStore and returns AgentResult.
-   * The answer arrives in the next invokeAgent() call via getPendingAsk().
-   * @param question The question to ask the user
-   * @param options Optional configuration for the ask
-   * @returns AgentResult indicating the agent is waiting for human input
    */
   protected async ask(
     question: string,
@@ -299,7 +336,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       throw new AgentError('No conversationId available - ask() requires a conversation channel');
     }
 
-    // Check if this is a trigger channel (cannot ask humans from trigger channels)
     if (this._isTriggerChannel) {
       throw new AgentError(
         'this.ask() called from a trigger channel (ScheduledChannel). ' +
@@ -307,7 +343,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       );
     }
 
-    // Validate triggering channel is available
     if (!this._triggeringChannel || this._triggeringChannel.trim() === '') {
       throw new AgentError(
         'Cannot use ask() - no triggering channel available. ' +
@@ -315,7 +350,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       );
     }
 
-    // Create pending ask
     const pendingAsk = this._registry.addPendingAsk({
       conversationId: this._conversationId,
       agentName: this.name,
@@ -326,10 +360,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       channelName: this._triggeringChannel,
     });
 
-    // Send question to triggering channel
     await this.sendTo(this._triggeringChannel, question);
 
-    // Return AgentResult indicating we're waiting for human input
     return {
       output: question,
       metadata: {
@@ -341,9 +373,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Get the current pending ask for a conversation.
-   * Returns the first pending ask in the queue, or null if none.
-   * @param conversationId Optional conversation ID (defaults to current conversation)
-   * @returns The pending ask or null
    */
   protected getPendingAsk(conversationId?: string): PendingAsk | null {
     if (!this._registry) {
@@ -358,9 +387,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Resolve a pending ask with an answer.
-   * Marks the ask as answered and dequeues it, then sends the next ask if any.
-   * @param id The ask id
-   * @param answer The human's answer
    */
   protected async resolvePendingAsk(id: string, answer: string): Promise<void> {
     if (!this._registry) {
@@ -371,11 +397,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Evaluate if an answer sufficiently addresses a question.
-   * Uses simpleValidation callback if provided, otherwise uses LLM.
-   * @param question The original question
-   * @param answer The human's answer
-   * @param options Optional configuration
-   * @returns true if the answer is sufficient
    */
   protected async evaluateAnswer(
     question: string,
@@ -384,12 +405,10 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       simpleValidation?: (answer: string) => boolean;
     }
   ): Promise<boolean> {
-    // If simple validation is provided, use it (no LLM call)
     if (options?.simpleValidation) {
       return options.simpleValidation(answer);
     }
 
-    // Otherwise use LLM to evaluate
     const result = await this.run(
       `Evaluate if this answer sufficiently addresses the question.\n\nQuestion: "${question}"\nAnswer: "${answer}"\n\nIs this answer sufficient? Reply with ONLY "yes" or "no".`,
       { workflow: { mode: 'single-shot' } }
@@ -400,35 +419,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Handle a pending ask reply with automatic retry logic.
-   * This helper implements the state machine pattern for human-in-the-loop:
-   * 1. Evaluates if the answer is sufficient
-   * 2. If insufficient and retries remain: re-asks with context preserved
-   * 3. If insufficient and maxRetries exceeded: resolves with '__insufficient__' and returns fallback
-   * 4. If sufficient: resolves the ask and returns the answer for continuing the task
-   *
-   * @param pending The pending ask to handle
-   * @param reply The human's reply
-   * @param onSufficient Callback when answer is sufficient (receives answer, should continue task)
-   * @param onInsufficient Optional callback when max retries exceeded (default: returns skipped result)
-   * @returns AgentResult from either re-asking or continuing the task
-   *
-   * @example
-   * ```ts
-   * async invokeAgent(input: AgentInput): Promise<AgentResult> {
-   *   const pending = this.getPendingAsk();
-   *   if (pending) {
-   *     return this.handlePendingAsk(
-   *       pending,
-   *       input.message ?? '',
-   *       async (answer) => {
-   *         // Continue with the task using the answer
-   *         return this.run(`Continue with: ${answer}`);
-   *       }
-   *     );
-   *   }
-   *   // ... normal execution
-   * }
-   * ```
    */
   protected async handlePendingAsk(
     pending: PendingAsk,
@@ -436,23 +426,18 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     onSufficient: (answer: string) => Promise<AgentResult> | AgentResult,
     onInsufficient?: () => Promise<AgentResult> | AgentResult
   ): Promise<AgentResult> {
-    // Check if answer is sufficient
     const sufficient = await this.evaluateAnswer(pending.question, reply, {
-      simpleValidation: (a) => a.trim().length > 3, // Default: reject empty/one-word
+      simpleValidation: (a) => a.trim().length > 3,
     });
 
     if (sufficient) {
-      // Answer is good - resolve the ask and continue
       await this.resolvePendingAsk(pending.id, reply);
       return onSufficient(reply);
     }
 
-    // Answer is insufficient - check retry limit
     if (pending.retries >= pending.maxRetries) {
-      // Max retries exceeded - resolve with special marker and return fallback
       await this.resolvePendingAsk(pending.id, '__insufficient__');
 
-      // Notify user
       if (this._triggeringChannel) {
         await this.sendTo(
           this._triggeringChannel,
@@ -460,7 +445,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         );
       }
 
-      // Return fallback result
       if (onInsufficient) {
         return onInsufficient();
       }
@@ -471,7 +455,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       };
     }
 
-    // Can retry - increment counter and re-ask
     this._registry?.incrementRetries(pending.id);
 
     return this.ask(
@@ -485,20 +468,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   /**
    * Delegate a task to another agent by name (fire-and-forget).
-   * The target agent will be invoked asynchronously without waiting for the result.
-   *
-   * @param agentName The name of the target agent
-   * @param input Partial input for the agent (conversationId and delegatedBy will be added automatically)
-   * @returns Promise that resolves when the delegation is initiated (not when complete)
-   *
-   * @example
-   * ```ts
-   * // Fire-and-forget delegation
-   * await this.delegate('email-agent', {
-   *   message: 'Send weekly report',
-   *   intent: 'send_email'
-   * });
-   * ```
    */
   protected async delegate(
     agentName: string,
@@ -519,35 +488,13 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
     };
 
-    // Get transport from registry (will use LocalTransport by default)
-    const transport = (this._registry as any)._transport;
-    if (!transport) {
-      throw new AgentError('No transport configured for delegation');
-    }
-
-    // Fire and forget - don't await
-    transport.invoke(agentName, fullInput).catch((error: Error) => {
+    this._registry.invoke(agentName, fullInput).catch((error: Error) => {
       console.error(`[${this.name}] Delegation to ${agentName} failed:`, error.message);
     });
   }
 
   /**
-   * Delegate a task to another agent and wait for the result (synchronous delegation).
-   * The target agent will be invoked and this method will wait for its completion.
-   *
-   * @param agentName The name of the target agent
-   * @param input Partial input for the agent (conversationId and delegatedBy will be added automatically)
-   * @returns The result from the target agent
-   *
-   * @example
-   * ```ts
-   * // Wait for result
-   * const result = await this.delegateAndWait('data-agent', {
-   *   message: 'Generate weekly leads report',
-   *   intent: 'generate_report'
-   * });
-   * console.log('Report:', result.output);
-   * ```
+   * Delegate a task to another agent and wait for the result.
    */
   protected async delegateAndWait(
     agentName: string,
@@ -568,63 +515,200 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
     };
 
-    // Get transport from registry (will use LocalTransport by default)
-    const transport = (this._registry as any)._transport;
-    if (!transport) {
-      throw new AgentError('No transport configured for delegation');
-    }
-
-    return await transport.invoke(agentName, fullInput);
+    return await this._registry.invoke(agentName, fullInput);
   }
 
   // --- Lifecycle hooks (override in subclasses) ---
 
+  async onBeforeRun(_input: AgentInput<TIntent>): Promise<void> {}
+
+  async onStepComplete(_step: WorkflowStep): Promise<void> {}
+
+  async onComplete(_result: AgentResult): Promise<void> {}
+
+  async onError(_error: Error): Promise<void> {}
+
+  // --- Private helpers ---
+
   /**
-   * Called before run() starts.
-   * @param input The input that will be processed
+   * Build the `AssemblerOptions` used for this call to `assemblePrompt`.
+   *
+   * Merges any subclass-provided `assemblerOptions.agentAliases` with platform-bot
+   * identities discovered on configured channels (e.g. `SlackChannel.botUserId`,
+   * `TelegramChannel.botUserId`). Read lazily on each `run()` so that identities
+   * populated asynchronously by each channel's startup self-check are picked up
+   * without a race.
    */
-  async onBeforeRun(_input: AgentInput<TIntent>): Promise<void> {
-    // Override in subclass for custom pre-run logic
+  private _resolveAssemblerOptions(): AssemblerOptions | undefined {
+    const channelAliases = this.channels
+      .map(c => (c as { botUserId?: string }).botUserId)
+      .filter((x): x is string => typeof x === 'string' && x.length > 0);
+
+    const manualAliases = this.assemblerOptions?.agentAliases ?? [];
+
+    if (channelAliases.length === 0 && manualAliases.length === 0) {
+      return this.assemblerOptions;
+    }
+
+    const merged = Array.from(new Set([...manualAliases, ...channelAliases]));
+    return { ...this.assemblerOptions, agentAliases: merged };
   }
 
   /**
-   * Called after each workflow step completes.
-   * Also emits 'agent:step' event.
-   * @param step The completed workflow step
+   * Returns the effective interceptor list for a channel binding. Prepends
+   * `createCaptureInterceptor` automatically so every inbound message and
+   * agent reply is persisted without manual wiring. The `CAPTURE_INTERCEPTOR_MARKER`
+   * check prevents double-registration if the developer already added one.
    */
-  async onStepComplete(_step: WorkflowStep): Promise<void> {
-    // Override in subclass for custom step handling
+  private _getEffectiveInterceptors(): Interceptor[] {
+    const alreadyHasCapture = this.interceptors.some(
+      i => (i as unknown as Record<symbol, unknown>)[CAPTURE_INTERCEPTOR_MARKER] === true
+    );
+    if (alreadyHasCapture) return this.interceptors;
+    return [
+      createCaptureInterceptor({ store: this.conversationHistory }),
+      ...this.interceptors,
+    ];
   }
 
   /**
-   * Called when run() completes successfully.
-   * Also emits 'agent:complete' event.
-   * @param result The final result
+   * Bind a message handler to a channel.
+   * Extracted here so both standalone start() and AgentRegistry can reuse the same logic.
    */
-  async onComplete(_result: AgentResult): Promise<void> {
-    // Override in subclass for custom post-processing
+
+  private _bindChannel(channel: ChannelInterface): void {
+    channel.onMessage(async (input: AgentInput) => {
+      if (!input.conversationId) {
+        console.warn(`[${this.name}] Message received without conversationId — skipping`);
+        return;
+      }
+
+      const releaseLock = await this._acquireConversationLock(input.conversationId);
+      let detachStepUpdates: () => void = () => {};
+
+      try {
+        this._triggeringChannel = channel.name;
+        this._isTriggerChannel = channel.isTriggerChannel;
+        this._conversationId = input.conversationId;
+
+        detachStepUpdates = this._attachWorkflowStepUpdates(channel, input);
+
+        let result: AgentOutput;
+
+        const chain = composeChain(
+          this._getEffectiveInterceptors(),
+          this, channel, this._registry ?? null
+        );
+        const chainResult = await executeChain(chain, input);
+        if (chainResult === null) return;
+        result = { output: chainResult.output, metadata: chainResult.metadata };
+
+        await channel.send({
+          output: result.output,
+          metadata: {
+            ...result.metadata,
+            conversationId: input.conversationId,
+            ...input.context,
+          },
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        console.error(`[${this.name}] Error in agent invocation: ${errorMessage}`);
+        try {
+          await channel.send({
+            output: `Error: ${errorMessage}`,
+            metadata: {
+              conversationId: input.conversationId,
+              error: true,
+              ...input.context,
+            },
+          });
+        } catch (sendError) {
+          console.error(`[${this.name}] Failed to send error to channel: ${sendError}`);
+        }
+      } finally {
+        detachStepUpdates();
+        releaseLock();
+      }
+    });
   }
 
-  /**
-   * Called when run() encounters an error.
-   * Also emits 'agent:error' event.
-   * @param error The error that occurred
-   */
-  async onError(_error: Error): Promise<void> {
-    // Override in subclass for custom error handling
+  private _attachWorkflowStepUpdates(channel: ChannelInterface, input: AgentInput): () => void {
+    // Trigger channels have no human recipient, so skip step-by-step sends.
+    if (channel.isTriggerChannel) {
+      return () => {};
+    }
+
+    const planIds = new Set<string>();
+    const sentStepIds = new Set<string>();
+
+    const onPlanCreated = (plan: any) => {
+      if (plan?.id) {
+        planIds.add(String(plan.id));
+      }
+    };
+
+    const onStepComplete = (step: any, plan: any) => {
+      if (!plan?.id || !planIds.has(String(plan.id))) return;
+      if (!step?.result?.output || typeof step.result.output !== 'string') return;
+      if (plan?.steps?.length && Number(plan.steps.length) <= 1) return;
+
+      const stepId = `${String(plan.id)}:${String(step.id ?? step.number ?? 'unknown')}`;
+      if (sentStepIds.has(stepId)) return;
+      sentStepIds.add(stepId);
+
+      const rawOutput = step.result.output.trim();
+      if (!rawOutput) return;
+
+      const output = rawOutput.length > 3500
+        ? `${rawOutput.slice(0, 3500)}\n... [truncated]`
+        : rawOutput;
+
+      const prefix = `Step ${step.number}: ${step.description || 'Completed'}`;
+
+      void channel.send({
+        output: `${prefix}\n\n${output}`,
+        metadata: {
+          conversationId: input.conversationId,
+          ...input.context,
+        },
+      }).catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[${this.name}] Failed to send workflow step update: ${msg}`);
+      });
+    };
+
+    this.toolpack.on('workflow:plan_created', onPlanCreated);
+    this.toolpack.on('workflow:step_complete', onStepComplete);
+
+    return () => {
+      this.toolpack.off('workflow:plan_created', onPlanCreated);
+      this.toolpack.off('workflow:step_complete', onStepComplete);
+    };
   }
 
-  // --- Helper methods ---
+  private async _acquireConversationLock(conversationId: string): Promise<() => void> {
+    while (this._conversationLocks.has(conversationId)) {
+      try {
+        await this._conversationLocks.get(conversationId);
+      } catch {
+        // Previous lock holder failed — proceed
+      }
+    }
 
-  /**
-   * Extract workflow steps from the SDK result.
-   * This is a placeholder that can be enhanced based on SDK response structure.
-   */
+    let releaseLock!: () => void;
+    const lock = new Promise<void>(resolve => { releaseLock = resolve; });
+    this._conversationLocks.set(conversationId, lock);
+
+    return () => {
+      this._conversationLocks.delete(conversationId);
+      releaseLock();
+    };
+  }
+
   private extractSteps(result: unknown): WorkflowStep[] | undefined {
-    // Attempt to extract steps from various possible result formats
     const r = result as Record<string, unknown>;
 
-    // Check for plan with steps
     if (r.plan && typeof r.plan === 'object') {
       const plan = r.plan as Record<string, unknown>;
       if (Array.isArray(plan.steps)) {
@@ -637,7 +721,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       }
     }
 
-    // Check for direct steps array
     if (Array.isArray(r.steps)) {
       return r.steps as WorkflowStep[];
     }

@@ -113,16 +113,33 @@ export class DiscordChannel extends BaseChannel {
   normalize(incoming: unknown): AgentInput {
     const message = incoming as Record<string, any>;
 
-    const conversationId = message.channelId + (message.thread?.id ? `:${message.thread.id}` : '');
+    // Threads use "channelId:threadId" so thread history is scoped separately
+    // from the parent channel.
+    const rawChannelId = message.channelId as string | undefined;
+    const conversationId = (rawChannelId ?? '') + (message.thread?.id ? `:${message.thread.id}` : '');
+
+    // Discord channel type constants: 1 = DM, 3 = GROUP_DM.
+    const discordChannelType = message.channel?.type as number | undefined;
+    const isDm = discordChannelType === 1 || discordChannelType === 3;
+
+    const authorId = message.author?.id as string | undefined;
+    const authorName = (message.author?.globalName as string | undefined)
+      || (message.author?.username as string | undefined);
 
     return {
       message: message.content,
       conversationId,
       data: message,
+      participant: authorId
+        ? { kind: 'user', id: authorId, displayName: authorName }
+        : undefined,
       context: {
-        userId: message.author?.id,
+        userId: authorId,
         username: message.author?.username,
-        channelId: message.channelId,
+        // 'dm' for DM/group-DM channels so defaultGetScope returns scope: 'dm'.
+        channelType: isDm ? 'dm' : 'channel',
+        channelId: rawChannelId,
+        channelName: message.channel?.name as string | undefined,
         guildId: message.guildId,
         threadId: message.thread?.id,
         messageId: message.id,
