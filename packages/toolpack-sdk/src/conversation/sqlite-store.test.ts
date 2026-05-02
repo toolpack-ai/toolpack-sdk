@@ -28,9 +28,9 @@ describe('SQLiteConversationStore', () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch {}
-    try { if (fs.existsSync(dbPath)) fs.rmSync(dbPath); } catch {}
-    try { if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir); } catch {}
+    try { store.close(); } catch { /* cleanup */ }
+    try { if (fs.existsSync(dbPath)) fs.rmSync(dbPath); } catch { /* cleanup */ }
+    try { if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir); } catch { /* cleanup */ }
   });
 
   describe('append', () => {

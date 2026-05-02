@@ -29,8 +29,8 @@ export class SQLiteConversationStore implements ConversationStore {
     this.db = new Database(dbPath);
 
     if (config.enableWAL !== false) {
-      try { this.db.pragma('journal_mode = WAL'); } catch {}
-      try { this.db.pragma('synchronous = NORMAL'); } catch {}
+      try { this.db.pragma('journal_mode = WAL'); } catch { /* ignore */ }
+      try { this.db.pragma('synchronous = NORMAL'); } catch { /* ignore */ }
     }
 
     this.useFTS = config.useFTS === true;
@@ -230,6 +230,6 @@ export class SQLiteConversationStore implements ConversationStore {
   }
 
   close(): void {
-    try { this.db.close(); } catch {}
+    try { this.db.close(); } catch { /* ignore */ }
   }
 }
