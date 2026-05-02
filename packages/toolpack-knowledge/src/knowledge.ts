@@ -351,7 +351,7 @@ export class Knowledge {
         properties: {
           query: { type: 'string', description: 'Search query to find relevant information' },
           limit: { type: 'number', description: 'Maximum number of results to return (default: 10)' },
-          threshold: { type: 'number', description: 'Minimum similarity threshold 0-1 (default: 0.7)' },
+          threshold: { type: 'number', description: 'Minimum similarity threshold 0-1 (default: 0.3)' },
           filter: { type: 'object', description: 'Optional metadata filters' },
         },
         required: ['query'],
@@ -359,8 +359,9 @@ export class Knowledge {
       execute: async (params: KnowledgeToolParams) => {
         const results = await this.query(params.query, {
           limit: params.limit,
-          threshold: params.threshold,
+          threshold: params.threshold ?? 0.3,
           filter: params.filter,
+          searchType: 'hybrid',
         });
         return results.map(r => ({
           content: r.chunk.content,

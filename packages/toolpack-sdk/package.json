@@ -20,6 +20,10 @@
     "CHANGELOG.md",
     "LICENSE.md"
   ],
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "sideEffects": [
     "./dist/tools/coding-tools/parsers/queries/*.js"
   ],

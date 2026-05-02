@@ -216,13 +216,23 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
             this.name,
             this._resolveAssemblerOptions(),
           );
-          messages.push(...assembled.messages);
+          // The capture interceptor stores the inbound message before calling next(),
+          // so assemblePrompt always returns it as the last item. Exclude it here
+          // to avoid a duplicate — run() adds the raw content below.
+          const lastAssembled = assembled.messages[assembled.messages.length - 1];
+          const historyMessages = lastAssembled?.role === 'user'
+            ? assembled.messages.slice(0, -1)
+            : assembled.messages;
+          messages.push(...historyMessages);
         } catch {
           // History fetch failure is non-fatal — continue without context.
         }
       }
 
-      messages.push({ role: 'user', content: message });
+      // Guard against empty content — Anthropic rejects user messages with empty content.
+      if (message.trim()) {
+        messages.push({ role: 'user', content: message });
+      }
 
       // Expose a search tool when a conversation is active so the LLM can
       // retrieve specific past turns beyond the assembled context window.

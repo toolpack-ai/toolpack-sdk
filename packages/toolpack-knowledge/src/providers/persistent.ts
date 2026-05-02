@@ -19,11 +19,29 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
   private dbPath: string;
 
   constructor(private options: PersistentKnowledgeProviderOptions) {
-    const basePath = options.storagePath || path.join(os.homedir(), '.toolpack', 'knowledge');
-    this.dbPath = path.join(basePath, `${options.namespace}.db`);
-    
+    const home = os.homedir();
+    const fileName = `${options.namespace}.db`;
+
+    let basePath: string;
+    if (options.storagePath) {
+      basePath = options.storagePath;
+    } else {
+      const newBase = path.join(home, '.toolpack', 'db', 'knowledge');
+      const oldBase = path.join(home, '.toolpack', 'knowledge');
+      const newDb = path.join(newBase, fileName);
+      const oldDb = path.join(oldBase, fileName);
+
+      if (fs.existsSync(oldDb) && !fs.existsSync(newDb)) {
+        basePath = oldBase;
+      } else {
+        basePath = newBase;
+      }
+    }
+
+    this.dbPath = path.join(basePath, fileName);
+
     fs.mkdirSync(basePath, { recursive: true });
-    
+
     this.db = new Database(this.dbPath);
     this.db.pragma('journal_mode = WAL');
     

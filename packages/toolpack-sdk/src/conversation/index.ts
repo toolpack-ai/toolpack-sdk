@@ -1,4 +1,4 @@
-export type { Participant } from './participant.js';
+export type { Participant } from './interfaces/participant.js';
 
 export type {
   ConversationScope,
@@ -9,9 +9,14 @@ export type {
   PromptMessage,
   AssembledPrompt,
   ConversationStore,
-} from './conv-types.js';
+} from './types.js';
 
 export {
   InMemoryConversationStore,
   type InMemoryConversationStoreConfig,
-} from './store.js';
+} from './stores/in-memory-store.js';
+
+export {
+  SQLiteConversationStore,
+  type SQLiteConversationStoreConfig,
+} from './stores/sqlite-store.js';

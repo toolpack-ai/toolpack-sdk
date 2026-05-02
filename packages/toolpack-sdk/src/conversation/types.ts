@@ -1,4 +1,4 @@
-import type { Participant } from './participant.js';
+import type { Participant } from './interfaces/participant.js';
 
 /**
  * Coarse scope of a stored message.

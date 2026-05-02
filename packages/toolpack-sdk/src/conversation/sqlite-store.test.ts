@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { InMemoryConversationStore } from './stores/in-memory-store.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { SQLiteConversationStore } from './stores/sqlite-store.js';
 import type { StoredMessage } from './types.js';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 function msg(overrides: Partial<StoredMessage> & { id: string }): StoredMessage {
   return {
@@ -10,29 +13,33 @@ function msg(overrides: Partial<StoredMessage> & { id: string }): StoredMessage 
     timestamp: new Date().toISOString(),
     scope: 'channel',
     ...overrides,
-  };
+  } as StoredMessage;
 }
 
-describe('InMemoryConversationStore', () => {
-  let store: InMemoryConversationStore;
+describe('SQLiteConversationStore', () => {
+  let store: SQLiteConversationStore;
+  let tmpDir: string;
+  let dbPath: string;
 
   beforeEach(() => {
-    store = new InMemoryConversationStore();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-sqlite-'));
+    dbPath = path.join(tmpDir, 'conv.sqlite');
+    store = new SQLiteConversationStore({ dbPath });
+  });
+
+  afterEach(() => {
+    try { store.close(); } catch {}
+    try { if (fs.existsSync(dbPath)) fs.rmSync(dbPath); } catch {}
+    try { if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir); } catch {}
   });
 
   describe('append', () => {
-    it('should add a message', async () => {
-      await store.append(msg({ id: '1', content: 'Hello' }));
-      const messages = await store.get('conv-1');
-      expect(messages).toHaveLength(1);
-      expect(messages[0].content).toBe('Hello');
-    });
-
-    it('should be idempotent on duplicate id', async () => {
+    it('should add a message and be idempotent', async () => {
       await store.append(msg({ id: '1', content: 'Hello' }));
       await store.append(msg({ id: '1', content: 'Hello again' }));
       const messages = await store.get('conv-1');
       expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe('Hello');
     });
 
     it('should maintain ascending timestamp order', async () => {
@@ -131,22 +138,9 @@ describe('InMemoryConversationStore', () => {
     });
   });
 
-  describe('LRU eviction', () => {
-    it('should evict least-recently-used conversation when capacity exceeded', async () => {
-      const smallStore = new InMemoryConversationStore({ maxConversations: 2 });
-      await smallStore.append(msg({ id: '1', conversationId: 'a' }));
-      await smallStore.append(msg({ id: '2', conversationId: 'b' }));
-      await smallStore.get('a');
-      await smallStore.append(msg({ id: '3', conversationId: 'c' }));
-
-      expect(await smallStore.get('a')).toHaveLength(1);
-      expect(await smallStore.get('c')).toHaveLength(1);
-    });
-  });
-
   describe('maxMessagesPerConversation', () => {
     it('should drop oldest messages when cap is exceeded', async () => {
-      const capped = new InMemoryConversationStore({ maxMessagesPerConversation: 3 });
+      const capped = new SQLiteConversationStore({ dbPath: path.join(tmpDir, 'cap.sqlite'), maxMessagesPerConversation: 3 });
       for (let i = 1; i <= 5; i++) {
         await capped.append(msg({
           id: String(i),
@@ -158,21 +152,7 @@ describe('InMemoryConversationStore', () => {
       expect(messages).toHaveLength(3);
       expect(messages[0].content).toBe('msg 3');
       expect(messages[2].content).toBe('msg 5');
-    });
-  });
-
-  describe('isolation between conversations', () => {
-    it('should keep conversations separate', async () => {
-      await store.append(msg({ id: '1', conversationId: 'conv-a', content: 'A' }));
-      await store.append(msg({ id: '2', conversationId: 'conv-b', content: 'B' }));
-
-      const a = await store.get('conv-a');
-      const b = await store.get('conv-b');
-
-      expect(a).toHaveLength(1);
-      expect(b).toHaveLength(1);
-      expect(a[0].content).toBe('A');
-      expect(b[0].content).toBe('B');
+      capped.close();
     });
   });
 });

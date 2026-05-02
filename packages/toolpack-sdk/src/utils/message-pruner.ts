@@ -20,8 +20,10 @@ export interface PruneResult {
 
 /**
  * Remove oldest messages to reclaim tokens
- * 
- * Strategy: Remove oldest user/assistant pairs first, keeping system messages always
+ *
+ * Strategy: Remove oldest user/assistant pairs first, keeping system messages always.
+ * When an assistant message with tool_calls is removed, its paired tool result messages
+ * are also removed to prevent orphaned tool results that providers reject.
  */
 export function pruneMessages(
     messages: Message[],
@@ -32,16 +34,16 @@ export function pruneMessages(
     const removedMessages: Message[] = [];
     let tokensReclaimed = 0;
 
-    // Identify which messages are safe to remove
+    // Identify which messages are safe to remove (excludes system and tool messages)
     const prunableMessages: Array<{ index: number; message: Message }> = [];
-    
+
     messages.forEach((msg, idx) => {
         // Keep system messages if requested
         if (retainSystemMessages && msg.role === 'system') {
             return;
         }
-        
-        // Keep tool results as they're linked to assistant messages
+
+        // Tool result messages are handled together with their paired assistant messages
         if (msg.role === 'tool') {
             return;
         }
@@ -53,15 +55,26 @@ export function pruneMessages(
     for (const { message } of prunableMessages) {
         if (tokensReclaimed >= targetTokens) break;
 
-        // Estimate tokens in this message
         const msgTokens = estimateMessageTokens(message);
         tokensReclaimed += msgTokens;
         removedMessages.push(message);
+
+        // If this assistant message made tool calls, also remove the paired tool results
+        // to avoid leaving orphaned tool result messages that providers reject.
+        if (message.role === 'assistant' && message.tool_calls?.length) {
+            const callIds = new Set(message.tool_calls.map(tc => tc.id));
+            for (const msg of messages) {
+                if (msg.role === 'tool' && msg.tool_call_id && callIds.has(msg.tool_call_id)) {
+                    tokensReclaimed += estimateMessageTokens(msg);
+                    removedMessages.push(msg);
+                }
+            }
+        }
     }
 
-    // Remove messages from history (in reverse index order to maintain indices)
-    const removeIndices = new Set(removedMessages.map(msg => messages.indexOf(msg)));
-    const filteredMessages = messages.filter((_, idx) => !removeIndices.has(idx));
+    // Remove messages from history
+    const removeSet = new Set(removedMessages);
+    const filteredMessages = messages.filter(msg => !removeSet.has(msg));
 
     return {
         removed: removedMessages.length,

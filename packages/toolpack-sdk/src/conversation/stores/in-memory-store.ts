@@ -1,42 +1,5 @@
-import type { ConversationStore, StoredMessage, GetOptions, ConversationSearchOptions } from './conv-types.js';
-
-class ConversationLRU {
-  private readonly capacity: number;
-  private readonly map: Map<string, StoredMessage[]>;
-
-  constructor(capacity: number) {
-    this.capacity = capacity;
-    this.map = new Map();
-  }
-
-  get(key: string): StoredMessage[] | undefined {
-    const value = this.map.get(key);
-    if (value === undefined) return undefined;
-    this.map.delete(key);
-    this.map.set(key, value);
-    return value;
-  }
-
-  set(key: string, value: StoredMessage[]): void {
-    if (this.map.has(key)) {
-      this.map.delete(key);
-    } else if (this.map.size >= this.capacity) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) {
-        this.map.delete(oldest);
-      }
-    }
-    this.map.set(key, value);
-  }
-
-  has(key: string): boolean {
-    return this.map.has(key);
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-}
+import type { ConversationStore, StoredMessage, GetOptions, ConversationSearchOptions } from '../types.js';
+import { LRUCache } from '../../utils/lru.js';
 
 export interface InMemoryConversationStoreConfig {
   /** Maximum conversations to keep in memory. Default: 500. */
@@ -56,11 +19,11 @@ export interface InMemoryConversationStoreConfig {
  * `ConversationStore` against a shared database.
  */
 export class InMemoryConversationStore implements ConversationStore {
-  private readonly lru: ConversationLRU;
+  private readonly lru: LRUCache<string, StoredMessage[]>;
   private readonly maxMessagesPerConversation: number;
 
   constructor(config: InMemoryConversationStoreConfig = {}) {
-    this.lru = new ConversationLRU(config.maxConversations ?? 500);
+    this.lru = new LRUCache<string, StoredMessage[]>(config.maxConversations ?? 500);
     this.maxMessagesPerConversation = config.maxMessagesPerConversation ?? 500;
   }
 
