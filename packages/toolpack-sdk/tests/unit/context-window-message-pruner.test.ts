@@ -56,7 +56,7 @@ describe('Message Pruner Utilities', () => {
             expect(typeof hasSystemInFiltered).toBe('boolean');
         });
 
-        it('should not remove tool messages', () => {
+        it('should not leave orphaned tool messages when their parent assistant message is pruned', () => {
             const messages: Message[] = [
                 { role: 'assistant', content: 'I will search', tool_calls: [{ id: '1', type: 'function', function: { name: 'search', arguments: '{}' } }] },
                 { role: 'tool', content: 'Search result', tool_call_id: '1' },
@@ -64,9 +64,19 @@ describe('Message Pruner Utilities', () => {
             ];
 
             const result = pruneMessages(messages, 50, true);
-            const toolMessagesRemoved = result.pruneInfo.removedMessages.filter(m => m.role === 'tool');
+            const removed = new Set(result.pruneInfo.removedMessages);
+            const remaining = messages.filter(m => !removed.has(m));
 
-            expect(toolMessagesRemoved).toHaveLength(0);
+            // Every tool result in the remaining messages must have a paired assistant message with tool_calls
+            const remainingAssistantCallIds = new Set(
+                remaining
+                    .filter(m => m.role === 'assistant' && m.tool_calls?.length)
+                    .flatMap(m => m.tool_calls!.map(tc => tc.id))
+            );
+            const orphanedToolMessages = remaining.filter(
+                m => m.role === 'tool' && m.tool_call_id && !remainingAssistantCallIds.has(m.tool_call_id)
+            );
+            expect(orphanedToolMessages).toHaveLength(0);
         });
 
         it('should handle empty message list', () => {

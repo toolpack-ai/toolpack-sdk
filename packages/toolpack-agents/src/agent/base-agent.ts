@@ -216,11 +216,20 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
             this.name,
             this._resolveAssemblerOptions(),
           );
-          // The capture interceptor stores the inbound message before calling next(),
-          // so assemblePrompt always returns it as the last item. Exclude it here
-          // to avoid a duplicate — run() adds the raw content below.
+          // When a channel's capture interceptor stores the inbound message before
+          // calling next(), assemblePrompt includes it as the last item. Detect
+          // that duplicate by checking whether the last assembled user message's
+          // content matches the current message (the assembler prefixes it with
+          // "DisplayName: ", so we check endsWith). Skip it here — run() pushes
+          // the raw content below.
           const lastAssembled = assembled.messages[assembled.messages.length - 1];
-          const historyMessages = lastAssembled?.role === 'user'
+          const trimmed = message.trim();
+          const isDuplicate =
+            trimmed !== '' &&
+            lastAssembled?.role === 'user' &&
+            typeof lastAssembled.content === 'string' &&
+            (lastAssembled.content === trimmed || lastAssembled.content.endsWith(`: ${trimmed}`));
+          const historyMessages = isDuplicate
             ? assembled.messages.slice(0, -1)
             : assembled.messages;
           messages.push(...historyMessages);
