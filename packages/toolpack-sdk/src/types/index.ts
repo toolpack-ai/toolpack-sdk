@@ -124,6 +124,13 @@ export interface CompletionRequest {
     signal?: AbortSignal;
     /** Multimodal media handling options */
     mediaOptions?: MediaOptions;
+    /**
+     * Per-request hard cap on tool-call rounds.
+     * When set, overrides ToolsConfig.maxToolRounds and bypasses the query
+     * classifier adjustment for this specific request.
+     * Useful for agents that should only ever make one tool call (e.g. routers).
+     */
+    maxToolRounds?: number;
 }
 
 export interface Usage {

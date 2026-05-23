@@ -184,9 +184,8 @@ class DigestAgent extends BaseAgent {
 
 const scheduledChannel = new ScheduledChannel({
   name: 'daily-trigger',
-  cron: '0 8 * * 1-5',                            // 8am Monday–Friday
+  cron: '0 8 * * 1-5',  // 8am Monday–Friday
   message: 'Generate the daily tech digest',
-  notify: 'webhook:https://hooks.example.com/ack', // acknowledge trigger
 });
 
 const slackDelivery = new SlackChannel({

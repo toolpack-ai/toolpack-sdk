@@ -7,6 +7,9 @@ import { createCaptureInterceptor, CAPTURE_INTERCEPTOR_MARKER } from '../interce
 import { assemblePrompt } from '../history/assembler.js';
 import type { AgentInput, AgentResult, AgentOutput, AgentRunOptions, WorkflowStep, IAgentRegistry, PendingAsk, ChannelInterface, BaseAgentOptions } from './types.js';
 import { AgentError } from './errors.js';
+import type { AgentMindConfig } from '../mind/types.js';
+import type { AgentMind } from '../mind/agent-mind.js';
+import type { AgentDelegationConfig } from './types.js';
 
 /**
  * Abstract base class for all agents.
@@ -41,6 +44,21 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   // --- Optional behavior properties ---
   /** Workflow configuration merged on top of mode config */
   workflow?: Record<string, unknown>;
+
+  /**
+   * Persistent cognitive layer. When set, the agent gains goals, beliefs, and
+   * reflections that survive across runs. Requires @toolpack-sdk/knowledge.
+   * Set to undefined (default) to opt out — zero cost when not configured.
+   */
+  mind?: AgentMindConfig;
+
+  /**
+   * AI-driven agent delegation. When enabled, a `delegate_to_agent` tool is
+   * injected into every run() call so the LLM can hand tasks to peer agents.
+   * Only active when the agent is registered in an AgentRegistry with peers.
+   * Set to undefined (default) to opt out — zero cost when not configured.
+   */
+  delegation?: AgentDelegationConfig;
 
   /**
    * Conversation history store. Auto-initialised to `InMemoryConversationStore` in the
@@ -88,6 +106,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   private readonly _initConfig?: { apiKey: string; provider?: string; model?: string };
   private _ownedToolpack = false;
   private readonly _conversationLocks = new Map<string, Promise<void>>();
+  private _mind?: AgentMind;
+  private _mindInitPromise?: Promise<void>;
 
   constructor(options: BaseAgentOptions) {
     super();
@@ -118,6 +138,26 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       model: this._initConfig.model,
     });
     this._ownedToolpack = true;
+  }
+
+  /**
+   * Lazily initialise the AgentMind instance the first time it is needed.
+   * No-op when `this.mind` is not configured.
+   * Uses a shared promise to prevent duplicate initialisation under concurrent run() calls.
+   */
+  async _ensureMind(): Promise<void> {
+    if (this._mind !== undefined || !this.mind) return;
+    if (!this._mindInitPromise) {
+      this._mindInitPromise = (async () => {
+        const { AgentMind } = await import('../mind/agent-mind.js');
+        this._mind = await AgentMind.create(this.name, this.mind!);
+      })().catch(err => {
+        // Clear so the next call retries
+        this._mindInitPromise = undefined;
+        throw err;
+      });
+    }
+    await this._mindInitPromise;
   }
 
   /**
@@ -187,6 +227,20 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     await this.onBeforeRun({ message, conversationId: convId } as AgentInput<TIntent>);
     this.emit('agent:start', { message });
 
+    // Initialise mind and create a per-run context (draft buffer + tools + header).
+    // Done before the try so the flush closure is always accessible in catch.
+    await this._ensureMind();
+    let mindFlush: ((isError: boolean) => Promise<void>) | undefined;
+    let mindHeader = '';
+    let mindTools: RequestToolDefinition[] = [];
+
+    if (this._mind) {
+      const runCtx = await this._mind.createRunContext();
+      mindHeader = runCtx.mindHeader;
+      mindTools = runCtx.tools;
+      mindFlush = runCtx.flush;
+    }
+
     try {
       // Register-then-activate. registerMode is idempotent for the same name,
       // so calling it on every run is cheap and avoids requiring callers to
@@ -202,6 +256,14 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // client (see injectModeSystemPrompt). BaseAgent no longer pushes its
       // own system message.
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+
+      // If the mind produced a header, prepend it as a system message.
+      // injectModeSystemPrompt() will prepend the mode system prompt to the
+      // first system message in the array, so the final order is:
+      // [mode system prompt]\n\n[mind header]
+      if (mindHeader) {
+        messages.push({ role: 'system', content: mindHeader });
+      }
 
       // Load history via assemblePrompt: proper multi-participant projection,
       // addressed-only mode, token budget, and rolling summary support.
@@ -245,7 +307,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
       // Expose a search tool when a conversation is active so the LLM can
       // retrieve specific past turns beyond the assembled context window.
-      const requestTools: RequestToolDefinition[] = [];
+      const requestTools: RequestToolDefinition[] = [...mindTools];
       if (convId) {
         const store = this.conversationHistory;
         requestTools.push({
@@ -282,11 +344,105 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         });
       }
 
+      // Inject agent delegation tool when enabled and peer agents exist.
+      if (this.delegation?.enabled && this._registry) {
+        const allowed = this.delegation.allowedAgents;
+        const peers = this._registry.getAllAgents().filter(a =>
+          a.name !== this.name && (allowed === undefined || allowed.includes(a.name)),
+        );
+        if (peers.length > 0) {
+          const peerNames = peers.map(a => a.name);
+          const peerDescriptions = peers.map(a => `- ${a.name}: ${a.description}`).join('\n');
+
+          if (this.delegation.mode === 'forget') {
+            // Fire-and-forget: sub-agent runs independently and handles its own
+            // delivery via tools. Returns immediately so the LLM has no result
+            // to relay and naturally outputs an empty string.
+            requestTools.push({
+              name: 'delegate_and_forget',
+              displayName: 'Delegate and Forget',
+              description:
+                'Hand off the current task to a peer agent. The agent will handle ' +
+                'its own delivery (e.g. posting to Slack or GitHub) — you do not need ' +
+                'to relay its response. Call this ONCE, then output an empty string.\n\n' +
+                `Available agents:\n${peerDescriptions}`,
+              category: 'agent',
+              parameters: {
+                type: 'object',
+                properties: {
+                  agent: {
+                    type: 'string',
+                    enum: peerNames,
+                    description: 'Name of the agent to delegate to.',
+                  },
+                  message: {
+                    type: 'string',
+                    description: 'The task or message to pass to the agent.',
+                  },
+                },
+                required: ['agent', 'message'],
+              },
+              execute: async (args: Record<string, unknown>) => {
+                const targetName = String(args.agent);
+                const targetMessage = String(args.message ?? '');
+                this._registry!.invoke(targetName, {
+                  message: targetMessage,
+                  conversationId: convId,
+                  context: { delegatedBy: this.name },
+                }).catch(err => {
+                  console.error(`[${this.name}] delegate_and_forget to ${targetName} failed:`, err);
+                });
+                return { status: 'delegated', agent: targetName };
+              },
+            });
+          } else {
+            // Default await mode: calls the sub-agent, waits for its result,
+            // and returns it to the LLM for relaying or further processing.
+            requestTools.push({
+              name: 'delegate_to_agent',
+              displayName: 'Delegate to Agent',
+              description:
+                'Hand off the current task to a peer agent and return its result. ' +
+                'Use when the task falls outside your own specialisation.\n\n' +
+                `Available agents:\n${peerDescriptions}`,
+              category: 'agent',
+              parameters: {
+                type: 'object',
+                properties: {
+                  agent: {
+                    type: 'string',
+                    enum: peerNames,
+                    description: 'Name of the agent to delegate to.',
+                  },
+                  message: {
+                    type: 'string',
+                    description: 'The task or message to pass to the agent.',
+                  },
+                },
+                required: ['agent', 'message'],
+              },
+              execute: async (args: Record<string, unknown>) => {
+                const targetName = String(args.agent);
+                const targetMessage = String(args.message ?? '');
+                return this._registry!.invoke(targetName, {
+                  message: targetMessage,
+                  conversationId: convId,
+                  context: { delegatedBy: this.name },
+                });
+              },
+            });
+          }
+        }
+      }
+
       const result = await this.toolpack.generate(
         {
           messages,
           model: this.model || '',
           requestTools: requestTools.length > 0 ? requestTools : undefined,
+          // Forward the per-run maxToolRounds cap (if any) so AIClient respects it
+          // as a hard ceiling, bypassing the query-classifier adjustment.
+          maxToolRounds: _options?.maxToolRounds,
         },
         this.provider
       );
@@ -298,10 +454,25 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       };
 
       await this.onComplete(agentResult);
+
+      // Commit the mind draft buffer on clean completion.
+      // Propagates flush errors to the caller per spec.
+      if (mindFlush) {
+        await mindFlush(false);
+      }
+
       this.emit('agent:complete', agentResult);
 
       return agentResult;
     } catch (error) {
+      // Flush beliefs/reflections with error:true; drop goal writes.
+      // We catch flush errors here so the original error is always propagated.
+      if (mindFlush) {
+        mindFlush(true).catch(flushErr => {
+          console.error(`[${this.name ?? 'agent'}][AgentMind] Draft buffer flush on error failed:`, flushErr);
+        });
+      }
+
       await this.onError(error as Error);
       this.emit('agent:error', error);
       throw error;
@@ -488,30 +659,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   /**
    * Delegate a task to another agent by name (fire-and-forget).
    */
-  protected async delegate(
-    agentName: string,
-    input: Partial<AgentInput>
-  ): Promise<void> {
-    if (!this._registry) {
-      throw new AgentError('Agent not registered - cannot use delegate()');
-    }
-
-    const fullInput: AgentInput = {
-      message: input.message,
-      intent: input.intent,
-      data: input.data,
-      context: {
-        ...(input.context || {}),
-        delegatedBy: this.name,
-      },
-      conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
-    };
-
-    this._registry.invoke(agentName, fullInput).catch((error: Error) => {
-      console.error(`[${this.name}] Delegation to ${agentName} failed:`, error.message);
-    });
-  }
-
   /**
    * Delegate a task to another agent and wait for the result.
    */
@@ -540,8 +687,6 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   // --- Lifecycle hooks (override in subclasses) ---
 
   async onBeforeRun(_input: AgentInput<TIntent>): Promise<void> {}
-
-  async onStepComplete(_step: WorkflowStep): Promise<void> {}
 
   async onComplete(_result: AgentResult): Promise<void> {}
 
@@ -603,14 +748,10 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       }
 
       const releaseLock = await this._acquireConversationLock(input.conversationId);
-      let detachStepUpdates: () => void = () => {};
-
       try {
         this._triggeringChannel = channel.name;
         this._isTriggerChannel = channel.isTriggerChannel;
         this._conversationId = input.conversationId;
-
-        detachStepUpdates = this._attachWorkflowStepUpdates(channel, input);
 
         const chain = composeChain(
           this._getEffectiveInterceptors(),
@@ -644,64 +785,9 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
           console.error(`[${this.name}] Failed to send error to channel: ${sendError}`);
         }
       } finally {
-        detachStepUpdates();
         releaseLock();
       }
     });
-  }
-
-  private _attachWorkflowStepUpdates(channel: ChannelInterface, input: AgentInput): () => void {
-    // Trigger channels have no human recipient, so skip step-by-step sends.
-    if (channel.isTriggerChannel) {
-      return () => {};
-    }
-
-    const planIds = new Set<string>();
-    const sentStepIds = new Set<string>();
-
-    const onPlanCreated = (plan: any) => {
-      if (plan?.id) {
-        planIds.add(String(plan.id));
-      }
-    };
-
-    const onStepComplete = (step: any, plan: any) => {
-      if (!plan?.id || !planIds.has(String(plan.id))) return;
-      if (!step?.result?.output || typeof step.result.output !== 'string') return;
-      if (plan?.steps?.length && Number(plan.steps.length) <= 1) return;
-
-      const stepId = `${String(plan.id)}:${String(step.id ?? step.number ?? 'unknown')}`;
-      if (sentStepIds.has(stepId)) return;
-      sentStepIds.add(stepId);
-
-      const rawOutput = step.result.output.trim();
-      if (!rawOutput) return;
-
-      const output = rawOutput.length > 3500
-        ? `${rawOutput.slice(0, 3500)}\n... [truncated]`
-        : rawOutput;
-
-      const prefix = `Step ${step.number}: ${step.description || 'Completed'}`;
-
-      void channel.send({
-        output: `${prefix}\n\n${output}`,
-        metadata: {
-          conversationId: input.conversationId,
-          ...input.context,
-        },
-      }).catch(err => {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[${this.name}] Failed to send workflow step update: ${msg}`);
-      });
-    };
-
-    this.toolpack.on('workflow:plan_created', onPlanCreated);
-    this.toolpack.on('workflow:step_complete', onStepComplete);
-
-    return () => {
-      this.toolpack.off('workflow:plan_created', onPlanCreated);
-      this.toolpack.off('workflow:step_complete', onStepComplete);
-    };
   }
 
   private async _acquireConversationLock(conversationId: string): Promise<() => void> {

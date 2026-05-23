@@ -35,5 +35,8 @@ export type { OpenAIEmbedderOptions } from './embedders/openai.js';
 export { OpenRouterEmbedder } from './embedders/openrouter.js';
 export type { OpenRouterEmbedderOptions } from './embedders/openrouter.js';
 
+export { VertexAIEmbedder } from './embedders/vertexai.js';
+export type { VertexAIEmbedderOptions } from './embedders/vertexai.js';
+
 // Utility functions
 export { keywordSearch, combineScores } from './utils/keyword.js';

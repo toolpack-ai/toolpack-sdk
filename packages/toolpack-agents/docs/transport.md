@@ -5,6 +5,8 @@ The transport layer routes agent-to-agent invocations. It sits between `AgentReg
 ## Contents
 
 - [AgentTransport interface](#agenttransport-interface)
+- [AgentRegistryTransportOptions](#agentregistrytransportoptions)
+- [AgentDelegationConfig](#agentdelegationconfig)
 - [LocalTransport](#localtransport)
 - [JsonRpcTransport](#jsonrpctransport)
 - [delegate() — fire-and-forget](#delegate--fire-and-forget)
@@ -23,6 +25,112 @@ interface AgentTransport {
 ```
 
 The registry uses the transport to route `invoke()` calls. The default transport is `LocalTransport`.
+
+---
+
+## AgentRegistryTransportOptions
+
+The options object accepted by the `AgentRegistry` constructor's second argument. Lets you swap out the default `LocalTransport` for a custom or cross-process transport.
+
+```typescript
+import type { AgentRegistryTransportOptions } from '@toolpack-sdk/agents';
+
+interface AgentRegistryTransportOptions {
+  /** Transport implementation for cross-process communication. Defaults to LocalTransport. */
+  transport?: AgentTransport;
+}
+```
+
+```typescript
+import { AgentRegistry, JsonRpcTransport } from '@toolpack-sdk/agents';
+import type { AgentRegistryTransportOptions } from '@toolpack-sdk/agents';
+
+const options: AgentRegistryTransportOptions = {
+  transport: new JsonRpcTransport({ endpoint: 'http://agent-server:8080/rpc' }),
+};
+
+const registry = new AgentRegistry([agentA, agentB], options);
+```
+
+When `transport` is omitted, `AgentRegistry` creates a `LocalTransport(this)` automatically.
+
+---
+
+## AgentDelegationConfig
+
+Configuration for AI-driven agent delegation. When set on `BaseAgent.delegation`, a tool (`delegate_to_agent` or `delegate_and_forget`) is injected into every `run()` call so the LLM can autonomously decide which peer agent to delegate the task to, without the orchestrator needing to hard-code routing logic in `invokeAgent()`.
+
+```typescript
+import type { AgentDelegationConfig } from '@toolpack-sdk/agents';
+
+interface AgentDelegationConfig {
+  /** Must be true for the delegation tool to be injected. */
+  enabled: boolean;
+
+  /**
+   * Restrict which peer agents appear in the tool's enum.
+   * When omitted, all agents registered in the registry are available.
+   */
+  allowedAgents?: string[];
+
+  /**
+   * Delegation mode.
+   *
+   * 'await' (default) — injects delegate_to_agent: calls the sub-agent,
+   * waits for its result, and returns it to the LLM. Use when the orchestrator
+   * needs to relay or act on the sub-agent's response.
+   *
+   * 'forget' — injects delegate_and_forget: fires the sub-agent without
+   * waiting for its result and returns { status: 'delegated' } immediately.
+   * Use when sub-agents handle their own delivery (e.g. posting to Slack or
+   * GitHub directly) and the orchestrator has nothing to relay.
+   */
+  mode?: 'await' | 'forget';
+}
+```
+
+### Example — orchestrator that routes to specialist agents
+
+```typescript
+import { BaseAgent } from '@toolpack-sdk/agents';
+
+class OrchestratorAgent extends BaseAgent {
+  name = 'orchestrator';
+  description = 'Routes tasks to the right specialist agent.';
+
+  delegation = {
+    enabled: true,
+    allowedAgents: ['research-agent', 'data-agent', 'support-agent'],
+    mode: 'await' as const,
+  };
+
+  async invokeAgent(input: AgentInput): Promise<AgentResult> {
+    // The LLM sees delegate_to_agent in its tool list and chooses which
+    // agent to call — no routing code required here.
+    return this.run(input.message ?? '');
+  }
+}
+```
+
+### Example — fire-and-forget dispatcher
+
+```typescript
+class DispatcherAgent extends BaseAgent {
+  name = 'dispatcher';
+  description = 'Dispatches tasks to background worker agents.';
+
+  delegation = {
+    enabled: true,
+    mode: 'forget' as const,   // workers post results themselves
+  };
+
+  async invokeAgent(input: AgentInput): Promise<AgentResult> {
+    return this.run(input.message ?? '');
+  }
+}
+```
+
+`AgentDelegationConfig` is distinct from calling `this.delegate()` / `this.delegateAndWait()` manually — those are imperative calls you write in `invokeAgent()`. `AgentDelegationConfig` lets the **LLM** make the delegation decision at inference time.
 
 ---
 

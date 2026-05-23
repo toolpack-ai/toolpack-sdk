@@ -66,6 +66,7 @@ export {
     gitToolsProject,
     gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool,
     gitBlameTool, gitBranchListTool, gitBranchCreateTool, gitCheckoutTool,
+    gitCloneTool,
 } from './git-tools/index.js';
 
 // diff-tools
@@ -94,6 +95,14 @@ export {
     k8sListDeploymentsTool, k8sGetConfigMapTool,
     k8sSwitchContextTool, k8sGetNamespacesTool, k8sWaitForDeploymentTool,
 } from './k8s-tools/index.js';
+
+// slack-tools
+export {
+    slackToolsProject,
+    slackChatPostMessageTool, slackChatPostEphemeralTool,
+    slackReactionsAddTool, slackConversationsHistoryTool,
+    slackAuthTestTool,
+} from './slack-tools/index.js';
 
 export{ McpToolManager,createMcpToolProject,disconnectMcpToolProject } from './mcp-tools/index.js';
 export type { McpToolsConfig, McpServerConfig } from './mcp-tools/index.js';

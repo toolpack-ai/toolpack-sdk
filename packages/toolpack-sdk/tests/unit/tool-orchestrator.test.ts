@@ -77,13 +77,15 @@ describe('ToolOrchestrator', () => {
             expect(orchestrator.shouldUseParallelExecution(toolCalls)).toBe(true);
         });
 
-        it('should return false for dependent tools', () => {
+        it('should return true for dependent tools with 2+ calls (orchestrator resolves deps internally)', () => {
+            // shouldUseParallelExecution returns true for any ≥2 tools — executeWithDependencies
+            // handles the dependency graph and runs whatever subset can be parallelised.
             const toolCalls: ToolCallResult[] = [
                 { id: '1', name: 'fs.read_file', arguments: { path: '/test.txt' } },
                 { id: '2', name: 'fs.write_file', arguments: { path: '/test.txt', content: 'new' } },
             ];
 
-            expect(orchestrator.shouldUseParallelExecution(toolCalls)).toBe(false);
+            expect(orchestrator.shouldUseParallelExecution(toolCalls)).toBe(true);
         });
     });
 

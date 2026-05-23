@@ -670,13 +670,19 @@ export class AIClient extends EventEmitter {
 
             // Auto-execute tool call loop
             if (this.toolsConfig.autoExecute && (this.toolRegistry || requestToolMap.size > 0)) {
-                // Classify query to adjust maxToolRounds
+                // Per-request maxToolRounds (e.g. set by single-shot routers) is a hard cap
+                // that bypasses the query-classifier adjustment entirely.
+                // When not set, classify the query and let the classifier scale the global default.
                 const userMessage = extractLastUserText(enrichedRequest.messages);
                 const classification = this.queryClassifier.classify(userMessage);
                 const baseMaxRounds = this.toolsConfig.maxToolRounds;
-                const maxRounds = this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
+                const maxRounds = enrichedRequest.maxToolRounds !== undefined
+                    ? enrichedRequest.maxToolRounds
+                    : this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
 
-                if (maxRounds !== baseMaxRounds) {
+                if (enrichedRequest.maxToolRounds !== undefined) {
+                    logDebug(`[AIClient][${requestId}] maxToolRounds overridden per-request: ${maxRounds} (classifier bypassed)`);
+                } else if (maxRounds !== baseMaxRounds) {
                     logInfo(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
                 } else {
                     logDebug(`[AIClient][${requestId}] Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), keeping maxToolRounds: ${maxRounds}`);
@@ -745,35 +751,20 @@ export class AIClient extends EventEmitter {
                         );
 
                         // Add results in original order with budget tracking
-                        let parallelBudgetExceeded = false;
                         for (const toolCall of toolCallsToExecute) {
-                            if (parallelBudgetExceeded) {
-                                messages.push({
-                                    role: 'tool',
-                                    tool_call_id: toolCall.id,
-                                    content: '[Skipped: tool output budget exceeded for this round]',
-                                });
-                                continue;
-                            }
-
                             const result = toolResults.get(toolCall.id)!;
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                            const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
 
-                            // Check budget before adding
+                            let content: string;
                             if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
-                                messages.push({
-                                    role: 'tool',
-                                    tool_call_id: toolCall.id,
-                                    content: '[Skipped: tool output budget exceeded for this round]',
-                                });
-                                parallelBudgetExceeded = true;
-                                continue;
+                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
+                                content = this.budgetTruncate(resultStr, remaining);
+                            } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
+                                content = `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`;
+                            } else {
+                                content = resultStr;
                             }
-
-                            const content = typeof result === 'string' && result.length > this.toolResultMaxChars
-                                ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
-                                : result;
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
                             roundOutputSize += contentStr.length;
@@ -788,35 +779,20 @@ export class AIClient extends EventEmitter {
                     } else {
                         logInfo(`[AIClient][${requestId}] Using sequential execution for ${toolCallsToExecute.length} tools`);
                         // Sequential execution with budget tracking
-                        let seqBudgetExceeded = false;
                         for (const toolCall of toolCallsToExecute) {
-                            if (seqBudgetExceeded) {
-                                messages.push({
-                                    role: 'tool',
-                                    tool_call_id: toolCall.id,
-                                    content: '[Skipped: tool output budget exceeded for this round]',
-                                });
-                                continue;
-                            }
-
                             const result = await this.executeTool(toolCall, requestToolMap);
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                            const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
 
-                            // Check budget before adding
+                            let content: string;
                             if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
-                                messages.push({
-                                    role: 'tool',
-                                    tool_call_id: toolCall.id,
-                                    content: '[Skipped: tool output budget exceeded for this round]',
-                                });
-                                seqBudgetExceeded = true;
-                                continue;
+                                logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
+                                content = this.budgetTruncate(resultStr, remaining);
+                            } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
+                                content = `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`;
+                            } else {
+                                content = resultStr;
                             }
-
-                            const content = typeof result === 'string' && result.length > this.toolResultMaxChars
-                                ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
-                                : result;
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
                             roundOutputSize += contentStr.length;
@@ -924,13 +900,18 @@ export class AIClient extends EventEmitter {
             const messages = [...enrichedRequest.messages];
             let rounds = 0;
 
-            // Classify query to adjust maxToolRounds (same as generate())
+            // Classify query to adjust maxToolRounds (same as generate()).
+            // Per-request maxToolRounds is a hard cap that bypasses classifier adjustment.
             const userMessage = extractLastUserText(enrichedRequest.messages);
             const classification = this.queryClassifier.classify(userMessage);
             const baseMaxRounds = this.toolsConfig.maxToolRounds;
-            const maxRounds = this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
+            const maxRounds = enrichedRequest.maxToolRounds !== undefined
+                ? enrichedRequest.maxToolRounds
+                : this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
 
-            if (maxRounds !== baseMaxRounds) {
+            if (enrichedRequest.maxToolRounds !== undefined) {
+                logDebug(`[AIClient][${requestId}] stream() maxToolRounds overridden per-request: ${maxRounds} (classifier bypassed)`);
+            } else if (maxRounds !== baseMaxRounds) {
                 logInfo(`[AIClient][${requestId}] stream() Query classified as ${classification.type} (confidence: ${classification.confidence.toFixed(2)}), adjusted maxToolRounds: ${baseMaxRounds} → ${maxRounds}`);
             }
 
@@ -954,9 +935,9 @@ export class AIClient extends EventEmitter {
                 let roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq)).request);
                 roundReq = await this.enforceContextWindow(roundReq, provider);
 
-                if (rounds > 0 && (roundReq as any).tool_choice === 'required') {
+                if (rounds > 1 && (roundReq as any).tool_choice === 'required') {
                     (roundReq as any).tool_choice = lookupOnly ? 'none' : 'auto';
-                    logInfo(`[AIClient][${requestId}] stream() round_${rounds + 1} tool_choice override required->${(roundReq as any).tool_choice}`);
+                    logInfo(`[AIClient][${requestId}] stream() round_${rounds} tool_choice override required->${(roundReq as any).tool_choice}`);
                 }
 
                 for await (const chunk of provider.stream(roundReq)) {
@@ -992,12 +973,6 @@ export class AIClient extends EventEmitter {
                 }
 
                 logInfo(`[AIClient][${requestId}] stream() received ${pendingToolCalls.length} tool call(s): ${pendingToolCalls.map(tc => tc.name).join(', ')}`);
-
-                rounds++;
-                if (rounds > maxRounds) {
-                    logInfo(`[AIClient][${requestId}] stream() max tool rounds (${maxRounds}) reached`);
-                    break;
-                }
                 logInfo(`[AIClient][${requestId}] stream() tool round ${rounds}/${maxRounds}`);
 
                 // Add assistant message and tool results to conversation
@@ -1039,58 +1014,75 @@ export class AIClient extends EventEmitter {
                 const MAX_TOOL_OUTPUT_PER_ROUND = 50_000;
                 let roundOutputSize = 0;
 
-                let budgetExceeded = false;
-                // Collect heartbeat chunks to yield while tools execute
-                const heartbeatChunks: { delta: '' }[] = [];
+                // Run all tools in parallel using the orchestrator, then yield results in order.
+                // A single heartbeat interval covers the whole parallel batch.
+                const streamHeartbeatChunks: { delta: '' }[] = [];
+                let streamToolsDone = false;
+                const streamHeartbeatInterval = setInterval(() => {
+                    if (!streamToolsDone) streamHeartbeatChunks.push({ delta: '' });
+                }, 500);
+
+                const streamToolStartTime = Date.now();
+                let streamToolResults: Map<string, string>;
+                let streamToolDurations: Map<string, number>;
+
+                try {
+                    if (toolCallsToExecute.length >= 2) {
+                        logInfo(`[AIClient][${requestId}] stream() using parallel execution for ${toolCallsToExecute.length} tools`);
+                        // Track per-tool durations via a wrapper
+                        streamToolDurations = new Map();
+                        streamToolResults = await this.toolOrchestrator.executeWithDependencies(
+                            toolCallsToExecute,
+                            async (toolCall) => {
+                                const t = Date.now();
+                                const r = await this.executeTool(toolCall, requestToolMap);
+                                streamToolDurations!.set(toolCall.id, Date.now() - t);
+                                return r;
+                            },
+                            5
+                        );
+                    } else {
+                        // Single tool — execute directly
+                        logInfo(`[AIClient][${requestId}] stream() executing single tool sequentially`);
+                        streamToolDurations = new Map();
+                        streamToolResults = new Map();
+                        for (const toolCall of toolCallsToExecute) {
+                            const t = Date.now();
+                            const r = await this.executeTool(toolCall, requestToolMap);
+                            streamToolDurations.set(toolCall.id, Date.now() - t);
+                            streamToolResults.set(toolCall.id, r);
+                        }
+                    }
+                } finally {
+                    streamToolsDone = true;
+                    clearInterval(streamHeartbeatInterval);
+                }
+
+                // Yield any queued heartbeat chunks
+                while (streamHeartbeatChunks.length > 0) {
+                    yield streamHeartbeatChunks.shift()!;
+                }
+                // Extra yield point for event loop
+                await new Promise(resolve => setTimeout(resolve, 0));
+
+                logDebug(`[AIClient][${requestId}] stream() tool batch completed in ${Date.now() - streamToolStartTime}ms`);
+
+                // Add results to messages and yield tool result chunks
                 for (const toolCall of toolCallsToExecute) {
-                    if (budgetExceeded) {
-                        // Still must add a tool response for every tool_call to satisfy OpenAI API
-                        messages.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            content: '[Skipped: tool output budget exceeded for this round]',
-                        });
-                        continue;
-                    }
-
-                    const startTime = Date.now();
-
-                    // Execute tool with heartbeat: yield empty chunks periodically
-                    // so UI consumers (e.g. terminal animations) stay alive
-                    let toolDone = false;
-                    const heartbeatInterval = setInterval(() => {
-                        if (!toolDone) heartbeatChunks.push({ delta: '' });
-                    }, 500);
-
-                    const result = await this.executeTool(toolCall, requestToolMap);
-                    toolDone = true;
-                    clearInterval(heartbeatInterval);
-                    const duration = Date.now() - startTime;
-
-                    // Yield any queued heartbeat chunks
-                    while (heartbeatChunks.length > 0) {
-                        yield heartbeatChunks.shift()!;
-                    }
-                    // Extra yield point for event loop
-                    await new Promise(resolve => setTimeout(resolve, 0));
-
+                    const result = streamToolResults.get(toolCall.id)!;
                     const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                    const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
+                    const duration = streamToolDurations.get(toolCall.id) ?? 0;
 
-                    // Check budget before adding
+                    let content: string;
                     if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
-                        logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars), adding placeholder for remaining tools`);
-                        messages.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            content: '[Skipped: tool output budget exceeded for this round]',
-                        });
-                        budgetExceeded = true;
-                        continue;
+                        logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
+                        content = this.budgetTruncate(resultStr, remaining);
+                    } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
+                        content = `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`;
+                    } else {
+                        content = resultStr;
                     }
-
-                    const content = typeof result === 'string' && result.length > this.toolResultMaxChars
-                        ? `${result.slice(0, this.toolResultMaxChars)}\n[TRUNCATED tool result: ${result.length} chars]`
-                        : result;
 
                     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
                     roundOutputSize += contentStr.length;
@@ -1106,7 +1098,7 @@ export class AIClient extends EventEmitter {
                         delta: '',
                         tool_calls: [{
                             ...toolCall,
-                            result: typeof content === 'string' ? content : JSON.stringify(content),
+                            result: contentStr,
                             duration,
                         }],
                     };
@@ -1989,5 +1981,23 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             return error;
         }
         return new ProviderError(error.message || 'Unknown provider error', 'UNKNOWN_PROVIDER_ERROR', 500, error);
+    }
+
+    /**
+     * Truncate a tool result to fit within the remaining round budget.
+     * Instead of silently dropping the output, include as much content as possible
+     * and append an actionable hint so the LLM can retry with a narrower query.
+     */
+    private budgetTruncate(resultStr: string, remaining: number): string {
+        const TRUNCATION_SUFFIX = '\n[Output truncated — round budget reached. Call the tool again with a narrower query to retrieve more.]';
+        const MIN_USEFUL = 100; // Don't bother including content if we have fewer chars than this
+
+        const keepChars = remaining - TRUNCATION_SUFFIX.length;
+
+        if (keepChars >= MIN_USEFUL) {
+            return resultStr.slice(0, keepChars) + TRUNCATION_SUFFIX;
+        }
+
+        return '[Tool output omitted — round budget exhausted. Call the tool again with a narrower query.]';
     }
 }

@@ -51,41 +51,75 @@ export class ToolOrchestrator {
      */
     private hasDependency(current: ToolCallResult, previous: ToolCallResult, currentArgsStr: string): boolean {
         // Same file path (fs tools)
-        if (current.arguments.path && previous.arguments.path && 
+        if (current.arguments.path && previous.arguments.path &&
             current.arguments.path === previous.arguments.path) {
             return true;
         }
-        
+
         // Same file_path (coding tools)
-        if (current.arguments.file_path && previous.arguments.file_path && 
+        if (current.arguments.file_path && previous.arguments.file_path &&
             current.arguments.file_path === previous.arguments.file_path) {
             return true;
         }
-        
+
         // Same filePath (alternative naming)
-        if (current.arguments.filePath && previous.arguments.filePath && 
+        if (current.arguments.filePath && previous.arguments.filePath &&
             current.arguments.filePath === previous.arguments.filePath) {
             return true;
         }
-        
+
         // Write after read on same resource
         const writeTools = ['fs.write_file', 'fs.delete_file', 'fs.move', 'fs.copy', 'fs.replace_in_file', 'fs.append_file'];
-        if (writeTools.includes(current.name) && previous.arguments.path && 
+        if (writeTools.includes(current.name) && previous.arguments.path &&
             currentArgsStr.includes(previous.arguments.path.toLowerCase())) {
             return true;
         }
-        
+
         // Command execution dependencies (exec.run_background → exec.read_output)
         if (current.name === 'exec.read_output' && previous.name === 'exec.run_background') {
             return true;
         }
-        
+
         // HTTP download dependencies (http.get → http.download)
-        if (current.name === 'http.download' && previous.name === 'http.get' && 
+        if (current.name === 'http.download' && previous.name === 'http.get' &&
             previous.arguments.url && currentArgsStr.includes(previous.arguments.url.toLowerCase())) {
             return true;
         }
-        
+
+        // ── GitHub domain heuristics ─────────────────────────────────────────
+        // Tool names match the registered sdk names (github.<group>.<action> convention).
+
+        // Must fetch PR data before submitting a review or adding a comment
+        const githubFetchTools = ['github.pr.files.list', 'github.pr.diff.get', 'github.contents.getText'];
+        const githubWriteTools = ['github.pr.reviews.submit', 'github.pr.reviewComments.reply'];
+        if (githubWriteTools.includes(current.name) && githubFetchTools.includes(previous.name)) {
+            return true;
+        }
+
+        // Must list files before fetching individual file contents
+        if (current.name === 'github.contents.getText' && previous.name === 'github.pr.files.list') {
+            return true;
+        }
+
+        // PR review thread resolution depends on listing threads first
+        if (current.name === 'github.pr.reviewThreads.resolve' && previous.name === 'github.pr.reviewThreads.list') {
+            return true;
+        }
+
+        // ── Slack domain heuristics ──────────────────────────────────────────
+
+        // Must fetch conversation history/replies before posting a reply
+        const slackReadTools = ['slack.conversations.history', 'slack.conversations.replies'];
+        const slackWriteTools = ['slack.chat.postMessage', 'slack.chat.postEphemeral'];
+        if (slackWriteTools.includes(current.name) && slackReadTools.includes(previous.name)) {
+            return true;
+        }
+
+        // Must fetch channel/thread context before adding a reaction
+        if (current.name === 'slack.reactions.add' && slackReadTools.includes(previous.name)) {
+            return true;
+        }
+
         return false;
     }
     
@@ -179,20 +213,12 @@ export class ToolOrchestrator {
     }
     
     /**
-     * Check if parallel execution would benefit this set of tool calls.
-     * Returns true if there are at least 2 independent tools.
+     * Check if parallel execution should be used for this set of tool calls.
+     * Returns true whenever there are 2 or more tools — executeWithDependencies handles
+     * the dependency graph and runs whatever subset can be parallelised automatically.
+     * Even a fully sequential dependency chain is handled correctly; the overhead is minimal.
      */
     shouldUseParallelExecution(toolCalls: ToolCallResult[]): boolean {
-        if (toolCalls.length < 2) {
-            return false;
-        }
-        
-        const dependencies = this.analyzeDependencies(toolCalls);
-        
-        // Count tools with no dependencies
-        const independentCount = dependencies.filter(d => d.dependsOn.length === 0).length;
-        
-        // Use parallel if we have at least 2 independent tools
-        return independentCount >= 2;
+        return toolCalls.length >= 2;
     }
 }

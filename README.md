@@ -14,7 +14,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Type-Safe** — Comprehensive TypeScript types throughout
 - **Multimodal** — Text and image inputs (vision) across all providers
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
-- **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
+- **Workflow Engine** — AI-driven planning with plan-direct execution and parallel tool orchestration
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
@@ -279,8 +279,8 @@ Modes control AI behavior by setting a system prompt, filtering available tools,
 
 | Mode | Tools | Workflow | Description |
 |------|-------|----------|-------------|
-| **Agent** | All tools | Planning + step execution + dynamic steps | Full autonomous access — read, write, execute, browse |
-| **Coding** | All tools | Concise planning + step execution | Optimized for coding tasks — minimal text, file operations |
+| **Agent** | All tools | Plan-direct execution | Full autonomous access — read, write, execute, browse |
+| **Coding** | All tools | Plan-direct execution | Optimized for coding tasks — minimal text, file operations |
 | **Chat** | Web/HTTP only | Direct execution (no planning) | Conversational assistant with web access |
 
 ### Custom Modes
@@ -301,7 +301,6 @@ const reviewMode = createMode({
   },
   workflow: {
     planning: { enabled: true },
-    steps: { enabled: true, retryOnFailure: true },
     progress: { enabled: true },
   },
 });
@@ -341,19 +340,17 @@ sdk.cycleMode(); // Cycles through all registered modes
 | `blockedTools` | string[] | `[]` | Specific tools to block. Overrides allowed |
 | `blockAllTools` | boolean | `false` | If `true`, disables all tools (pure conversation) |
 | `baseContext` | object/false | `undefined` | Controls working directory and tool category injection |
-| `workflow` | WorkflowConfig | `undefined` | Planning, step execution, and progress configuration |
+| `workflow` | WorkflowConfig | `undefined` | Planning, execution mode, and progress configuration |
 
 ## Workflow Engine
 
-The workflow engine enables AI agents to plan and execute complex tasks step-by-step, with progress tracking, retries, and dynamic step additions.
+The workflow engine enables AI agents to plan and execute complex tasks with parallel tool orchestration.
 
 ### How It Works
 
-1. **Planning** — The AI generates a structured step-by-step plan from the user's request
-2. **Execution** — Each step is executed sequentially with tool access
-3. **Dynamic Steps** — New steps can be added during execution based on results
-4. **Retries** — Failed steps are retried automatically (configurable)
-5. **Progress** — Events are emitted at each stage for UI integration
+1. **Planning** — The AI generates a structured plan from the user's request
+2. **Execution** — The plan is injected as context and executed in a single call with parallel tool orchestration
+3. **Progress** — Events are emitted at each stage for UI integration
 
 ### Using the Workflow
 
@@ -364,7 +361,7 @@ const sdk = await Toolpack.init({
   defaultMode: 'agent', // Agent mode has workflow enabled
 });
 
-// Complex tasks are automatically planned and executed step-by-step
+// Complex tasks are automatically planned (plan-direct) with parallel tool execution
 const result = await sdk.generate('Build me a REST API with user authentication');
 
 // Or stream the response
@@ -386,35 +383,18 @@ const executor = sdk.getWorkflowExecutor();
 // Progress updates (ideal for status bars / shimmer text)
 executor.on('workflow:progress', (progress) => {
   // progress.status: 'planning' | 'awaiting_approval' | 'executing' | 'completed' | 'failed'
-  // progress.currentStep, progress.totalSteps, progress.percentage
-  // progress.currentStepDescription — includes retry info if retrying
-  console.log(`[${progress.percentage}%] Step ${progress.currentStep}/${progress.totalSteps}: ${progress.currentStepDescription}`);
+  // progress.percentage, progress.currentStepDescription
+  console.log(`[${progress.percentage}%] ${progress.currentStepDescription}`);
 });
 
-// Step lifecycle
-executor.on('workflow:step_start', (step, plan) => {
-  console.log(`Starting: ${step.description}`);
-});
-
-executor.on('workflow:step_complete', (step, plan) => {
-  console.log(`Completed: ${step.description}`);
-});
-
-executor.on('workflow:step_failed', (step, error, plan) => {
-  console.log(`Failed: ${step.description} — ${error.message}`);
-});
-
-executor.on('workflow:step_retry', (step, attempt, plan) => {
-  console.log(`Retrying: ${step.description} (attempt ${attempt})`);
-});
-
-executor.on('workflow:step_added', (step, plan) => {
-  console.log(`Dynamic step added: ${step.description}`);
+// Plan created
+executor.on('workflow:plan_created', (plan) => {
+  console.log('Plan:', plan.steps.map(s => s.description));
 });
 
 // Workflow completion
 executor.on('workflow:completed', (plan, result) => {
-  console.log(`Done! ${result.metrics.stepsCompleted} steps in ${result.metrics.totalDuration}ms`);
+  console.log(`Done in ${result.metrics.totalDuration}ms`);
 });
 
 executor.on('workflow:failed', (plan, error) => {
@@ -433,21 +413,9 @@ interface WorkflowConfig {
     maxSteps?: number;          // Max steps in a plan (default: 20)
   };
 
-  steps?: {
-    enabled: boolean;           // Enable step-by-step execution
-    retryOnFailure?: boolean;   // Retry failed steps (default: true)
-    maxRetries?: number;        // Max retries per step (default: 3)
-    allowDynamicSteps?: boolean; // Allow adding steps during execution
-    maxTotalSteps?: number;     // Max total steps including dynamic (default: 50)
-  };
-
   progress?: {
     enabled: boolean;           // Emit progress events (default: true)
     reportPercentage?: boolean; // Include completion percentage
-  };
-
-  onFailure?: {
-    strategy: 'abort' | 'skip' | 'ask_user';
   };
 }
 ```
@@ -460,12 +428,12 @@ The SDK provides built-in workflow presets for common use cases:
 import { DEFAULT_WORKFLOW, AGENT_WORKFLOW, CODING_WORKFLOW, CHAT_WORKFLOW } from 'toolpack-sdk';
 ```
 
-| Preset | Planning | Steps | Description |
-|--------|----------|-------|-------------|
-| `DEFAULT_WORKFLOW` | Disabled | Disabled | Direct execution, no planning |
-| `AGENT_WORKFLOW` | Enabled (detailed) | Enabled | Full autonomous agent with 11 planning rules |
-| `CODING_WORKFLOW` | Enabled (concise) | Enabled | Minimal prompts optimized for coding tasks |
-| `CHAT_WORKFLOW` | Disabled | Disabled | Simple conversational mode |
+| Preset | Planning | Description |
+|--------|----------|-------------|
+| `DEFAULT_WORKFLOW` | Disabled | Direct execution, no planning |
+| `AGENT_WORKFLOW` | Enabled (detailed) | Full autonomous agent with plan-direct execution |
+| `CODING_WORKFLOW` | Enabled (concise) | Minimal prompts optimized for coding tasks |
+| `CHAT_WORKFLOW` | Disabled | Simple conversational mode |
 
 ### Creating Custom Workflows
 
@@ -488,15 +456,6 @@ Rules:
 3. Generate docs in consistent format
 4. Output JSON: {"summary": "...", "steps": [...]}`,
   },
-  steps: {
-    ...AGENT_WORKFLOW.steps,
-    stepPrompt: `Execute step {stepNumber}: {stepDescription}
-
-Analyze code and write clear documentation.
-Focus on: purpose, parameters, return values, examples.
-
-Previous: {previousStepsResults}`,
-  },
 };
 
 // Use in a custom mode
@@ -511,23 +470,11 @@ const docMode = createMode({
 });
 ```
 
-### Step Prompt Template Variables
-
-When using custom `stepPrompt`, these variables are automatically substituted:
-
-| Variable | Description |
-|----------|-------------|
-| `{stepNumber}` | Current step number (1-indexed) |
-| `{planSummary}` | Summary of the overall plan |
-| `{stepDescription}` | Description of the current step |
-| `{previousStepsResults}` | Output from completed steps (truncated to 2000 chars) |
-
 ### Workflow Prompt Tips
 
 - **Keep planning prompts concise** — LLMs perform better with 5-7 clear rules
 - **Use JSON schema examples** — Include the exact expected output format
-- **Avoid meta-commentary in step prompts** — The AI should just execute, not discuss
-- **Leverage previous results** — The `{previousStepsResults}` variable provides context
+- **Keep prompts task-oriented** — The AI should execute, not discuss
 
 ## Tool Call Events
 
@@ -1474,7 +1421,7 @@ toolpack-sdk/
 │   │   ├── openrouter/    # OpenRouter adapter (OpenAI-compatible, dynamic model discovery)
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
-│   ├── workflows/         # Workflow engine (planner, step executor, progress)
+│   ├── workflows/         # Workflow engine (planner, executor, progress)
 │   ├── tools/             # 97 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
@@ -1503,7 +1450,7 @@ toolpack-sdk/
 
 - ✓ **5 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama, OpenRouter (+ custom provider API)
 - ✓ **90 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes
-- ✓ **Workflow Engine** — AI-driven planning, step execution, retries, dynamic steps, progress events
+- ✓ **Workflow Engine** — AI-driven planning, plan-direct execution, parallel tool orchestration, progress events
 - ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support
 - ✓ **Tool Search** — BM25-based on-demand tool discovery for large tool libraries
 - ✓ **545 Tests** passing across 81 test files

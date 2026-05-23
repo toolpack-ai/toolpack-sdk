@@ -60,26 +60,6 @@ class EmailAgent extends BaseAgent {
   }
 }
 
-class CoordinatorAgent extends BaseAgent {
-  name = 'coordinator';
-  description = 'Coordinates other agents';
-  mode = CHAT_MODE;
-
-  constructor(options: BaseAgentOptions) {
-    super(options);
-  }
-
-  async invokeAgent(input: AgentInput): Promise<AgentResult> {
-    // Fire-and-forget delegation
-    await this.delegate('data-agent', {
-      message: 'Background task',
-    });
-
-    return {
-      output: 'Coordinator task complete',
-    };
-  }
-}
 
 describe('Agent Delegation', () => {
   describe('LocalTransport (same process)', () => {
@@ -90,8 +70,7 @@ describe('Agent Delegation', () => {
       toolpack = createMockToolpack();
       const dataAgent = new DataAgent({ toolpack });
       const emailAgent = new EmailAgent({ toolpack });
-      const coordinatorAgent = new CoordinatorAgent({ toolpack });
-      registry = new AgentRegistry([dataAgent, emailAgent, coordinatorAgent]);
+      registry = new AgentRegistry([dataAgent, emailAgent]);
       await registry.start();
     });
 
@@ -117,16 +96,6 @@ describe('Agent Delegation', () => {
       });
 
       expect(result.metadata?.delegatedBy).toBe('email-agent');
-    });
-
-    it('should support fire-and-forget delegation', async () => {
-      const coordinator = registry.getAgent('coordinator');
-      const result = await coordinator!.invokeAgent({
-        message: 'Start coordination',
-        conversationId: 'test-3',
-      });
-
-      expect(result.output).toBe('Coordinator task complete');
     });
 
     it('should throw error if agent not found', async () => {

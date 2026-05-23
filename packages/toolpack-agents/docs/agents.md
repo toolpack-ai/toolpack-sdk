@@ -13,6 +13,7 @@
 - [Single-agent deployment](#single-agent-deployment)
 - [Built-in concrete agents](#built-in-concrete-agents)
 
+
 ---
 
 ## BaseAgent — the foundation
@@ -92,8 +93,38 @@ class MyAgent extends BaseAgent {
       interval: 60000,
     }),
   ];
+
+  // Persistent cognitive layer — goals, beliefs, and reflections that survive across runs.
+  // Requires @toolpack-sdk/knowledge. See mind.md.
+  mind = {
+    embedder: new OpenAIEmbedder({ apiKey: process.env.OPENAI_API_KEY! }),
+    tokenBudget: 300,
+    ttlDefaults: { belief: '30d' },
+  };
+
+  // AI-driven delegation — injects a delegation tool so the LLM can hand tasks to peer agents.
+  // Only active when registered in an AgentRegistry with peers. See transport.md.
+  delegation = {
+    enabled: true,
+    mode: 'await',           // 'await' | 'forget'
+    allowedAgents: ['data-agent', 'coding-agent'],  // omit to allow all peers
+  };
 }
 ```
+
+**Optional property reference:**
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `provider` | `string` | Inherits from Toolpack | Provider override for this agent (e.g. `'anthropic'`, `'openai'`). |
+| `model` | `string` | Provider default | Model override for this agent. |
+| `workflow` | `Record<string, unknown>` | — | Workflow config merged on top of mode config. |
+| `conversationHistory` | `ConversationStore` | `InMemoryConversationStore` | Message history store. Replace with a DB-backed implementation for production. |
+| `assemblerOptions` | `AssemblerOptions` | assemblePrompt defaults | Options forwarded to `assemblePrompt()` when building LLM context from history. |
+| `channels` | `ChannelInterface[]` | `[]` | Channels this agent listens on. Can also be set after construction. |
+| `interceptors` | `Interceptor[]` | `[]` | Middleware chain applied before `invokeAgent` is called. |
+| `mind` | `AgentMindConfig` | — | Persistent memory: goals, beliefs, reflections. See [mind.md](mind.md). |
+| `delegation` | `AgentDelegationConfig` | — | Injects delegation tools into the LLM's tool list so the model can autonomously delegate to other agents. See [transport.md](transport.md). |
 
 ### `mode` values
 
@@ -184,7 +215,6 @@ interface AgentInput<TIntent extends string = string> {
 ```typescript
 interface AgentResult {
   output: string;                      // the agent's text response
-  steps?: WorkflowStep[];              // execution plan steps (populated by run())
   metadata?: Record<string, unknown>;  // hints for routing or post-processing
 }
 ```
@@ -285,22 +315,11 @@ Override these no-op hooks in your agent to react to execution stages:
 // Called before run() starts — use to validate input or log
 async onBeforeRun(input: AgentInput): Promise<void> {}
 
-// Called after each workflow step completes
-async onStepComplete(step: WorkflowStep): Promise<void> {}
-
 // Called when run() finishes successfully
 async onComplete(result: AgentResult): Promise<void> {}
 
 // Called when run() throws — re-throw to propagate
 async onError(error: Error): Promise<void> {}
-```
-
-Example — logging step progress:
-
-```typescript
-async onStepComplete(step: WorkflowStep): Promise<void> {
-  console.log(`[${this.name}] Step ${step.number}: ${step.description} → ${step.status}`);
-}
 ```
 
 ---
@@ -315,7 +334,7 @@ async onStepComplete(step: WorkflowStep): Promise<void> {
 | `agent:complete` | `AgentResult` | After successful completion |
 | `agent:error` | `Error` | On any error |
 
-> **Note**: `AgentEvents` also declares `'agent:step'` (payload: `WorkflowStep`) but the built-in `run()` does not currently emit it. If you need per-step callbacks, use the `onStepComplete` lifecycle hook instead.
+> **Note**: `AgentEvents` also declares `'agent:step'` (payload: `WorkflowStep`) but the built-in `run()` does not currently emit it.
 
 ```typescript
 agent.on('agent:complete', (result) => {
@@ -427,23 +446,3 @@ class MyResearcher extends ResearchAgent {
 }
 ```
 
----
-
-## WorkflowStep shape
-
-When Toolpack returns a structured plan, `run()` extracts steps and includes them in `AgentResult.steps`:
-
-```typescript
-interface WorkflowStep {
-  number: number;
-  description: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
-  result?: {
-    success: boolean;
-    output?: string;
-    error?: string;
-    toolsUsed?: string[];
-    duration?: number;
-  };
-}
-```

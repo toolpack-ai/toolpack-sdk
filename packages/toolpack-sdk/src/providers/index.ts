@@ -1,5 +1,7 @@
 // Anthropic
 export * from './anthropic/index.js';
+// Vertex AI
+export * from './vertexai/index.js';
 // Gemini
 export * from './gemini/index.js';
 // Shared Config

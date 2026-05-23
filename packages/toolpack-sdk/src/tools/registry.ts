@@ -235,6 +235,7 @@ export class ToolRegistry {
         const { diffToolsProject } = await import('./diff-tools/index.js');
         const { dbToolsProject } = await import('./db-tools/index.js');
         const { cloudToolsProject } = await import('./cloud-tools/index.js');
-        await this.loadProjects([fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject, githubToolsProject, webToolsProject, codingToolsProject, gitToolsProject, diffToolsProject, dbToolsProject, cloudToolsProject]);
+        const { slackToolsProject } = await import('./slack-tools/index.js');
+        await this.loadProjects([fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject, githubToolsProject, webToolsProject, codingToolsProject, gitToolsProject, diffToolsProject, dbToolsProject, cloudToolsProject, slackToolsProject]);
     }
 }

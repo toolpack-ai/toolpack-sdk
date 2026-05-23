@@ -53,11 +53,14 @@ await registry.start();
 
 // ... your application runs ...
 
-// Graceful shutdown — stops all channels and releases Toolpack instances
-// (Not yet implemented as a single method on registry; call agent.stop() per agent)
-for (const agent of registry.getAllAgents()) {
-  await (agent as BaseAgent).stop();
-}
+// Graceful shutdown — stops all agents, clears routing tables and pending-ask store
+await registry.stop();
+```
+
+`registry.stop()` calls `agent.stop()` on every registered agent in sequence, then clears the internal `instances`, `channels`, and `pendingAsks` maps. Signature:
+
+```typescript
+async stop(): Promise<void>
 ```
 
 `registry.start()` performs these steps for each agent in order:

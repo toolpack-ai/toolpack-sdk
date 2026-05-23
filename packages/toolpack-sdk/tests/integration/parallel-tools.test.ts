@@ -180,7 +180,6 @@ describe('Parallel Tool Execution Integration', () => {
                 blockAllTools: false,
                 workflow: {
                     planning: { enabled: true },
-                    steps: { enabled: true }
                 }
             }]
         });

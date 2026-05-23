@@ -32,57 +32,28 @@ Rules:
 }
 `;
 
-/**
- * Agent step execution prompt.
- * Standard execution with detailed instructions.
- */
-export const AGENT_STEP_PROMPT = `
-You are executing step {stepNumber} of a plan.
-
-Plan summary: {planSummary}
-
-Current step: {stepDescription}
-
-Previous steps completed:
-{previousStepsResults}
-
-Execute this step now. Use the available tools as needed to accomplish this specific step.
-Make reasonable assumptions if any details are ambiguous - do NOT ask the user for clarification or additional input.
-Produce concrete results based on the information available.
-If you cannot complete this step, explain why.
-
-IMPORTANT: Your response should be written as if you are directly answering the user.
-Do NOT mention steps, plans, workflow details, or internal process in your response.
-Do NOT say things like "Step 1 is complete" or "proceeding to the next step".
-Just provide the actual answer or result naturally.
-`;
 
 /**
  * Default workflow configuration.
- * Direct execution with no planning or steps.
+ * Direct execution with no planning.
  */
 export const DEFAULT_WORKFLOW: WorkflowConfig = {
     name: 'Direct',
     planning: { enabled: false },
-    steps: { enabled: false },
     progress: { enabled: true },
 };
 
 /**
  * Agent workflow configuration.
- * Full planning and step execution with dynamic steps disabled.
+ * Plan-direct: planning phase generates a structured roadmap, then executes in a single
+ * generate() call with full tool parallelism. Simpler queries bypass planning via
+ * complexity routing.
  */
 export const AGENT_WORKFLOW: WorkflowConfig = {
     name: 'Agent',
     planning: {
         enabled: true,
         planningPrompt: AGENT_PLANNING_PROMPT,
-    },
-    steps: {
-        enabled: true,
-        retryOnFailure: true,
-        allowDynamicSteps: false,
-        stepPrompt: AGENT_STEP_PROMPT,
     },
     progress: { enabled: true },
     complexityRouting: {
@@ -121,36 +92,17 @@ JSON Schema:
 }
 `;
 
-/**
- * Concise step execution prompt for coding tasks.
- * No meta-commentary, focused on tool usage.
- */
-export const CODING_STEP_PROMPT = `
-Execute step {stepNumber}: {stepDescription}
-
-Plan: {planSummary}
-
-Previous: {previousStepsResults}
-
-Use tools. Be concise. Show code changes clearly.
-No meta-commentary about steps or workflow.
-`;
 
 /**
  * Coding workflow configuration.
- * Concise prompts optimized for software development tasks.
+ * Plan-direct: planning phase generates a structured roadmap using concise coding-focused prompts,
+ * then executes in a single generate() call with full tool parallelism.
  */
 export const CODING_WORKFLOW: WorkflowConfig = {
     name: 'Coding',
     planning: {
         enabled: true,
         planningPrompt: CODING_PLANNING_PROMPT,
-    },
-    steps: {
-        enabled: true,
-        retryOnFailure: true,
-        allowDynamicSteps: false,
-        stepPrompt: CODING_STEP_PROMPT,
     },
     progress: { enabled: true },
     complexityRouting: {
@@ -162,11 +114,10 @@ export const CODING_WORKFLOW: WorkflowConfig = {
 
 /**
  * Chat workflow configuration.
- * No planning or steps - direct conversational responses.
+ * Direct conversational responses — no planning.
  */
 export const CHAT_WORKFLOW: WorkflowConfig = {
     name: 'Chat',
     planning: { enabled: false },
-    steps: { enabled: false },
     progress: { enabled: false },
 };

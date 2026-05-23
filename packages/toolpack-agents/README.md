@@ -171,17 +171,23 @@ const webhook = new WebhookChannel({
 
 ### ScheduledChannel (Trigger-only)
 
-Runs agents on cron schedules. Supports full cron expressions.
+Runs agents on cron schedules. Three modes: static cron, dynamic store (agent-driven), or hybrid.
 
 ```typescript
+// Static — fixed cron schedule
 const scheduler = new ScheduledChannel({
   name: 'daily-report',
   cron: '0 9 * * 1-5', // 9am weekdays
-  notify: 'webhook:https://hooks.example.com/daily-report',
   message: 'Generate daily report',
 });
+
+// Dynamic — agent schedules its own jobs via scheduler.* tools
+import { SchedulerStore, createSchedulerTools } from '@toolpack-sdk/agents';
+const store = new SchedulerStore({ dbPath: './scheduler.db' });
+const dynamic = new ScheduledChannel({ name: 'dynamic', store });
+
 // For Slack delivery, attach a named SlackChannel to the same agent and
-// call `this.sendTo('<slackChannelName>', output)` from within `run()`.
+// call `this.sendTo('<slackChannelName>', output)` from within `invokeAgent()`.
 ```
 
 ### DiscordChannel (Two-way)

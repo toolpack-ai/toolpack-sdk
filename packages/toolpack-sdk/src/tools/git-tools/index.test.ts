@@ -6,6 +6,9 @@ import os from 'os';
 import { gitStatusTool } from './tools/status/index.js';
 import { gitAddTool } from './tools/add/index.js';
 import { gitCommitTool } from './tools/commit/index.js';
+import { gitDiffTool } from './tools/diff/index.js';
+import { gitLogTool } from './tools/log/index.js';
+import { gitBlameTool } from './tools/blame/index.js';
 
 describe('git-tools integration', () => {
     let testDir: string;
@@ -49,5 +52,31 @@ describe('git-tools integration', () => {
 
         status = await gitStatusTool.execute({});
         expect(status as string).toContain('Working tree clean');
+    });
+
+    test('should run read-only git tools inside cloneDir', async () => {
+        const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-tools-clonedir-test-'));
+        const repoGit = simpleGit(repoDir);
+        await repoGit.init();
+        await repoGit.addConfig('user.name', 'Test User');
+        await repoGit.addConfig('user.email', 'test@example.com');
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'hello\n');
+        await repoGit.add('tracked.txt');
+        await repoGit.commit('Initial commit');
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'hello\nworld\n');
+
+        const diff = await gitDiffTool.execute({ cloneDir: repoDir, path: 'tracked.txt' });
+        expect(diff as string).toContain('+world');
+
+        await repoGit.add('tracked.txt');
+        await repoGit.commit('Add world');
+
+        const log = await gitLogTool.execute({ cloneDir: repoDir, path: 'tracked.txt', maxCount: 1 });
+        expect(log as string).toContain('Add world');
+
+        const blame = await gitBlameTool.execute({ cloneDir: repoDir, path: 'tracked.txt' });
+        expect(blame as string).toContain('world');
+
+        fs.rmSync(repoDir, { recursive: true, force: true });
     });
 });

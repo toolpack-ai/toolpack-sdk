@@ -11,9 +11,10 @@ export const gitLogTool: ToolDefinition = {
     execute: async (args: Record<string, unknown>) => {
         const maxCount = (args.maxCount as number) || 10;
         const path = args.path as string | undefined;
+        const cloneDir = args.cloneDir as string | undefined;
 
         try {
-            const git = getGit();
+            const git = getGit(cloneDir);
 
             const options: Record<string, unknown> = { maxCount };
             if (path) {

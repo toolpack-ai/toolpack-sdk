@@ -12,5 +12,9 @@ export const gitLogSchema: ToolParameters = {
             type: 'string',
             description: 'Optional path to get the log for specific file or directory.',
         },
+        cloneDir: {
+            type: 'string',
+            description: 'Optional local repository directory, typically the cloneDir returned by git.clone. When provided, this tool runs in that repository instead of the current working directory.',
+        },
     },
 };

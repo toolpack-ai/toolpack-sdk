@@ -33,7 +33,6 @@ class TestAgent extends BaseAgent<'greet' | 'help'> {
   beforeRunCalled = false;
   completeCalled = false;
   errorCalled = false;
-  stepCompleteCalled = false;
 
   constructor(options: BaseAgentOptions) {
     super(options);
@@ -56,10 +55,6 @@ class TestAgent extends BaseAgent<'greet' | 'help'> {
 
   async onError(): Promise<void> {
     this.errorCalled = true;
-  }
-
-  async onStepComplete(): Promise<void> {
-    this.stepCompleteCalled = true;
   }
 }
 

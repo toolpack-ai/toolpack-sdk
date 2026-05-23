@@ -46,7 +46,6 @@ describe('createMode', () => {
             },
             workflow: {
                 planning: { enabled: true, requireApproval: true },
-                steps: { enabled: true, retryOnFailure: false, allowDynamicSteps: false },
                 progress: { enabled: true },
             },
         });

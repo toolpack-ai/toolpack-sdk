@@ -8,6 +8,7 @@ export {
   AgentOutput,
   AgentRunOptions,
   BaseAgentOptions,
+  AgentDelegationConfig,
   WorkflowStep,
   IAgentRegistry,
   AgentInstance,
@@ -75,6 +76,23 @@ export {
   type ConversationSearchToolConfig,
 } from './history/index.js';
 
+// Agent Mind — persistent cognitive layer (goals, beliefs, reflections)
+export { AgentMind } from './mind/agent-mind.js';
+export type {
+  AgentMindConfig,
+  MindTtlDefaults,
+  MindGoal,
+  MindBelief,
+  MindReflection,
+  MindEntry,
+  MindRecallResult,
+  MindEntryType,
+  GoalStatus,
+  GoalPriority,
+  ConfidenceLevel,
+  RunContext as MindRunContext,
+} from './mind/index.js';
+
 // Interceptor system for composable middleware
 export {
   SKIP_SENTINEL,
@@ -113,3 +131,13 @@ export {
   createTracerInterceptor,
   type TracerConfig,
 } from './interceptors/index.js';
+
+// Scheduler — persistent job store and LLM-callable tools
+export {
+  SchedulerStore,
+  createSchedulerTools,
+  type ScheduledJob,
+  type CreateJobOptions,
+  type CreateJobResult,
+  type JobStatus,
+} from './scheduler/index.js';

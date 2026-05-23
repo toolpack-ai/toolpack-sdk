@@ -44,7 +44,6 @@ export function createMode(config: {
     /** Workflow configuration. See 01-WORKFLOW_ENGINE.md for details. */
     workflow?: {
         planning?: { enabled: boolean; requireApproval?: boolean; };
-        steps?: { enabled: boolean; retryOnFailure?: boolean; allowDynamicSteps?: boolean; };
         progress?: { enabled: boolean; };
     };
 }): ModeConfig {

@@ -8,8 +8,9 @@ import { gitBlameTool } from './tools/blame/index.js';
 import { gitBranchListTool } from './tools/branch-list/index.js';
 import { gitBranchCreateTool } from './tools/branch-create/index.js';
 import { gitCheckoutTool } from './tools/checkout/index.js';
+import { gitCloneTool } from './tools/clone/index.js';
 
-export { gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool, gitBlameTool, gitBranchListTool, gitBranchCreateTool, gitCheckoutTool };
+export { gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool, gitBlameTool, gitBranchListTool, gitBranchCreateTool, gitCheckoutTool, gitCloneTool };
 
 export const gitToolsProject: ToolProject = {
     manifest: {
@@ -28,7 +29,8 @@ export const gitToolsProject: ToolProject = {
             'git.blame',
             'git.branch_list',
             'git.branch_create',
-            'git.checkout'
+            'git.checkout',
+            'git.clone'
         ],
         category: 'version-control',
     },
@@ -41,7 +43,8 @@ export const gitToolsProject: ToolProject = {
         gitBlameTool,
         gitBranchListTool,
         gitBranchCreateTool,
-        gitCheckoutTool
+        gitCheckoutTool,
+        gitCloneTool
     ],
     dependencies: {
         'simple-git': '^3.27.0',

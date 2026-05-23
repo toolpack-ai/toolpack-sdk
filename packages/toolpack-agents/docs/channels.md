@@ -226,50 +226,141 @@ The channel responds synchronously — the HTTP response body is the agent's out
 
 ## ScheduledChannel
 
-Triggers an agent on a cron schedule.
+Triggers an agent on a cron schedule. Three modes are available:
 
-### Configuration
+| Mode | Config | When to use |
+|---|---|---|
+| Static | `cron` only | Fixed schedule, no persistence needed |
+| Dynamic | `store` only | Agent drives its own schedule via `scheduler.*` tools |
+| Hybrid | `cron` + `store` | Fixed seed + agent-driven additions |
+
+### Install (store and hybrid modes)
+
+```bash
+npm install better-sqlite3
+```
+
+### Static mode
 
 ```typescript
 import { ScheduledChannel } from '@toolpack-sdk/agents';
 
 const daily = new ScheduledChannel({
   name: 'daily-report',
-  cron: '0 9 * * 1-5',           // 9am Monday–Friday
+  cron: '0 9 * * 1-5',     // 9am Monday–Friday
+  intent: 'daily_summary',
   message: 'Generate the daily standup summary',
-  intent: 'daily_summary',        // optional intent hint
-  notify: 'webhook:https://hooks.example.com/daily',
 });
 ```
 
-`cron` accepts standard 5-field cron syntax. The expression is validated on construction — an invalid expression throws immediately.
+The cron expression is validated on construction — an invalid expression throws immediately. Supported syntax:
 
-### `notify` targets
+- **5-field** `min hour dom month dow` and **6-field** `sec min hour dom month dow`
+- Step (`*/15`), range (`9-17`), list (`1,3,5`), combined (`*/15 9-17 * * 1-5`)
+- Named days (`MON-FRI`, case-insensitive) and months (`JAN-DEC`)
+- Modifiers: `L` (last day/weekday of month), `#` (nth weekday — e.g. `5#2` = second Friday)
+- Macros: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@minutely`
 
-| Prefix | Behaviour |
-|---|---|
-| `webhook:<url>` | POSTs `{ output, metadata, timestamp }` as JSON to the URL |
+### Dynamic store mode
 
-For routing output to a Slack or other channel, attach both channels to the same agent and use `sendTo()` from `invokeAgent()`:
+Let the agent schedule its own future invocations. Requires `better-sqlite3`.
 
 ```typescript
-agent.channels = [
-  new ScheduledChannel({ name: 'daily', cron: '0 9 * * 1-5', notify: 'webhook:...' }),
-  new SlackChannel({ name: 'team-slack', channel: '#standups', token, signingSecret }),
-];
+import {
+  ScheduledChannel,
+  SchedulerStore,
+  createSchedulerTools,
+} from '@toolpack-sdk/agents';
 
-async invokeAgent(input: AgentInput): Promise<AgentResult> {
-  const report = await this.buildReport();
-  await this.sendTo('team-slack', report);   // route to Slack
-  return { output: report };
+const store = new SchedulerStore({ dbPath: './scheduler.db' });
+
+const channel = new ScheduledChannel({
+  name: 'dynamic',
+  store,
+  idlePollMs: 10_000,  // poll interval when store is empty (default: 30_000, min: 1000)
+});
+
+// Expose scheduler tools so the LLM can manage its own schedule
+const toolpack = await Toolpack.init({
+  provider: 'anthropic',
+  customTools: [createSchedulerTools(store)],
+});
+```
+
+The agent can then call four scheduler tools:
+
+| Tool | Description |
+|---|---|
+| `scheduler.create` | Schedule a recurring (`cron`) or one-shot (`run_at`) job |
+| `scheduler.list` | List pending / all jobs |
+| `scheduler.cancel` | Cancel a pending job by ID |
+| `scheduler.update` | Change the cron, run time, message, intent, or payload of a pending job |
+
+See [scheduler.md](scheduler.md) for the full `SchedulerStore` and tool reference.
+
+### Hybrid mode
+
+Seed a static cron job into the store and let the agent add more:
+
+```typescript
+const store = new SchedulerStore({ dbPath: './scheduler.db' });
+
+const channel = new ScheduledChannel({
+  name: 'hybrid',
+  cron: '0 9 * * 1-5',   // seeded into store on first listen()
+  store,
+  intent: 'morning_check',
+  idlePollMs: 10_000,
+});
+```
+
+The static `cron` is inserted as a recurring job on startup. Deduplication prevents re-insertion on restarts; the agent can schedule additional jobs using `scheduler.create`.
+
+### Routing output
+
+`ScheduledChannel` is a **pure trigger** — it has no `send()` behaviour. Route output by attaching a named channel and calling `sendTo()` from `invokeAgent()`:
+
+```typescript
+class DigestAgent extends BaseAgent {
+  name = 'digest';
+  mode = 'agent';
+  channels = [
+    new ScheduledChannel({ name: 'daily', cron: '0 9 * * 1-5' }),
+    new SlackChannel({ name: 'team-slack', channel: '#standups', token, signingSecret }),
+  ];
+
+  async invokeAgent(input: AgentInput): Promise<AgentResult> {
+    const report = await this.run(input.message ?? '');
+    await this.sendTo('team-slack', report.output);
+    return report;
+  }
 }
 ```
 
-This keeps all Slack credentials and thread routing in `SlackChannel` rather than duplicated inside `ScheduledChannel`.
+### Configuration options
 
-### isTriggerChannel
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | — | Channel name for `sendTo()` routing. Required in store/hybrid mode. |
+| `cron` | `string` | — | Cron expression (5- or 6-field). Required in static/hybrid mode. |
+| `store` | `SchedulerStore` | — | SQLite-backed job store. Required in dynamic/hybrid mode. |
+| `intent` | `string` | — | Default intent forwarded to `AgentInput.intent`. |
+| `message` | `string` | — | Default message forwarded to `AgentInput.message`. |
+| `idlePollMs` | `number` | `30_000` | How often (ms) to poll the store when no jobs are pending. Min: 1000. |
 
-`ScheduledChannel.isTriggerChannel` is `true`. Calling `ask()` from within a scheduled invocation throws because there is no human to answer.
+### Startup behaviour (store and hybrid modes)
+
+On first `listen()` (process startup):
+
+1. **Crash recovery** — resets any `running` jobs left over from a previous crash back to `pending`
+2. **Cron seeding** — inserts the static `cron` job if provided (idempotent via dedup)
+3. **Missed-run recovery** — immediately executes any overdue pending jobs
+
+On a `stop()+listen()` cycle within the same process, crash recovery is skipped to avoid interfering with in-flight jobs from the previous cycle.
+
+### `isTriggerChannel`
+
+`ScheduledChannel.isTriggerChannel` is `true`. Calling `ask()` from within a scheduled run throws — there is no human to answer.
 
 ---
 

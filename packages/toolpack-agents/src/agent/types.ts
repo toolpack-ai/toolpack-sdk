@@ -16,6 +16,37 @@ export type BaseAgentOptions =
   | { apiKey: string; provider?: string; model?: string }
   | { toolpack: Toolpack };
 
+/**
+ * Configuration for AI-driven agent delegation.
+ * When enabled, a delegation tool is injected into every `run()` call
+ * so the LLM can decide which peer agent to hand the task to.
+ */
+export interface AgentDelegationConfig {
+  /** Must be true for the delegation tool to be injected. */
+  enabled: boolean;
+  /**
+   * Restrict which peer agents can be delegated to.
+   * When set, only the named agents appear in the tool's enum.
+   * When omitted, all peers in the registry are available.
+   */
+  allowedAgents?: string[];
+  /**
+   * Delegation mode.
+   *
+   * - `'await'` (default) — injects `delegate_to_agent`: calls the sub-agent,
+   *   waits for its result, and returns it to the LLM. Use when the orchestrator
+   *   needs to relay or act on the sub-agent's response.
+   *
+   * - `'forget'` — injects `delegate_and_forget`: fires the sub-agent without
+   *   waiting for its result and returns `{ status: 'delegated' }` immediately.
+   *   Use when sub-agents handle their own delivery via tools (e.g. posting to
+   *   Slack or GitHub directly) and the orchestrator has nothing to relay.
+   *   The LLM naturally outputs an empty string, eliminating any need for
+   *   post-run result extraction.
+   */
+  mode?: 'await' | 'forget';
+}
+
 
 /**
  * Input structure for agent invocation.
@@ -97,6 +128,13 @@ export interface AgentOutput {
 export interface AgentRunOptions {
   /** One-off workflow override for this specific run */
   workflow?: Record<string, unknown>;
+  /**
+   * Hard cap on tool-call rounds for this specific run.
+   * Overrides ToolsConfig.maxToolRounds and bypasses the query-classifier
+   * adjustment. Use this for agents that should only make one tool call
+   * per invocation (e.g. single-shot routers using delegate_to_agent).
+   */
+  maxToolRounds?: number;
 }
 
 /**

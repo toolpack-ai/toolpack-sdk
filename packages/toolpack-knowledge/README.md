@@ -452,6 +452,27 @@ new OpenAIEmbedder({
 })
 ```
 
+### VertexAIEmbedder
+
+Google Cloud Vertex AI embedding models. Authenticates via [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/application-default-credentials).
+
+```typescript
+import { VertexAIEmbedder } from '@toolpack-sdk/knowledge';
+
+new VertexAIEmbedder({
+  projectId: 'my-gcp-project',   // Required (or set VERTEX_AI_PROJECT / GOOGLE_CLOUD_PROJECT env var)
+  location: 'us-central1',       // GCP region (default: 'us-central1')
+  model: 'gemini-embedding-001', // Embedding model (default: 'gemini-embedding-001')
+  outputDimensionality: 3072,    // Optional: override output dimensions
+  retries: 3,                    // default
+  retryDelay: 1000,              // ms, default
+})
+```
+
+If `projectId` is not set in options, the embedder falls back to the `VERTEX_AI_PROJECT`, `TOOLPACK_VERTEXAI_PROJECT`, or `GOOGLE_CLOUD_PROJECT` environment variables.
+
+Known models: `gemini-embedding-001` (3072), `text-embedding-005` (768), `text-multilingual-embedding-002` (768). Pass `outputDimensionality` for any other model.
+
 ## API Reference
 
 ### Knowledge.create()

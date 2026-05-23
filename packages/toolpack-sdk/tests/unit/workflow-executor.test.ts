@@ -42,10 +42,9 @@ describe('WorkflowExecutor', () => {
     });
 
     describe('Direct Execution (No Workflow)', () => {
-        it('should execute directly when planning and steps are disabled', async () => {
+        it('should execute directly when planning is disabled', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: false },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
@@ -64,7 +63,6 @@ describe('WorkflowExecutor', () => {
         it('should emit workflow:completed event on success', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: false },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
@@ -82,16 +80,14 @@ describe('WorkflowExecutor', () => {
         });
     });
 
-    describe('Planning Phase', () => {
-        it('should create a plan when planning is enabled', async () => {
+    describe('Plan-Direct Execution', () => {
+        it('should create a plan and execute in one call when planning is enabled', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: true, requireApproval: false },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
 
-            // Mock plan response
             const planJson = JSON.stringify({
                 summary: 'Test plan',
                 steps: [
@@ -103,11 +99,13 @@ describe('WorkflowExecutor', () => {
             const planCreatedHandler = vi.fn();
             executor.on('workflow:plan_created', planCreatedHandler);
 
-            await executor.execute({
+            const result = await executor.execute({
                 messages: [{ role: 'user', content: 'Create something' }],
                 model: 'test',
             });
 
+            expect(result.success).toBe(true);
+            expect(result.output).toBe('Execution result');
             expect(planCreatedHandler).toHaveBeenCalled();
             const plan = planCreatedHandler.mock.calls[0][0] as Plan;
             expect(plan.summary).toBe('Test plan');
@@ -116,7 +114,6 @@ describe('WorkflowExecutor', () => {
         it('should wait for approval when requireApproval is true', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: true, requireApproval: true },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
@@ -146,7 +143,6 @@ describe('WorkflowExecutor', () => {
         it('should cancel workflow when plan is rejected', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: true, requireApproval: true },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
@@ -170,45 +166,10 @@ describe('WorkflowExecutor', () => {
             expect(result.error).toBe('Plan rejected by user');
             expect(result.plan.status).toBe('cancelled');
         });
-    });
 
-    describe('Step-by-Step Execution', () => {
-        it('should execute steps sequentially', async () => {
+        it('should emit progress events during plan-direct execution', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true, retryOnFailure: false },
-            };
-
-            const executor = new WorkflowExecutor(client, config);
-
-            const planJson = JSON.stringify({
-                summary: 'Multi-step plan',
-                steps: [
-                    { number: 1, description: 'First step', expectedTools: [] },
-                    { number: 2, description: 'Second step', expectedTools: [] },
-                ],
-            });
-            mockProvider.setResponses([planJson, 'Step 1 result', 'Step 2 result']);
-
-            const stepStartHandler = vi.fn();
-            const stepCompleteHandler = vi.fn();
-            executor.on('workflow:step_start', stepStartHandler);
-            executor.on('workflow:step_complete', stepCompleteHandler);
-
-            const result = await executor.execute({
-                messages: [{ role: 'user', content: 'Do multi-step task' }],
-                model: 'test',
-            });
-
-            expect(result.success).toBe(true);
-            expect(stepStartHandler).toHaveBeenCalledTimes(2);
-            expect(stepCompleteHandler).toHaveBeenCalledTimes(2);
-        });
-
-        it('should emit progress events during execution', async () => {
-            const config: WorkflowConfig = {
-                planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true },
                 progress: { enabled: true },
             };
 
@@ -236,72 +197,10 @@ describe('WorkflowExecutor', () => {
         });
     });
 
-    describe('Failure Handling', () => {
-        it('should abort on failure with abort strategy', async () => {
-            const config: WorkflowConfig = {
-                planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true, retryOnFailure: false },
-                onFailure: { strategy: 'abort' },
-            };
-
-            const executor = new WorkflowExecutor(client, config);
-
-            const planJson = JSON.stringify({
-                summary: 'Failure test',
-                steps: [
-                    { number: 1, description: 'Will fail', expectedTools: [] },
-                    { number: 2, description: 'Should not run', expectedTools: [] },
-                ],
-            });
-
-            // First response is plan, second throws error
-            mockProvider.setResponses([planJson]);
-
-            // Make the step execution fail by not providing a response
-            const failedHandler = vi.fn();
-            executor.on('workflow:failed', failedHandler);
-
-            const result = await executor.execute({
-                messages: [{ role: 'user', content: 'Test' }],
-                model: 'test',
-            });
-
-            // The plan should be created but execution may fail
-            expect(result.plan).toBeDefined();
-        });
-
-        it('should skip failed step with skip strategy', async () => {
-            const config: WorkflowConfig = {
-                planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true, retryOnFailure: false },
-                onFailure: { strategy: 'skip' },
-            };
-
-            const executor = new WorkflowExecutor(client, config);
-
-            const planJson = JSON.stringify({
-                summary: 'Skip test',
-                steps: [
-                    { number: 1, description: 'Step 1', expectedTools: [] },
-                    { number: 2, description: 'Step 2', expectedTools: [] },
-                ],
-            });
-            mockProvider.setResponses([planJson, 'Step 1 result', 'Step 2 result']);
-
-            const result = await executor.execute({
-                messages: [{ role: 'user', content: 'Test' }],
-                model: 'test',
-            });
-
-            expect(result.success).toBe(true);
-        });
-    });
-
     describe('Streaming Execution', () => {
-        it('should stream step-by-step execution', async () => {
+        it('should stream plan-direct execution', async () => {
             const config: WorkflowConfig = {
                 planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true },
             };
 
             const executor = new WorkflowExecutor(client, config);
@@ -323,39 +222,28 @@ describe('WorkflowExecutor', () => {
             }
 
             expect(chunks.length).toBeGreaterThan(0);
-            // Should have workflow step info in chunks
-            const stepChunks = chunks.filter(c => c.workflowStep);
-            expect(stepChunks.length).toBeGreaterThan(0);
+            const textChunks = chunks.filter(c => c.delta);
+            expect(textChunks.some(c => c.delta === 'Streamed content')).toBe(true);
         });
 
-        it('should include workflowStep context in chunks', async () => {
+        it('should stream directly when planning is disabled', async () => {
             const config: WorkflowConfig = {
-                planning: { enabled: true, requireApproval: false },
-                steps: { enabled: true },
+                planning: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, config);
+            mockProvider.setResponses(['Direct streamed content']);
 
-            const planJson = JSON.stringify({
-                summary: 'Context test',
-                steps: [
-                    { number: 1, description: 'Test step', expectedTools: [] },
-                ],
-            });
-            mockProvider.setResponses([planJson, 'Content']);
-
-            let foundStepContext = false;
+            const chunks: any[] = [];
             for await (const chunk of executor.stream({
                 messages: [{ role: 'user', content: 'Test' }],
                 model: 'test',
             })) {
-                if (chunk.workflowStep && chunk.workflowStep.number === 1) {
-                    foundStepContext = true;
-                    expect(chunk.workflowStep.description).toBe('Test step');
-                }
+                chunks.push(chunk);
             }
 
-            expect(foundStepContext).toBe(true);
+            expect(chunks.length).toBeGreaterThan(0);
+            expect(chunks.some(c => c.delta === 'Direct streamed content')).toBe(true);
         });
     });
 
@@ -363,7 +251,6 @@ describe('WorkflowExecutor', () => {
         it('should allow updating config at runtime', () => {
             const initialConfig: WorkflowConfig = {
                 planning: { enabled: false },
-                steps: { enabled: false },
             };
 
             const executor = new WorkflowExecutor(client, initialConfig);
@@ -371,11 +258,9 @@ describe('WorkflowExecutor', () => {
 
             executor.setConfig({
                 planning: { enabled: true },
-                steps: { enabled: true },
             });
 
             expect(executor.getConfig().planning?.enabled).toBe(true);
-            expect(executor.getConfig().steps?.enabled).toBe(true);
         });
     });
 });

@@ -302,8 +302,22 @@ export class SlackChannel extends BaseChannel {
   normalize(incoming: unknown): AgentInput {
     const event = incoming as Record<string, unknown>;
 
-    // Extract message text
-    const text = (event.text as string) || '';
+    // Extract message text and normalise Slack mrkdwn formatting so the LLM
+    // receives clean plain text rather than Slack's raw encoding:
+    //   <https://example.com>            → https://example.com
+    //   <https://example.com|label>      → label (https://example.com)
+    //   <@U12345>                        → kept as-is (mention token, used by mentions extractor)
+    //   <!here>, <!channel>              → @here, @channel
+    const rawText = (event.text as string) || '';
+    const text = rawText
+      // Named links: <URL|label> → label (URL)
+      .replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, '$2 ($1)')
+      // Plain links: <URL> → URL  (skip <@…> and <!…> tokens)
+      .replace(/<(https?:\/\/[^>]+)>/g, '$1')
+      // Broadcast mentions
+      .replace(/<!here>/g, '@here')
+      .replace(/<!channel>/g, '@channel')
+      .replace(/<!everyone>/g, '@everyone');
 
     // Extract timestamps.
     // thread_ts is present only on replies — it's the parent message ts.

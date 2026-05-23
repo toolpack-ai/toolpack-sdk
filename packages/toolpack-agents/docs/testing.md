@@ -17,6 +17,9 @@ The testing utilities live in the `./testing` sub-path export, not in the main p
 - [MockResponse matching](#mockresponse-matching)
 - [captureEvents()](#captureevents)
 - [createMockKnowledge()](#createmockknowledge)
+- [createMockToolpackSimple()](#createmocktoolpacksimple)
+- [createMockToolpackSequence()](#createmocktoolpacksequence)
+- [MockKnowledge class](#mockknowledge-class)
 - [Testing patterns](#testing-patterns)
 
 ---
@@ -361,6 +364,98 @@ const tool = knowledge.toTool();   // returns a RequestToolDefinition
 ```
 
 Uses simple keyword matching (not semantic similarity) for queries, which is sufficient for most test assertions.
+
+---
+
+## createMockToolpackSimple()
+
+Creates a minimal mock `Toolpack` that returns the same fixed response for every `generate()` call. Useful when the agent's AI response content is not the focus of the test.
+
+```typescript
+import { createMockToolpackSimple } from '@toolpack-sdk/agents/testing';
+
+function createMockToolpackSimple(response?: string): Toolpack
+```
+
+- `response` — the string returned by every `generate()` call. Defaults to `'Mock AI response'`.
+
+```typescript
+const toolpack = createMockToolpackSimple('Hello!');
+const agent = new MyAgent({ toolpack });
+
+const result = await agent.run('Hi');
+expect(result.output).toBe('Hello!');
+```
+
+---
+
+## createMockToolpackSequence()
+
+Creates a mock `Toolpack` that returns responses from a fixed array, one per `generate()` call. After the array is exhausted, subsequent calls return `'No more mock responses'`.
+
+```typescript
+import { createMockToolpackSequence } from '@toolpack-sdk/agents/testing';
+
+function createMockToolpackSequence(responses: string[]): Toolpack
+```
+
+Useful for testing multi-turn conversations or stateful interactions where the AI output changes across turns.
+
+```typescript
+const toolpack = createMockToolpackSequence([
+  'First response',
+  'Second response',
+  'Third response',
+]);
+
+// First generate() call → 'First response'
+// Second generate() call → 'Second response'
+// ...
+```
+
+---
+
+## MockKnowledge class
+
+A lightweight in-memory knowledge store for synchronous test setup. Returned by `createMockKnowledgeSync()`. Implements `query()`, `add()`, `getAllChunks()`, `clear()`, and `toTool()`.
+
+```typescript
+import { MockKnowledge, createMockKnowledgeSync } from '@toolpack-sdk/agents/testing';
+
+class MockKnowledge {
+  // Query using simple keyword matching (not semantic similarity)
+  async query(text: string, options?: QueryOptions): Promise<QueryResult[]>
+
+  // Add a chunk to the in-memory store; returns the generated chunk ID
+  async add(content: string, metadata?: Record<string, unknown>): Promise<string>
+
+  // Return a copy of all stored chunks
+  getAllChunks(): Chunk[]
+
+  // Remove all stored chunks
+  clear(): void
+
+  // Return a RequestToolDefinition-compatible object for wiring into a mock Toolpack
+  toTool(): { name: string; execute: (params: { query: string; ... }) => Promise<...>; ... }
+}
+```
+
+`MockKnowledge` is not a full `Knowledge` instance — it uses simple keyword matching instead of vector similarity, which is sufficient for most test assertions. Use `createMockKnowledge()` (async) when you need real embedding behaviour.
+
+```typescript
+const knowledge = createMockKnowledgeSync({
+  initialChunks: [
+    { content: 'Refund policy: 30-day no-questions-asked return' },
+  ],
+});
+
+// Wire into a test agent via toolpack knowledge option
+const results = await knowledge.query('refund');
+expect(results[0].chunk.content).toContain('Refund policy');
+
+// Add more content at any point
+await knowledge.add('Shipping time: 3-5 business days');
+```
 
 ---
 

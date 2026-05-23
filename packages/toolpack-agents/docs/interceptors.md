@@ -7,6 +7,8 @@ Interceptors are middleware functions that run before `invokeAgent()` is called.
 - [Interceptor type](#interceptor-type)
 - [InterceptorContext](#interceptorcontext)
 - [SKIP_SENTINEL](#skip_sentinel)
+- [CAPTURE_INTERCEPTOR_MARKER](#capture_interceptor_marker)
+- [InvocationDepthExceededError](#invocationdepthexceedederror)
 - [Composing and executing chains](#composing-and-executing-chains)
 - [Automatic capture interceptor](#automatic-capture-interceptor)
 - [Built-in interceptors](#built-in-interceptors)
@@ -89,6 +91,62 @@ const myInterceptor: Interceptor = async (input, ctx, next) => {
   }
   return next(input);
 };
+```
+
+---
+
+## CAPTURE_INTERCEPTOR_MARKER
+
+A unique symbol exported from `@toolpack-sdk/agents`. `BaseAgent._getEffectiveInterceptors()` checks for its presence to determine whether a capture interceptor is already in the chain before auto-prepending one.
+
+```typescript
+import { CAPTURE_INTERCEPTOR_MARKER } from '@toolpack-sdk/agents';
+```
+
+You only need this symbol if you are building a custom capture interceptor that should be treated as the canonical capture step (so the framework does not add a second one). Mark your interceptor's function object with the symbol:
+
+```typescript
+import { CAPTURE_INTERCEPTOR_MARKER } from '@toolpack-sdk/agents';
+import type { Interceptor } from '@toolpack-sdk/agents';
+
+const myCapture: Interceptor & { [CAPTURE_INTERCEPTOR_MARKER]?: true } = async (input, ctx, next) => {
+  // custom capture logic
+  return next(input);
+};
+myCapture[CAPTURE_INTERCEPTOR_MARKER] = true;
+
+agent.interceptors = [myCapture];
+// BaseAgent will see CAPTURE_INTERCEPTOR_MARKER and skip auto-prepending createCaptureInterceptor
+```
+
+---
+
+## InvocationDepthExceededError
+
+A chain-level error thrown when the `delegateAndWait()` call inside an interceptor chain exceeds the configured `maxInvocationDepth`. This is distinct from `DepthExceededError` (thrown by `createDepthGuardInterceptor` on the interceptor's `invocationDepth` counter).
+
+```typescript
+import { InvocationDepthExceededError } from '@toolpack-sdk/agents';
+```
+
+`InvocationDepthExceededError` is thrown by `composeChain`'s internal `delegateAndWait` wrapper when the depth counter would exceed `maxInvocationDepth` (set in `InterceptorChainConfig`). Its message is:
+
+```
+Invocation depth <currentDepth> exceeds maximum <maxDepth>
+```
+
+Catch it if you need to handle runaway delegation at the chain level rather than at the interceptor level:
+
+```typescript
+import { InvocationDepthExceededError } from '@toolpack-sdk/agents';
+
+try {
+  const result = await executeChain(chain, input);
+} catch (err) {
+  if (err instanceof InvocationDepthExceededError) {
+    console.warn('Delegation chain too deep:', err.message);
+  }
+}
 ```
 
 ---

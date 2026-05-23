@@ -12,6 +12,7 @@ import { ProviderInfo, ProviderModelInfo, RequestToolDefinition, ContextWindowCo
 import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
+import { VertexAIAdapter } from './providers/vertexai/index.js';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
 import { OpenRouterAdapter } from './providers/openrouter/index.js';
 import { getOllamaBaseUrl, loadConfig, discoverConfigPath } from './providers/config.js';
@@ -45,6 +46,15 @@ export interface ProviderOptions {
 
     /** OpenRouter only: your site name for the leaderboard/attribution header */
     siteName?: string;
+
+    /** Vertex AI only: GCP project ID. Falls back to TOOLPACK_VERTEXAI_PROJECT / VERTEX_AI_PROJECT / GOOGLE_CLOUD_PROJECT env vars. */
+    projectId?: string;
+
+    /** Vertex AI only: GCP region. Defaults to 'us-central1'. Falls back to TOOLPACK_VERTEXAI_LOCATION / VERTEX_AI_LOCATION env vars. */
+    location?: string;
+
+    /** Vertex AI only: optional Google Auth options (keyFilename or credentials). When omitted, ADC is used. */
+    googleAuthOptions?: { keyFilename?: string; credentials?: Record<string, unknown> };
 }
 
 export interface ToolpackInitConfig {
@@ -59,6 +69,15 @@ export interface ToolpackInitConfig {
 
     /** Model name for the single provider */
     model?: string;
+
+    /** Vertex AI only: GCP project ID. Falls back to TOOLPACK_VERTEXAI_PROJECT / VERTEX_AI_PROJECT / GOOGLE_CLOUD_PROJECT env vars. */
+    projectId?: string;
+
+    /** Vertex AI only: GCP region. Defaults to 'us-central1'. */
+    location?: string;
+
+    /** Vertex AI only: optional Google Auth options. When omitted, ADC is used automatically. */
+    googleAuthOptions?: { keyFilename?: string; credentials?: Record<string, unknown> };
 
     /** Load built-in tools (fs, http, etc.)? Default: false */
     tools?: boolean;
@@ -393,6 +412,9 @@ export class Toolpack extends EventEmitter {
             const opts: ProviderOptions = {
                 apiKey: config.apiKey,
                 model: config.model,
+                projectId: config.projectId,
+                location: config.location,
+                googleAuthOptions: config.googleAuthOptions,
             };
             const provider = await Toolpack.createProvider(config.provider, opts, config.configPath, false);
             if (provider) {
@@ -546,6 +568,15 @@ export class Toolpack extends EventEmitter {
      */
     private static async createProvider(name: string, opts: ProviderOptions, configPath?: string, skipIfNoKey = false): Promise<ProviderAdapter | null> {
         // 1. API Providers
+        // Vertex AI — uses GCP auth (ADC or service account), no API key
+        if (name === 'vertexai') {
+            return new VertexAIAdapter({
+                projectId: opts.projectId,
+                location: opts.location,
+                googleAuthOptions: opts.googleAuthOptions,
+            });
+        }
+
         if (['openai', 'anthropic', 'gemini', 'openrouter'].includes(name)) {
             const envKey = `TOOLPACK_${name.toUpperCase()}_KEY`;
             const apiKey = opts.apiKey || process.env[envKey] || process.env[`${name.toUpperCase()}_API_KEY`];
@@ -605,7 +636,7 @@ export class Toolpack extends EventEmitter {
         req = this.prepareRequest(req);
 
         const mode = this.getMode();
-        if (mode?.workflow?.planning?.enabled || mode?.workflow?.steps?.enabled) {
+        if (mode?.workflow?.planning?.enabled) {
             // Workflow mode: use WorkflowExecutor
             const result = await this.workflowExecutor.execute(req, providerName || this.activeProviderName);
 
@@ -678,7 +709,7 @@ export class Toolpack extends EventEmitter {
         const provider = providerName || this.activeProviderName;
 
         // If mode has workflow enabled, use WorkflowExecutor.stream()
-        if (mode?.workflow?.planning?.enabled || mode?.workflow?.steps?.enabled) {
+        if (mode?.workflow?.planning?.enabled) {
             yield* this.workflowExecutor.stream(preparedRequest, provider);
             return;
         }
@@ -891,11 +922,6 @@ export class Toolpack extends EventEmitter {
         executor.on('workflow:plan_created', (plan) => this.emit('workflow:plan_created', plan));
         executor.on('workflow:plan_decision', (plan, app) => this.emit('workflow:plan_decision', plan, app));
         executor.on('workflow:started', (plan) => this.emit('workflow:started', plan));
-        executor.on('workflow:step_start', (s, p) => this.emit('workflow:step_start', s, p));
-        executor.on('workflow:step_complete', (s, p) => this.emit('workflow:step_complete', s, p));
-        executor.on('workflow:step_failed', (s, e, p) => this.emit('workflow:step_failed', s, e, p));
-        executor.on('workflow:step_retry', (s, a, p) => this.emit('workflow:step_retry', s, a, p));
-        executor.on('workflow:step_added', (s, p) => this.emit('workflow:step_added', s, p));
         executor.on('workflow:progress', (pr) => this.emit('workflow:progress', pr));
         executor.on('workflow:completed', (p, r) => this.emit('workflow:completed', p, r));
         executor.on('workflow:failed', (p, e) => this.emit('workflow:failed', p, e));

@@ -40,7 +40,7 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
 
     this.dbPath = path.join(basePath, fileName);
 
-    fs.mkdirSync(basePath, { recursive: true });
+    fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
 
     this.db = new Database(this.dbPath);
     this.db.pragma('journal_mode = WAL');

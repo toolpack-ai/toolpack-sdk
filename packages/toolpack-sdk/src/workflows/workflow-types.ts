@@ -1,4 +1,4 @@
-import { Plan, PlanStep } from './planning/plan-types.js';
+import { Plan } from './planning/plan-types.js';
 import { CompletionResponse } from '../types/index.js';
 
 export interface WorkflowConfig {
@@ -25,30 +25,6 @@ export interface WorkflowConfig {
     };
 
     /**
-     * Step-based execution configuration.
-     * If enabled, tasks are broken into steps and executed sequentially.
-     */
-    steps?: {
-        /** Enable step-based execution. Default: false */
-        enabled: boolean;
-
-        /** Retry failed steps. Default: true */
-        retryOnFailure?: boolean;
-
-        /** Maximum retry attempts per step. Default: 3 */
-        maxRetries?: number;
-
-        /** Allow adding/modifying steps during execution. Default: true */
-        allowDynamicSteps?: boolean;
-
-        /** Maximum total steps (including dynamic). Default: 50 */
-        maxTotalSteps?: number;
-
-        /** Custom step execution prompt. Default: uses built-in STEP_EXECUTION_PROMPT */
-        stepPrompt?: string;
-    };
-
-    /**
      * Progress reporting configuration.
      */
     progress?: {
@@ -57,14 +33,6 @@ export interface WorkflowConfig {
 
         /** Report estimated completion percentage. Default: true */
         reportPercentage?: boolean;
-    };
-
-    /**
-     * Failure handling configuration.
-     */
-    onFailure?: {
-        /** Strategy when a step fails after all retries. Default: 'abort' */
-        strategy: 'abort' | 'skip' | 'ask_user';
     };
 
     /**
@@ -84,11 +52,10 @@ export interface WorkflowConfig {
 }
 
 /**
- * Default workflow config (direct execution, no planning/steps).
+ * Default workflow config (direct execution, no planning).
  */
 export const DEFAULT_WORKFLOW_CONFIG: WorkflowConfig = {
     planning: { enabled: false },
-    steps: { enabled: false },
     progress: { enabled: true },
 };
 
@@ -101,21 +68,6 @@ export interface WorkflowEvents {
 
     /** Emitted when plan execution starts */
     'workflow:started': (plan: Plan) => void;
-
-    /** Emitted when a step starts */
-    'workflow:step_start': (step: PlanStep, plan: Plan) => void;
-
-    /** Emitted when a step completes successfully */
-    'workflow:step_complete': (step: PlanStep, plan: Plan) => void;
-
-    /** Emitted when a step fails */
-    'workflow:step_failed': (step: PlanStep, error: Error, plan: Plan) => void;
-
-    /** Emitted when a step is retried */
-    'workflow:step_retry': (step: PlanStep, attempt: number, plan: Plan) => void;
-
-    /** Emitted when a new step is dynamically added */
-    'workflow:step_added': (step: PlanStep, plan: Plan) => void;
 
     /** Emitted for progress updates */
     'workflow:progress': (progress: WorkflowProgress) => void;

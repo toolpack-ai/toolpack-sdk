@@ -10,12 +10,21 @@ export const gitDiffTool: ToolDefinition = {
     parameters: gitDiffSchema,
     execute: async (args: Record<string, unknown>) => {
         const path = args.path as string | undefined;
+        const base = args.base as string | undefined;
+        const head = args.head as string | undefined;
         const staged = args.staged as boolean | undefined;
+        const cloneDir = args.cloneDir as string | undefined;
 
         try {
-            const git = getGit();
+            const git = getGit(cloneDir);
             const options: string[] = [];
 
+            if (base || head) {
+                if (!base || !head) {
+                    return 'Error getting git diff: both base and head are required when comparing revisions.';
+                }
+                options.push(`${base}...${head}`);
+            }
             if (staged) {
                 options.push('--cached');
             }
