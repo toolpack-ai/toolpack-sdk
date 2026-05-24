@@ -96,7 +96,6 @@ function mergeWithDefaults(partial: Partial<ToolsConfig>): ToolsConfig {
         maxToolRounds: partial.maxToolRounds ?? DEFAULT_TOOLS_CONFIG.maxToolRounds,
         toolChoicePolicy: partial.toolChoicePolicy ?? DEFAULT_TOOLS_CONFIG.toolChoicePolicy,
         resultMaxChars: partial.resultMaxChars ?? DEFAULT_TOOLS_CONFIG.resultMaxChars,
-        intelligentToolDetection: partial.intelligentToolDetection,
         enabledTools: partial.enabledTools ?? DEFAULT_TOOLS_CONFIG.enabledTools,
         enabledToolCategories: partial.enabledToolCategories ?? DEFAULT_TOOLS_CONFIG.enabledToolCategories,
         toolSearch: partial.toolSearch ?? DEFAULT_TOOLS_CONFIG.toolSearch,

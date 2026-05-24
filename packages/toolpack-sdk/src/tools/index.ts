@@ -14,6 +14,7 @@ export {
     fsExistsTool, fsStatTool, fsListDirTool, fsCreateDirTool,
     fsMoveTool, fsCopyTool, fsReadFileRangeTool, fsSearchTool,
     fsReplaceInFileTool, fsTreeTool,
+    fsGlobTool, fsDeleteDirTool, fsBatchReadTool, fsBatchWriteTool,
 } from './fs-tools/index.js';
 
 // exec-tools
@@ -47,18 +48,23 @@ export {
     githubPrDiffGetTool,
     githubPrFilesListTool,
     githubPrReviewsSubmitTool,
+    githubIssuesCommentsCreateTool,
 } from './github-tools/index.js';
 
 // web-tools
 export {
     webToolsProject,
     webFetchTool, webSearchTool, webScrapeTool, webExtractLinksTool,
+    webMapTool, webMetadataTool, webSitemapTool, webFeedTool, webScreenshotTool,
 } from './web-tools/index.js';
 
 // coding-tools
 export {
     codingToolsProject,
     codingFindSymbolTool, codingGetSymbolsTool, codingGetImportsTool,
+    codingFindReferencesTool, codingGoToDefinitionTool, codingMultiFileEditTool,
+    codingRefactorRenameTool, codingGetOutlineTool, codingGetDiagnosticsTool,
+    codingGetExportsTool, codingExtractFunctionTool, codingGetCallHierarchyTool,
 } from './coding-tools/index.js';
 
 // git-tools
@@ -101,7 +107,7 @@ export {
     slackToolsProject,
     slackChatPostMessageTool, slackChatPostEphemeralTool,
     slackReactionsAddTool, slackConversationsHistoryTool,
-    slackAuthTestTool,
+    slackConversationsRepliesTool, slackAuthTestTool,
 } from './slack-tools/index.js';
 
 export{ McpToolManager,createMcpToolProject,disconnectMcpToolProject } from './mcp-tools/index.js';

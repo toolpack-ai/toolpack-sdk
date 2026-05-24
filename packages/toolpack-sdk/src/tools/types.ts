@@ -129,14 +129,6 @@ export interface ToolCategory {
 // ── Tools Config (mirrors toolpack.config.tools.json) ─────────
 
 /**
- * @deprecated This interface is deprecated and will be removed in a future version.
- */
-export interface IntelligentToolDetectionConfig {
-    enabled: boolean;
-    maxFollowUpMessages: number; // How many messages after a tool call to check (default: 5)
-}
-
-/**
  * Tool Search Configuration (Anthropic-style on-demand tool discovery)
  */
 export interface ToolSearchConfig {
@@ -153,10 +145,6 @@ export interface ToolsConfig {
     maxToolRounds: number;
     toolChoicePolicy?: 'auto' | 'required' | 'required_for_actions';
     resultMaxChars?: number;
-    /**
-     * @deprecated This feature is deprecated and will be removed in a future version. Use `toolSearch` instead.
-     */
-    intelligentToolDetection?: IntelligentToolDetectionConfig;
     enabledTools: string[];
     enabledToolCategories: string[];
     toolSearch?: ToolSearchConfig;     // NEW: Tool search configuration

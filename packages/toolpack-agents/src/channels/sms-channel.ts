@@ -95,7 +95,6 @@ export class SMSChannel extends BaseChannel {
         to: recipient,
       });
 
-      console.log(`[SMSChannel] SMS sent: ${message.sid}`);
     } catch (error) {
       console.error('[SMSChannel] Failed to send SMS:', error);
       throw new Error(`Failed to send SMS: ${error instanceof Error ? error.message : String(error)}`);

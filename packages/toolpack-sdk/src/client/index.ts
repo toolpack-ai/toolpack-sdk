@@ -59,120 +59,6 @@ function inferNeedsTools(messages: CompletionRequest['messages']): boolean {
     return patterns.some(r => r.test(text));
 }
 
-function isAfterToolCall(messages: CompletionRequest['messages'], maxDistance: number): boolean {
-    // Find the last tool call in the conversation
-    let lastToolCallIndex = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i] as any;
-        if (msg.role === 'tool' || (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)) {
-            lastToolCallIndex = i;
-            break;
-        }
-    }
-
-    if (lastToolCallIndex === -1) return false;
-
-    // Check if current message is within maxDistance messages after the tool call
-    const distance = messages.length - 1 - lastToolCallIndex;
-    return distance > 0 && distance <= maxDistance;
-}
-
-function getFastModelForProvider(providerName: string): string {
-    const defaultFastModels: Record<string, string> = {
-        openai: 'gpt-4.1-mini',
-        anthropic: 'claude-3-haiku-20240307',
-        gemini: 'gemini-2.0-flash-exp',
-        ollama: 'llama3.2',
-    };
-    return defaultFastModels[providerName] || 'default';
-}
-
-function extractToolContext(messages: CompletionRequest['messages']): string {
-    // Extract context from recent tool calls (last 2 tool rounds)
-    const toolInfo: string[] = [];
-    let toolRoundsFound = 0;
-
-    for (let i = messages.length - 1; i >= 0 && toolRoundsFound < 2; i--) {
-        const msg = messages[i] as any;
-
-        // Extract from assistant's tool calls
-        if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-            toolRoundsFound++;
-            for (const toolCall of msg.tool_calls) {
-                const toolName = toolCall.function?.name || 'unknown';
-                const args = toolCall.function?.arguments;
-
-                // Extract relevant context from arguments
-                let context = `Tool: ${toolName}`;
-                if (args) {
-                    try {
-                        const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
-                        // Extract URLs, file paths, sections, queries
-                        if (parsedArgs.url) context += ` (URL: ${parsedArgs.url})`;
-                        if (parsedArgs.file_path) context += ` (File: ${parsedArgs.file_path})`;
-                        if (parsedArgs.section) context += ` (Section: ${parsedArgs.section})`;
-                        if (parsedArgs.query) context += ` (Query: ${parsedArgs.query})`;
-                        if (parsedArgs.command) context += ` (Command: ${parsedArgs.command.substring(0, 50)})`;
-                    } catch (e) {
-                        // Ignore parse errors
-                    }
-                }
-                toolInfo.push(context);
-            }
-        }
-    }
-
-    return toolInfo.length > 0 ? toolInfo.join(', ') : 'None';
-}
-
-async function inferNeedsToolsWithAI(
-    provider: ProviderAdapter,
-    providerName: string,
-    messages: CompletionRequest['messages'],
-    fastModel: string
-): Promise<boolean> {
-    const requestId = newRequestId();
-    logDebug(`[AIClient][${requestId}] inferNeedsToolsWithAI() provider=${providerName} model=${fastModel}`);
-
-    // Extract tool context from recent tool calls
-    const toolContext = extractToolContext(messages);
-
-    // Get the last user message
-    const lastUserMessage = messages.filter((m: any) => m.role === 'user').slice(-1)[0] as any;
-    const userMessage = lastUserMessage?.content || '';
-
-    // Build context-aware prompt
-    const prompt = `Recent tool usage: ${toolContext}
-
-User's new message: "${userMessage}"
-
-Does this message:
-1. Ask about the same topic/context as recent tools? OR
-2. Request new information that requires external tools (web search, file access, commands)?
-
-If the message is general knowledge (math, definitions, explanations) or completely unrelated to recent tool context, answer NO.
-If it asks about the same context OR needs new external information, answer YES.
-
-Answer only: YES or NO`;
-
-    try {
-        const response = await provider.generate({
-            model: fastModel,
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 10,
-            temperature: 0,
-        });
-
-        const answer = (response.content || '').trim().toUpperCase();
-        const needsTools = answer.startsWith('YES');
-        logDebug(`[AIClient][${requestId}] inferNeedsToolsWithAI() context="${toolContext}" message="${userMessage.substring(0, 50)}" result=${needsTools} (raw: ${answer})`);
-        return needsTools;
-    } catch (error) {
-        logWarn(`[AIClient][${requestId}] inferNeedsToolsWithAI() error=${error} - falling back to false`);
-        return false;
-    }
-}
-
 function inferLookupOnly(messages: CompletionRequest['messages']): boolean {
     const text = extractLastUserText(messages).toLowerCase();
     if (!text) return false;
@@ -628,20 +514,9 @@ export class AIClient extends EventEmitter {
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
-            // Hybrid tool detection: regex first, then AI for follow-ups
+            // Hybrid tool detection: regex-based inference
             let needsTools = inferNeedsTools(enrichedRequest.messages);
-            const intelligentDetection = this.toolsConfig.intelligentToolDetection;
             let aiInferenceUsed = false;
-
-            if (!needsTools && intelligentDetection?.enabled && hasTools) {
-                const afterToolCall = isAfterToolCall(enrichedRequest.messages, intelligentDetection.maxFollowUpMessages);
-                if (afterToolCall) {
-                    logInfo(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
-                    const fastModel = getFastModelForProvider(resolvedProviderName || 'openai');
-                    needsTools = await inferNeedsToolsWithAI(provider, resolvedProviderName || 'openai', enrichedRequest.messages, fastModel);
-                    aiInferenceUsed = true;
-                }
-            }
 
             const lookupOnly = inferLookupOnly(enrichedRequest.messages);
 
@@ -856,20 +731,9 @@ export class AIClient extends EventEmitter {
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
-            // Hybrid tool detection: regex first, then AI for follow-ups
+            // Hybrid tool detection: regex-based inference
             let needsTools = inferNeedsTools(enrichedRequest.messages);
-            const intelligentDetection = this.toolsConfig.intelligentToolDetection;
             let aiInferenceUsed = false;
-
-            if (!needsTools && intelligentDetection?.enabled && hasTools) {
-                const afterToolCall = isAfterToolCall(enrichedRequest.messages, intelligentDetection.maxFollowUpMessages);
-                if (afterToolCall) {
-                    logInfo(`[AIClient][${requestId}] Message is after tool call, using AI to infer tool needs`);
-                    const fastModel = getFastModelForProvider(resolvedProviderName || 'openai');
-                    needsTools = await inferNeedsToolsWithAI(provider, resolvedProviderName || 'openai', enrichedRequest.messages, fastModel);
-                    aiInferenceUsed = true;
-                }
-            }
 
             const lookupOnly = inferLookupOnly(enrichedRequest.messages);
 

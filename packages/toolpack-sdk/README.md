@@ -81,7 +81,7 @@ for await (const chunk of sdk.stream({
 
 // Switch providers on the fly
 const anthropicResponse = await sdk.generate({
-  model: 'claude-sonnet-4-20250514',
+  model: 'your-model',
   messages: [{ role: 'user', content: 'Hello from Anthropic!' }],
 }, 'anthropic');
 ```
@@ -107,7 +107,7 @@ const sdk = await Toolpack.init({
 });
 
 const podsResponse = await sdk.generate({
-  model: 'gpt-4o',
+  model: 'your-model',
   messages: [
     {
       role: 'user',
@@ -118,7 +118,7 @@ const podsResponse = await sdk.generate({
 console.log(podsResponse.content);
 
 const applyResponse = await sdk.generate({
-  model: 'gpt-4o',
+  model: 'your-model',
   messages: [
     {
       role: 'user',
@@ -985,7 +985,7 @@ class FintechResearchAgent extends ResearchAgent {
   systemPrompt = `You are a research agent focused on fintech.
                   Always cite sources and flag regulatory implications.`;
   provider = 'anthropic';
-  model = 'claude-sonnet-4-20250514';
+  model = 'your-model';
 
   async onComplete(result) {
     // Store research in knowledge base

@@ -125,14 +125,6 @@ export function logInfo(message: string): void { writeLog('info', message); }
 export function logDebug(message: string): void { writeLog('debug', message); }
 export function logTrace(message: string): void { writeLog('trace', message); }
 
-/**
- * Log an info message.
- * @deprecated Use `logInfo()`, `logDebug()`, etc. instead. Kept for backward compatibility.
- */
-export function log(message: string): void {
-    logInfo(message);
-}
-
 // ── Formatting Utilities ─────────────────────────────────────────
 
 export function redact(text: string): string {

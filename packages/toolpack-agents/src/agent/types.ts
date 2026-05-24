@@ -252,12 +252,6 @@ export interface ChannelInterface {
 }
 
 /**
- * Alias for ChannelInterface to match spec naming convention.
- * @deprecated Use ChannelInterface for new code
- */
-export type BaseChannel = ChannelInterface;
-
-/**
  * Represents a pending human-in-the-loop question.
  * Stored in-memory in PendingAsksStore (inside AgentRegistry).
  */

@@ -91,8 +91,7 @@ export class EmailChannel extends BaseChannel {
     };
 
     try {
-      const info = await this.transporter.sendMail(mailOptions);
-      console.log(`[EmailChannel] Email sent: ${info.messageId}`);
+      await this.transporter.sendMail(mailOptions);
     } catch (error) {
       console.error('[EmailChannel] Failed to send email:', error);
       throw new Error(`Failed to send email: ${error instanceof Error ? error.message : String(error)}`);
