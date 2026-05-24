@@ -515,8 +515,7 @@ export class AIClient extends EventEmitter {
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
             // Hybrid tool detection: regex-based inference
-            let needsTools = inferNeedsTools(enrichedRequest.messages);
-            let aiInferenceUsed = false;
+            const needsTools = inferNeedsTools(enrichedRequest.messages);
 
             const lookupOnly = inferLookupOnly(enrichedRequest.messages);
 
@@ -524,13 +523,8 @@ export class AIClient extends EventEmitter {
                 policy === 'required' || (policy === 'required_for_actions' && needsTools)
             );
 
-            const shouldForceNone = !toolChoiceWasSet && hasTools && aiInferenceUsed && !needsTools;
-
             if (shouldForceRequired) {
                 (enrichedRequest as any).tool_choice = 'required';
-            } else if (shouldForceNone) {
-                (enrichedRequest as any).tool_choice = 'none';
-                logInfo(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
@@ -732,8 +726,7 @@ export class AIClient extends EventEmitter {
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
             // Hybrid tool detection: regex-based inference
-            let needsTools = inferNeedsTools(enrichedRequest.messages);
-            let aiInferenceUsed = false;
+            const needsTools = inferNeedsTools(enrichedRequest.messages);
 
             const lookupOnly = inferLookupOnly(enrichedRequest.messages);
 
@@ -741,13 +734,8 @@ export class AIClient extends EventEmitter {
                 policy === 'required' || (policy === 'required_for_actions' && needsTools)
             );
 
-            const shouldForceNone = !toolChoiceWasSet && hasTools && aiInferenceUsed && !needsTools;
-
             if (shouldForceRequired) {
                 (enrichedRequest as any).tool_choice = 'required';
-            } else if (shouldForceNone) {
-                (enrichedRequest as any).tool_choice = 'none';
-                logInfo(`[AIClient][${requestId}] AI inference determined no tools needed, setting tool_choice=none`);
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
