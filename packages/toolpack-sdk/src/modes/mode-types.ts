@@ -83,6 +83,16 @@ export interface ModeConfig {
      * Shorthand for "no tool calls at all".
      */
     blockAllTools: boolean;
+
+    /**
+     * Response format constraint for all requests in this mode.
+     * - 'json_object': instructs the model to return valid JSON as its text content.
+     *   Useful for evaluator/parser agents whose final response must be machine-readable.
+     *   Tool-call rounds are unaffected — the model still returns functionCall parts
+     *   normally; the format only applies to text content.
+     * - 'text' (default): plain text, no constraint.
+     */
+    response_format?: 'text' | 'json_object';
 }
 
 /**

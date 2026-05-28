@@ -181,34 +181,33 @@ export class ToolOrchestrator {
     
     /**
      * Execute a batch of tools with a concurrency limit.
+     * Uses Promise.allSettled so a single tool failure never drops sibling results —
+     * every tool call gets a result entry even if its executor threw.
      */
     private async executeBatchWithLimit(
         batch: ToolCallResult[],
         executor: (toolCall: ToolCallResult) => Promise<string>,
         maxConcurrent: number
     ): Promise<Array<{ id: string; result: string }>> {
-        const results: Array<{ id: string; result: string }> = [];
-        
-        // If batch is smaller than limit, execute all in parallel
+        const settled = async (chunk: ToolCallResult[]): Promise<Array<{ id: string; result: string }>> => {
+            const outcomes = await Promise.allSettled(
+                chunk.map(async (toolCall) => ({ id: toolCall.id, result: await executor(toolCall) }))
+            );
+            return outcomes.map((outcome, i) =>
+                outcome.status === 'fulfilled'
+                    ? outcome.value
+                    : { id: chunk[i].id, result: JSON.stringify({ error: outcome.reason?.message ?? 'Tool execution failed' }) }
+            );
+        };
+
         if (batch.length <= maxConcurrent) {
-            const batchPromises = batch.map(async (toolCall) => {
-                const result = await executor(toolCall);
-                return { id: toolCall.id, result };
-            });
-            return await Promise.all(batchPromises);
+            return settled(batch);
         }
-        
-        // Otherwise, execute in chunks
+
+        const results: Array<{ id: string; result: string }> = [];
         for (let i = 0; i < batch.length; i += maxConcurrent) {
-            const chunk = batch.slice(i, i + maxConcurrent);
-            const chunkPromises = chunk.map(async (toolCall) => {
-                const result = await executor(toolCall);
-                return { id: toolCall.id, result };
-            });
-            const chunkResults = await Promise.all(chunkPromises);
-            results.push(...chunkResults);
+            results.push(...await settled(batch.slice(i, i + maxConcurrent)));
         }
-        
         return results;
     }
     

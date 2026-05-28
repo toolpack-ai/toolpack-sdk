@@ -206,7 +206,11 @@ export class GeminiAdapter extends ProviderAdapter {
                     maxOutputTokens: request.max_tokens,
                     temperature: request.temperature,
                     topP: request.top_p,
-                    responseMimeType: request.response_format === 'json_object' ? 'application/json' : 'text/plain',
+                    // responseMimeType must not be 'application/json' when tools are present —
+                    // Gemini does not support both simultaneously and will truncate responses.
+                    responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+                        ? 'application/json'
+                        : 'text/plain',
                 },
             });
 
@@ -285,7 +289,11 @@ export class GeminiAdapter extends ProviderAdapter {
                     maxOutputTokens: request.max_tokens,
                     temperature: request.temperature,
                     topP: request.top_p,
-                    responseMimeType: request.response_format === 'json_object' ? 'application/json' : 'text/plain',
+                    // responseMimeType must not be 'application/json' when tools are present —
+                    // Gemini does not support both simultaneously and will truncate responses.
+                    responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+                        ? 'application/json'
+                        : 'text/plain',
                 },
             });
 

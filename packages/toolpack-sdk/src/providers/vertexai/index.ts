@@ -1,4 +1,5 @@
-import { VertexAI, type GenerativeModel, type Content, type Part } from '@google-cloud/vertexai';
+import { GoogleGenAI } from '@google/genai';
+import type { Content, Part } from '@google/genai';
 import { ProviderAdapter } from '../base/index.js';
 import type {
     CompletionRequest,
@@ -34,7 +35,7 @@ export interface VertexAIConfig {
 }
 
 export class VertexAIAdapter extends ProviderAdapter {
-    private vertexAI: VertexAI;
+    private ai: GoogleGenAI;
     private readonly location: string;
 
     constructor(config: VertexAIConfig = {}) {
@@ -60,11 +61,12 @@ export class VertexAIAdapter extends ProviderAdapter {
             process.env.VERTEX_AI_LOCATION ??
             'us-central1';
 
-        this.vertexAI = new VertexAI({
+        this.ai = new GoogleGenAI({
+            vertexai: true,
             project: projectId,
             location: this.location,
-            googleAuthOptions: config.googleAuthOptions as any,
-        });
+            ...(config.googleAuthOptions ? { googleAuthOptions: config.googleAuthOptions as any } : {}),
+        } as any);
     }
 
     getDisplayName(): string {
@@ -117,12 +119,18 @@ export class VertexAIAdapter extends ProviderAdapter {
             logDebug(`[VertexAI][${requestId}] generate() model=${request.model} messages=${request.messages.length} tools=${request.tools?.length ?? 0}`);
             logMessagePreview(requestId, 'VertexAI', request.messages);
 
-            const model = this.buildModel(request);
+            const { model, config } = this.buildRequestParams(request);
             const { history, lastUserMessage } = this.formatHistory(request.messages);
 
-            const chat = model.startChat({ history });
-            const result = await chat.sendMessage(lastUserMessage);
-            const response = result.response;
+            const contents: Content[] = [
+                ...history,
+                {
+                    role: 'user',
+                    parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage,
+                },
+            ];
+
+            const response = await this.ai.models.generateContent({ model, contents, config });
 
             const { content, toolCalls } = this.parseResponse(response, request.tools);
 
@@ -150,13 +158,20 @@ export class VertexAIAdapter extends ProviderAdapter {
             logDebug(`[VertexAI][${requestId}] stream() model=${request.model} messages=${request.messages.length} tools=${request.tools?.length ?? 0}`);
             logMessagePreview(requestId, 'VertexAI', request.messages);
 
-            const model = this.buildModel(request);
+            const { model, config } = this.buildRequestParams(request);
             const { history, lastUserMessage } = this.formatHistory(request.messages);
 
-            const chat = model.startChat({ history });
-            const result = await chat.sendMessageStream(lastUserMessage);
+            const contents: Content[] = [
+                ...history,
+                {
+                    role: 'user',
+                    parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage,
+                },
+            ];
 
-            for await (const chunk of result.stream) {
+            const chunkStream = await this.ai.models.generateContentStream({ model, contents, config });
+
+            for await (const chunk of chunkStream) {
                 for (const candidate of chunk.candidates ?? []) {
                     for (const part of candidate.content?.parts ?? []) {
                         if ((part as any).functionCall) {
@@ -193,16 +208,18 @@ export class VertexAIAdapter extends ProviderAdapter {
 
     // ─── Private helpers ────────────────────────────────────────────────────────
 
-    private buildModel(request: CompletionRequest): GenerativeModel {
+    private buildRequestParams(request: CompletionRequest): { model: string; config: any } {
         const config: any = {
-            model: request.model,
             systemInstruction: this.extractSystemInstruction(request.messages),
-            generationConfig: {
-                maxOutputTokens: request.max_tokens,
-                temperature: request.temperature,
-                topP: request.top_p,
-                responseMimeType: request.response_format === 'json_object' ? 'application/json' : 'text/plain',
-            },
+            maxOutputTokens: request.max_tokens,
+            temperature: request.temperature,
+            topP: request.top_p,
+            // responseMimeType must not be set to 'application/json' when function declarations
+            // are present — Vertex AI / Gemini does not support both simultaneously and will
+            // truncate the response to a single token. JSON mode is honoured only for tool-free requests.
+            responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+                ? 'application/json'
+                : 'text/plain',
         };
 
         if (request.tools && request.tools.length > 0) {
@@ -215,7 +232,7 @@ export class VertexAIAdapter extends ProviderAdapter {
             }];
         }
 
-        return this.vertexAI.getGenerativeModel(config);
+        return { model: request.model, config };
     }
 
     private formatHistory(messages: Message[]): { history: Content[]; lastUserMessage: Part[] | string } {

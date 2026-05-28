@@ -35,6 +35,11 @@ export function createMode(config: {
     blockedTools?: string[];
     /** If true, no tools at all (pure conversation). Default: false. */
     blockAllTools?: boolean;
+    /**
+     * Response format for all requests in this mode.
+     * Use 'json_object' for evaluator/parser agents that must return valid JSON.
+     */
+    response_format?: 'text' | 'json_object';
     /** Base context configuration. Controls working directory and tool category injection. */
     baseContext?: {
         includeWorkingDirectory?: boolean;
@@ -57,6 +62,7 @@ export function createMode(config: {
         allowedTools: config.allowedTools || [],
         blockedTools: config.blockedTools || [],
         blockAllTools: config.blockAllTools || false,
+        response_format: config.response_format,
         baseContext: config.baseContext,
         workflow: config.workflow,
     };

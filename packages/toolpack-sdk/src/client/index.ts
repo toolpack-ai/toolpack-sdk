@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { ProviderAdapter } from "../providers/base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, RequestToolDefinition, ContextWindowConfig, ProviderModelInfo } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
+import { withRetry } from '../utils/retry.js';
 import { ContextWindowExceededError, SummarizationError } from '../errors/context-window-errors.js';
 import { countTokens, getSafeOutputReserve } from '../utils/token-counter.js';
 import { pruneMessages } from '../utils/message-pruner.js';
@@ -528,12 +529,22 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const outboundReq: any = { ...this.stripRequestTools(enrichedRequest), __toolpack_request_id: requestId };
+            const modeResponseFormat = this.activeMode?.response_format;
+            const outboundReq: any = {
+                ...this.stripRequestTools(enrichedRequest),
+                __toolpack_request_id: requestId,
+                ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
+            };
 
             logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
-            let response = await provider.generate(outboundReq);
+            const callProvider = (req: any) => withRetry(
+                () => provider.generate(req),
+                { onRetry: (n, ms) => logInfo(`[AIClient][${requestId}] Rate limited — retrying in ${ms / 1000}s (attempt ${n}/3)`) },
+            );
+
+            let response = await callProvider(outboundReq);
 
             logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
 
@@ -613,15 +624,27 @@ export class AIClient extends EventEmitter {
 
                     if (useParallel) {
                         logInfo(`[AIClient][${requestId}] Using parallel execution for ${toolCallsToExecute.length} tools`);
-                        const toolResults = await this.toolOrchestrator.executeWithDependencies(
-                            toolCallsToExecute,
-                            (toolCall) => this.executeTool(toolCall, requestToolMap),
-                            5 // maxConcurrent
-                        );
+                        let toolResults: Map<string, string>;
+                        try {
+                            toolResults = await this.toolOrchestrator.executeWithDependencies(
+                                toolCallsToExecute,
+                                (toolCall) => this.executeTool(toolCall, requestToolMap),
+                                5 // maxConcurrent
+                            );
+                        } catch (err: any) {
+                            // Execution engine failed (e.g. circular dependency). Build a full error map
+                            // so every tool_call in the assistant turn gets a matching tool_result entry.
+                            logError(`[AIClient][${requestId}] Parallel tool execution failed: ${err.message}`);
+                            toolResults = new Map(
+                                toolCallsToExecute.map(tc => [tc.id, JSON.stringify({ error: err.message ?? 'Tool execution failed' })])
+                            );
+                        }
 
-                        // Add results in original order with budget tracking
+                        // Add results in original order with budget tracking.
+                        // Fall back to an error string for any ID missing from the map (defensive).
                         for (const toolCall of toolCallsToExecute) {
-                            const result = toolResults.get(toolCall.id)!;
+                            const result = toolResults.get(toolCall.id)
+                                ?? JSON.stringify({ error: 'Tool execution result missing' });
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                             const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
 
@@ -647,9 +670,15 @@ export class AIClient extends EventEmitter {
                         logDebug(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
                     } else {
                         logInfo(`[AIClient][${requestId}] Using sequential execution for ${toolCallsToExecute.length} tools`);
-                        // Sequential execution with budget tracking
+                        // Sequential execution with budget tracking.
+                        // Each call is individually guarded — one failure must not orphan the remaining tool_calls.
                         for (const toolCall of toolCallsToExecute) {
-                            const result = await this.executeTool(toolCall, requestToolMap);
+                            let result: string;
+                            try {
+                                result = await this.executeTool(toolCall, requestToolMap);
+                            } catch (err: any) {
+                                result = JSON.stringify({ error: err.message ?? 'Tool execution failed' });
+                            }
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                             const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
 
@@ -676,7 +705,12 @@ export class AIClient extends EventEmitter {
                     }
 
                     // Call the model again with updated messages
-                    const rawFollowupReq: any = { ...enrichedRequest, messages, __toolpack_request_id: requestId };
+                    const rawFollowupReq: any = {
+                        ...enrichedRequest,
+                        messages,
+                        __toolpack_request_id: requestId,
+                        ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
+                    };
                     // Re-enrich to include any tools discovered in the previous round
                     let followupReq = this.stripRequestTools((await this.enrichRequestWithTools(rawFollowupReq)).request);
                     followupReq = await this.enforceContextWindow(followupReq, provider);
@@ -689,7 +723,7 @@ export class AIClient extends EventEmitter {
                         logDebug(`[AIClient][${requestId}] generate() followup request messages=${messages.length}`);
                         logRequestMessages(requestId, messages);
                     }
-                    response = await provider.generate(followupReq);
+                    response = await callProvider(followupReq) as CompletionResponse;
                     logDebug(`[AIClient][${requestId}] generate() followup response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
                 }
             }
@@ -739,7 +773,12 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const baseReq: any = { ...this.stripRequestTools(enrichedRequest), __toolpack_request_id: requestId };
+            const modeResponseFormat = this.activeMode?.response_format;
+            const baseReq: any = {
+                ...this.stripRequestTools(enrichedRequest),
+                __toolpack_request_id: requestId,
+                ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
+            };
 
             logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
@@ -782,7 +821,11 @@ export class AIClient extends EventEmitter {
                 logInfo(`[AIClient][${requestId}] stream() round_start ${rounds}/${maxRounds}`);
                 let lastFinishReason: string | null = null;
 
-                const rawRoundReq: any = { ...enrichedRequest, messages };
+                const rawRoundReq: any = {
+                    ...enrichedRequest,
+                    messages,
+                    ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
+                };
                 // Re-enrich to include any newly discovered tools from previous rounds
                 let roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq)).request);
                 roundReq = await this.enforceContextWindow(roundReq, provider);
