@@ -1,7 +1,7 @@
 {
   "name": "@toolpack-sdk/agents",
   "version": "2.1.1",
-  "description": "Agent layer for the Toolpack SDK - build, compose, and deploy AI agents with a consistent, extensible pattern",
+  "description": "Production AI agents for Toolpack SDK — 8 channel integrations (Slack, Discord, Telegram, SMS, Email, Webhook, Scheduled, MCP), AgentMind persistent cognitive layer (goals, beliefs, reflections), interceptors, evals, and multi-agent coordination",
   "engines": {
     "node": ">=20"
   },
@@ -59,15 +59,20 @@
     "publish:npm": "npm run build && npm run test && npm publish"
   },
   "keywords": [
+    "ai-agent",
+    "production-ai",
+    "agent-mind",
+    "cognitive-layer",
     "ai",
     "llm",
-    "agent",
-    "ai-agent",
-    "slack",
-    "telegram",
+    "slack-bot",
+    "discord-bot",
+    "telegram-bot",
+    "sms",
+    "email-agent",
     "webhook",
-    "cron",
     "scheduler",
+    "multi-agent",
     "typescript",
     "sdk",
     "toolpack"
@@ -83,6 +88,7 @@
     "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
   },
   "peerDependencies": {
+    "@opentelemetry/api": "^1.x",
     "@toolpack-sdk/knowledge": "^2.1.1",
     "better-sqlite3": "^12.6.2",
     "discord.js": "^14.x",
@@ -91,6 +97,9 @@
     "twilio": "^5.x"
   },
   "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    },
     "@toolpack-sdk/knowledge": {
       "optional": true
     },

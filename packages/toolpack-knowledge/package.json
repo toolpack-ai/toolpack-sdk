@@ -1,7 +1,7 @@
 {
   "name": "@toolpack-sdk/knowledge",
   "version": "2.1.1",
-  "description": "RAG (Retrieval-Augmented Generation) package for Toolpack SDK",
+  "description": "Knowledge/RAG package for Toolpack SDK — web crawling, REST API ingestion, hybrid semantic + keyword search, and streaming indexing across 6 source types (Markdown, Web, API, JSON, SQLite, PostgreSQL)",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

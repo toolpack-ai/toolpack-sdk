@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 100+ built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+The TypeScript SDK for building production AI agents — 100+ built-in tools, 8 channel integrations, a persistent cognitive layer, and full Knowledge/RAG, all in one package.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -17,9 +17,9 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Workflow Engine** — AI-driven planning with plan-direct execution and parallel tool orchestration
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
-- **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **101 Built-in Tools** across 14 categories (including 4 skill-tools and 2 mcp-tools):
-- **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
+- **Extensible at Every Layer** — Every built-in component is a plug-in point: custom tools (`ToolDefinition`), custom channels (`BaseChannel`), custom provider adapters (`ProviderAdapter`), custom agents (`BaseAgent`), custom modes (`createMode()`), and custom interceptors — all using the same interfaces as the built-ins
+- **100+ Built-in Tools** across 12 categories:
+- **MCP Client & Server** — consume external MCP servers via `createMcpToolProject()`, or expose Toolpack as an MCP server via `sdk.startMcpServer()` with static/JWT/custom auth, search mode, and agent exposure.
 
 | Category | Tools | Description |
 |----------|-------|-------------|

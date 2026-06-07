@@ -20,6 +20,30 @@ export type {
   TestAgentResult,
 } from './create-test-agent.js';
 
+// Eval primitives
+export { EvalDataset } from './eval-dataset.js';
+export { EvalRunner } from './eval-runner.js';
+export type { EvalRunnerOptions } from './eval-runner.js';
+export {
+  ExactMatchScorer,
+  ContainsScorer,
+  LLMJudgeScorer,
+  CustomScorer,
+} from './eval-scorer.js';
+export type { EvalScorer, LLMJudgeScorerOptions } from './eval-scorer.js';
+export { compareEvalRuns, formatEvalReport } from './eval-report.js';
+export type {
+  EvalCase,
+  EvalCaseResult,
+  EvalRun,
+  EvalVerdict,
+  EvalScoredResult,
+  EvalScoredRun,
+  EvalRegression,
+  EvalImprovement,
+  EvalReport,
+} from './eval-types.js';
+
 // Event Capture
 export { captureEvents, registerEventMatchers } from './capture-events.js';
 export type {

@@ -20,8 +20,8 @@ export {
 // exec-tools
 export {
     execToolsProject,
-    execRunTool, execRunShellTool, execRunBackgroundTool,
-    execReadOutputTool, execKillTool, execListProcessesTool,
+    execRunTool, execRunShellTool, execRunBackgroundTool, execRunBlockingTool,
+    execReadOutputTool, execTailOutputTool, execKillTool, execListProcessesTool,
 } from './exec-tools/index.js';
 
 // system-tools

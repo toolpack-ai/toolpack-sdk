@@ -1,4 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { type ZodType } from 'zod';
 import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
@@ -208,9 +210,12 @@ export class GeminiAdapter extends ProviderAdapter {
                     topP: request.top_p,
                     // responseMimeType must not be 'application/json' when tools are present —
                     // Gemini does not support both simultaneously and will truncate responses.
-                    responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+                    responseMimeType: ((request.response_format === 'json_object' || (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format)) && !(request.tools?.length))
                         ? 'application/json'
                         : 'text/plain',
+                    ...(request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format && !(request.tools?.length)
+                        ? { responseSchema: this.sanitizeSchema(zodToJsonSchema(request.response_format as ZodType)) }
+                        : {}),
                 },
             });
 
@@ -291,9 +296,12 @@ export class GeminiAdapter extends ProviderAdapter {
                     topP: request.top_p,
                     // responseMimeType must not be 'application/json' when tools are present —
                     // Gemini does not support both simultaneously and will truncate responses.
-                    responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+                    responseMimeType: ((request.response_format === 'json_object' || (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format)) && !(request.tools?.length))
                         ? 'application/json'
                         : 'text/plain',
+                    ...(request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format && !(request.tools?.length)
+                        ? { responseSchema: this.sanitizeSchema(zodToJsonSchema(request.response_format as ZodType)) }
+                        : {}),
                 },
             });
 
@@ -409,7 +417,7 @@ export class GeminiAdapter extends ProviderAdapter {
             return parts.filter(Boolean);
         };
 
-        const history = await Promise.all(historyMsgs.map(async m => {
+        const rawHistory = await Promise.all(historyMsgs.map(async m => {
             if (m.role === 'tool' && m.tool_call_id) {
                 return {
                     role: 'function',
@@ -455,8 +463,21 @@ export class GeminiAdapter extends ProviderAdapter {
             };
         }));
 
-        const lastUserContent = typeof lastMsg.content === 'string' 
-            ? lastMsg.content 
+        // Gemini requires consecutive tool responses from the same multi-call turn
+        // to be grouped into a single role:'function' entry with multiple parts.
+        // Merge consecutive function entries to satisfy this requirement.
+        const history: any[] = [];
+        for (const entry of rawHistory) {
+            const prev = history[history.length - 1];
+            if (entry.role === 'function' && prev?.role === 'function') {
+                prev.parts.push(...entry.parts);
+            } else {
+                history.push(entry);
+            }
+        }
+
+        const lastUserContent = typeof lastMsg.content === 'string'
+            ? lastMsg.content
             : await mapContentParts(lastMsg.content);
 
         return { history, lastUserMessage: lastUserContent };

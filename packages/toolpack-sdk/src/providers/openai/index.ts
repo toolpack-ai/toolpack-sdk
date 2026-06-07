@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { zodResponseFormat } from 'openai/helpers/zod';
+import { type ZodType } from 'zod';
 import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
@@ -140,7 +142,11 @@ export class OpenAIAdapter extends ProviderAdapter {
                 temperature: request.temperature,
                 max_tokens: request.max_tokens,
                 top_p: request.top_p,
-                response_format: request.response_format === 'json_object' ? { type: 'json_object' } : undefined,
+                response_format: request.response_format === 'json_object'
+                    ? { type: 'json_object' }
+                    : (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format)
+                        ? zodResponseFormat(request.response_format as ZodType, 'structured_output')
+                        : undefined,
                 stream: false,
             };
 
@@ -224,7 +230,11 @@ export class OpenAIAdapter extends ProviderAdapter {
                 temperature: request.temperature,
                 max_tokens: request.max_tokens,
                 top_p: request.top_p,
-                response_format: request.response_format === 'json_object' ? { type: 'json_object' } : undefined,
+                response_format: request.response_format === 'json_object'
+                    ? { type: 'json_object' }
+                    : (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format)
+                        ? zodResponseFormat(request.response_format as ZodType, 'structured_output')
+                        : undefined,
                 stream: true,
             };
 

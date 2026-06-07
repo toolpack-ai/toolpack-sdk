@@ -44,4 +44,12 @@ export {
   DepthExceededError,
   createTracerInterceptor,
   type TracerConfig,
+  createOTelTracerInterceptor,
+  OTelSpanStatusCode,
+  type OTelTracerConfig,
+  type OTelTracerProvider,
+  type OTelTracer,
+  type OTelSpan,
+  type OTelSpanOptions,
+  type OTelSpanStatus,
 } from './builtins/index.js';

@@ -8,12 +8,14 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 ## Features
 
 - **4 Built-in Agents** — Research, Coding, Data, Browser
-- **7 Channel Types** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled
+- **8 Channel Types** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled, MCP
 - **Event-Driven** — Full lifecycle hooks and events
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
+- **Agent Mind** — Persistent cognitive layer: goals, beliefs, reflections, cross-run recall
+- **Evals** — `EvalDataset`, `EvalRunner`, 4 scorer types, regression reports
+- **OTel Tracing** — OpenTelemetry interceptor for distributed traces
 - **Type-Safe** — Full TypeScript support
-- **Production-Ready** — 573 tests passing
 
 ## Installation
 
@@ -238,6 +240,27 @@ const smsOutbound = new SMSChannel({
   to: '+0987654321',
 });
 ```
+
+### McpChannel (Two-way)
+
+Exposes a Toolpack agent as a tool in an MCP server. The agent appears in `tools/list` as `agent.<name>` and is callable by any MCP client.
+
+```typescript
+import { McpChannel } from '@toolpack-sdk/agents';
+import { Toolpack } from 'toolpack-sdk';
+
+const ch = new McpChannel({ name: 'mcp' });
+const agent = new PrReviewerAgent({ channels: [ch] });
+await agent.start();
+
+const sdk = await Toolpack.init({ provider: 'anthropic', tools: true });
+await sdk.startMcpServer({
+  transport: 'stdio',   // or 'http' with port
+  agents: [ch.asAgentDefinition(agent)],
+});
+```
+
+`ch.asAgentDefinition(agent)` produces the entry that `startMcpServer` registers in `tools/list`. Each MCP `tools/call` for `agent.<name>` is routed through the channel to `agent.invokeAgent()` and the output is returned as the tool result.
 
 ## Creating Custom Agents
 
@@ -763,6 +786,7 @@ class MyAgent extends BaseAgent {
 | `createCaptureInterceptor` | Persist inbound and outbound messages to conversation history (auto-registered) |
 | `createDepthGuardInterceptor` | Reject delegation chains that exceed a configured depth |
 | `createTracerInterceptor` | Structured logging of each chain hop for debugging |
+| `createOTelTracerInterceptor` | OpenTelemetry span per invocation — compatible with any OTel-compliant backend |
 
 ## Capabilities
 
@@ -818,13 +842,57 @@ const result = await summarizer.invokeAgent({
 const summary = JSON.parse(result.output) as SummarizerOutput;
 ```
 
+## Evals — LLM Quality Evaluation
+
+Unit tests verify wiring; evals verify agent **quality**. Use the eval primitives to build regression suites and track answer quality over time.
+
+```typescript
+import {
+  EvalDataset,
+  EvalRunner,
+  ContainsScorer,
+  LLMJudgeScorer,
+  compareEvalRuns,
+  formatEvalReport,
+} from '@toolpack-sdk/agents';
+
+const dataset = new EvalDataset([
+  { id: 'q1', input: 'What is 2+2?', expectedOutput: '4' },
+  { id: 'q2', input: 'Capital of France?', expectedOutput: 'Paris' },
+]);
+
+const runner = new EvalRunner({
+  agent: myAgent,
+  dataset,
+  scorers: [new ContainsScorer()],
+});
+
+const run = await runner.run();
+console.log(`Average score: ${(run.averageScore * 100).toFixed(1)}%`);
+```
+
+**Four built-in scorers:**
+
+| Scorer | When to use |
+|---|---|
+| `ExactMatchScorer` | Deterministic outputs — exact string match |
+| `ContainsScorer` | Output must contain the expected string |
+| `LLMJudgeScorer` | Open-ended answers — ask an LLM to grade on 0–1 |
+| `CustomScorer` | Any custom scoring logic |
+
+**Regression detection:**
+
+```typescript
+const report = compareEvalRuns(baselineRun, currentRun);
+console.log(formatEvalReport(report));
+expect(report.regressions).toHaveLength(0); // CI gate
+```
+
 ## Testing
 
 ```bash
 npm test
 ```
-
-**Test Coverage:** 573 tests passing across 29 test files.
 
 ## License
 

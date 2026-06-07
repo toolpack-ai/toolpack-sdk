@@ -54,7 +54,7 @@
 |---|---|
 | [agents.md](agents.md) | Creating agents — `BaseAgent` API, built-in agents, lifecycle |
 | [registry.md](registry.md) | `AgentRegistry` — multi-agent coordination |
-| [channels.md](channels.md) | All 7 channel integrations (Slack, Discord, Telegram, Webhook, Scheduled, Email, SMS) |
+| [channels.md](channels.md) | All 8 channel integrations (Slack, Discord, Telegram, Webhook, Scheduled, Email, SMS, MCP) |
 | [scheduler.md](scheduler.md) | `SchedulerStore` and `createSchedulerTools` — persistent job scheduling reference |
 | [mind.md](mind.md) | `AgentMind` — persistent cognitive layer: goals, beliefs, reflections |
 | [conversation-history.md](conversation-history.md) | Conversation storage, `assemblePrompt`, addressed-only mode |

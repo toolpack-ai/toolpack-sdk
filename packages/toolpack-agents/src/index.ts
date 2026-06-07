@@ -36,6 +36,8 @@ export { TelegramChannel, TelegramChannelConfig } from './channels/telegram-chan
 export { DiscordChannel, DiscordChannelConfig } from './channels/discord-channel.js';
 export { EmailChannel, EmailChannelConfig } from './channels/email-channel.js';
 export { SMSChannel, SMSChannelConfig } from './channels/sms-channel.js';
+export { McpChannel } from './channels/mcp-channel.js';
+export type { McpChannelConfig } from './channels/mcp-channel.js';
 
 // Transport layer for agent-to-agent communication
 export {
@@ -130,6 +132,14 @@ export {
   DepthExceededError,
   createTracerInterceptor,
   type TracerConfig,
+  createOTelTracerInterceptor,
+  OTelSpanStatusCode,
+  type OTelTracerConfig,
+  type OTelTracerProvider,
+  type OTelTracer,
+  type OTelSpan,
+  type OTelSpanOptions,
+  type OTelSpanStatus,
 } from './interceptors/index.js';
 
 // Scheduler — persistent job store and LLM-callable tools
@@ -141,3 +151,27 @@ export {
   type CreateJobResult,
   type JobStatus,
 } from './scheduler/index.js';
+
+// Eval primitives — dataset management, runner, scoring, and regression reports
+export {
+  EvalDataset,
+  EvalRunner,
+  ExactMatchScorer,
+  ContainsScorer,
+  LLMJudgeScorer,
+  CustomScorer,
+  compareEvalRuns,
+  formatEvalReport,
+  type EvalRunnerOptions,
+  type EvalScorer,
+  type LLMJudgeScorerOptions,
+  type EvalCase,
+  type EvalCaseResult,
+  type EvalRun,
+  type EvalVerdict,
+  type EvalScoredResult,
+  type EvalScoredRun,
+  type EvalRegression,
+  type EvalImprovement,
+  type EvalReport,
+} from './testing/index.js';

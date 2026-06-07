@@ -542,7 +542,7 @@ export class BabelParser implements LanguageParser {
             });
 
             traverse(ast, {
-                CallExpression(callPath) {
+                CallExpression(callPath: NodePath<t.CallExpression>) {
                     const callee = callPath.node.callee;
                     let match = false;
                     if (callee.type === 'Identifier' && callee.name === targetName) {

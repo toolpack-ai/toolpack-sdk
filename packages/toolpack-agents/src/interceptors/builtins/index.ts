@@ -11,3 +11,13 @@ export { createAddressCheckInterceptor, type AddressCheckConfig, type AddressChe
 export { createIntentClassifierInterceptor, type IntentClassifierInterceptorConfig } from './intent-classifier.js';
 export { createDepthGuardInterceptor, type DepthGuardConfig, DepthExceededError } from './depth-guard.js';
 export { createTracerInterceptor, type TracerConfig } from './tracer.js';
+export {
+  createOTelTracerInterceptor,
+  OTelSpanStatusCode,
+  type OTelTracerConfig,
+  type OTelTracerProvider,
+  type OTelTracer,
+  type OTelSpan,
+  type OTelSpanOptions,
+  type OTelSpanStatus,
+} from './otel-tracer.js';

@@ -109,13 +109,30 @@ export interface ToolCallResult {
     duration?: number;
 }
 
-export interface CompletionRequest {
+export interface CompletionRequest<T = unknown> {
     messages: Message[];
     model: string;
     temperature?: number;
     max_tokens?: number;
     top_p?: number;
-    response_format?: 'text' | 'json_object';
+    /**
+     * Controls the output format:
+     * - `'text'`        — plain text (default)
+     * - `'json_object'` — unstructured JSON; you parse `response.content` yourself
+     * - `ZodType<T>`    — structured JSON matching the schema; parsed and validated result
+     *                     available in `response.data` as fully typed `T`
+     *
+     * @example structured output
+     * ```typescript
+     * import { z } from 'zod'
+     * const result = await sdk.generate({
+     *   messages,
+     *   response_format: z.object({ sentiment: z.string(), score: z.number() }),
+     * })
+     * result.data.sentiment // typed as string
+     * ```
+     */
+    response_format?: 'text' | 'json_object' | import('zod').ZodType<T>;
     stream?: boolean;
     tools?: ToolCallRequest[];
     requestTools?: RequestToolDefinition[];
@@ -139,8 +156,14 @@ export interface Usage {
     total_tokens: number;
 }
 
-export interface CompletionResponse {
+export interface CompletionResponse<T = unknown> {
     content: string | null;  // null if only tool calls
+    /**
+     * Parsed and validated structured output.
+     * Only present when `response_format` is a ZodType.
+     * TypeScript type is inferred from the schema via the generic on `generate<T>()`.
+     */
+    data?: T;
     usage?: Usage;
     /** Detailed breakdown of token usage when executed in agent/workflow mode */
     usage_details?: {

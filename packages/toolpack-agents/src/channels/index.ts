@@ -6,3 +6,5 @@ export { TelegramChannel, TelegramChannelConfig } from './telegram-channel.js';
 export { DiscordChannel, DiscordChannelConfig } from './discord-channel.js';
 export { EmailChannel, EmailChannelConfig } from './email-channel.js';
 export { SMSChannel, SMSChannelConfig } from './sms-channel.js';
+export { McpChannel } from './mcp-channel.js';
+export type { McpChannelConfig } from './mcp-channel.js';

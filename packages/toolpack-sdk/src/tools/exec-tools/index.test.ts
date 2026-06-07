@@ -10,9 +10,9 @@ describe('exec-tools project', () => {
         expect(execToolsProject.manifest.author).toBe('Sajeer');
     });
 
-    it('should export 6 tools matching the manifest', () => {
+    it('should export 8 tools matching the manifest', () => {
         expect(execToolsProject.tools).toHaveLength(execToolsProject.manifest.tools.length);
-        expect(execToolsProject.tools).toHaveLength(6);
+        expect(execToolsProject.tools).toHaveLength(8);
     });
 
     it('should have tool names matching the manifest list', () => {

@@ -11,6 +11,7 @@ import { createParticipantResolverInterceptor } from './participant-resolver.js'
 import { createAddressCheckInterceptor, isAgentNameOnlyInCodeBlocks, type AddressCheckResult } from './address-check.js';
 import { createDepthGuardInterceptor, DepthExceededError } from './depth-guard.js';
 import { createTracerInterceptor } from './tracer.js';
+import { createOTelTracerInterceptor, OTelSpanStatusCode, type OTelSpan, type OTelTracerProvider } from './otel-tracer.js';
 import { createIntentClassifierInterceptor } from './intent-classifier.js';
 
 // ---------- Test helpers ----------
@@ -1092,5 +1093,176 @@ describe('skip sentinel integration', () => {
   it('isSkipSentinel identifies the skip symbol', () => {
     expect(isSkipSentinel(SKIP_SENTINEL)).toBe(true);
     expect(isSkipSentinel({ output: 'x' })).toBe(false);
+  });
+});
+
+// ---------- otel-tracer ----------
+
+function createMockSpan(): OTelSpan & {
+  _attributes: Record<string, string | number | boolean>;
+  _status: { code: OTelSpanStatusCode; message?: string } | null;
+  _exceptions: unknown[];
+  _ended: boolean;
+} {
+  const span = {
+    _attributes: {} as Record<string, string | number | boolean>,
+    _status: null as { code: OTelSpanStatusCode; message?: string } | null,
+    _exceptions: [] as unknown[],
+    _ended: false,
+    setAttribute(key: string, value: string | number | boolean) { this._attributes[key] = value; },
+    setStatus(status: { code: OTelSpanStatusCode; message?: string }) { this._status = status; },
+    recordException(err: Error | string) { this._exceptions.push(err); },
+    end() { this._ended = true; },
+  };
+  return span;
+}
+
+function createMockProvider(span = createMockSpan()): OTelTracerProvider & { span: ReturnType<typeof createMockSpan> } {
+  return {
+    span,
+    getTracer: () => ({
+      startSpan: () => span,
+    }),
+  };
+}
+
+describe('createOTelTracerInterceptor', () => {
+  it('is a transparent pass-through when no tracerProvider is supplied', async () => {
+    const interceptor = createOTelTracerInterceptor();
+    const { result, agent } = await runInterceptor(interceptor, {
+      message: 'hi',
+      conversationId: 'c1',
+    });
+    expect(result).not.toBeNull();
+    expect(agent.invokeAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts and ends a span on successful invocation', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider });
+    const { result } = await runInterceptor(interceptor, {
+      message: 'hi',
+      conversationId: 'c1',
+    });
+
+    expect(result).not.toBeNull();
+    expect(span._ended).toBe(true);
+    expect(span._status?.code).toBe(OTelSpanStatusCode.OK);
+    expect(span._attributes['agent.name']).toBe('test-agent');
+    expect(span._attributes['channel.name']).toBe('test-channel');
+    expect(typeof span._attributes['duration.ms']).toBe('number');
+  });
+
+  it('records conversation.id and agent.intent as span attributes when present', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider });
+    await runInterceptor(interceptor, {
+      message: 'hi',
+      conversationId: 'conv-42',
+      intent: 'support',
+    });
+
+    expect(span._attributes['conversation.id']).toBe('conv-42');
+    expect(span._attributes['agent.intent']).toBe('support');
+  });
+
+  it('records workflow step attributes when result.steps are present', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider });
+    const agentResult: AgentResult = {
+      output: 'done',
+      steps: [
+        {
+          number: 1,
+          description: 'fetch data',
+          status: 'completed',
+          result: { success: true, duration: 120, toolsUsed: ['http.get'] },
+        },
+        {
+          number: 2,
+          description: 'summarize',
+          status: 'failed',
+          result: { success: false, error: 'timeout' },
+        },
+      ],
+    };
+
+    const agent = createMockAgent('test-agent', agentResult);
+    const chain = composeChain([interceptor], agent, createMockChannel(), createMockRegistry());
+    await executeChain(chain, { message: 'go', conversationId: 'c1' });
+
+    expect(span._attributes['steps.total']).toBe(2);
+    expect(span._attributes['steps.failed']).toBe(1);
+    expect(span._attributes['step.0.description']).toBe('fetch data');
+    expect(span._attributes['step.0.status']).toBe('completed');
+    expect(span._attributes['step.0.duration.ms']).toBe(120);
+    expect(span._attributes['step.0.tools']).toBe('http.get');
+    expect(span._attributes['step.1.status']).toBe('failed');
+  });
+
+  it('does not record step attributes when recordSteps is false', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider, recordSteps: false });
+    const agentResult: AgentResult = {
+      output: 'done',
+      steps: [{ number: 1, description: 'step', status: 'completed' }],
+    };
+    const agent = createMockAgent('test-agent', agentResult);
+    const chain = composeChain([interceptor], agent, createMockChannel(), createMockRegistry());
+    await executeChain(chain, { message: 'go', conversationId: 'c1' });
+
+    expect(span._attributes['steps.total']).toBeUndefined();
+  });
+
+  it('sets ERROR status and records exception on downstream throw', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider });
+    const thrower: Interceptor = async () => { throw new Error('oops'); };
+
+    const agent = createMockAgent('test-agent');
+    const chain = composeChain([interceptor, thrower], agent, createMockChannel(), createMockRegistry());
+
+    await expect(executeChain(chain, { message: 'hi', conversationId: 'c1' })).rejects.toThrow('oops');
+
+    expect(span._ended).toBe(true);
+    expect(span._status?.code).toBe(OTelSpanStatusCode.ERROR);
+    expect(span._status?.message).toBe('oops');
+    expect(span._exceptions).toHaveLength(1);
+  });
+
+  it('marks span OK and sets result.skipped=true for skip sentinel', async () => {
+    const { span, ...provider } = createMockProvider();
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider });
+    const skipper: Interceptor = async (_input, ctx) => ctx.skip();
+
+    const agent = createMockAgent('test-agent');
+    const chain = composeChain([interceptor, skipper], agent, createMockChannel(), createMockRegistry());
+    const result = await executeChain(chain, { message: 'hi', conversationId: 'c1' });
+
+    expect(result).toBeNull();
+    expect(span._ended).toBe(true);
+    expect(span._status?.code).toBe(OTelSpanStatusCode.OK);
+    expect(span._attributes['result.skipped']).toBe(true);
+  });
+
+  it('skips tracing when shouldTrace returns false', async () => {
+    const { span, ...provider } = createMockProvider();
+    const shouldTrace = vi.fn(() => false);
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider, shouldTrace });
+    const { result, agent } = await runInterceptor(interceptor, { message: 'hi', conversationId: 'c1' });
+
+    expect(shouldTrace).toHaveBeenCalled();
+    expect(result).not.toBeNull();
+    expect(agent.invokeAgent).toHaveBeenCalledTimes(1);
+    expect(span._ended).toBe(false);
+  });
+
+  it('uses custom tracerName when building the tracer', async () => {
+    const getTracerSpy = vi.fn().mockReturnValue({ startSpan: () => createMockSpan() });
+    const provider: OTelTracerProvider = { getTracer: getTracerSpy };
+    const interceptor = createOTelTracerInterceptor({ tracerProvider: provider, tracerName: 'my-service', tracerVersion: '3.0.0' });
+    await runInterceptor(interceptor, { message: 'hi', conversationId: 'c1' });
+
+    expect(getTracerSpy).toHaveBeenCalledWith('my-service', '3.0.0');
   });
 });

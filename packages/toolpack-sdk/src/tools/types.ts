@@ -30,6 +30,48 @@ export interface ToolContext {
     log: (message: string) => void;
 }
 
+// ── Tool Annotations (MCP) ────────────────────────────────────
+
+/**
+ * Hints about tool behaviour sent to MCP clients in tools/list.
+ * All fields are optional — clients use them for safety UX (e.g. confirmation
+ * dialogs before destructive actions) but must not rely on them for security.
+ *
+ * MCP spec defaults when annotations are omitted entirely:
+ *   readOnlyHint: false, destructiveHint: true, openWorldHint: true, idempotentHint: false
+ *
+ * The MCP server auto-derives annotations when this field is not set:
+ *   - confirmation present → { destructiveHint: true }
+ *   - neither set          → annotations omitted (MCP spec defaults apply)
+ * Set explicitly to override.
+ */
+export interface ToolAnnotations {
+    /**
+     * Tool only reads data — never writes, calls APIs, or modifies state.
+     * MCP spec default (when absent): false.
+     * Set to true for pure read tools: fs.read_file, search, list-dir.
+     */
+    readOnlyHint?: boolean;
+    /**
+     * Tool may cause irreversible side-effects (delete, overwrite, deploy, send).
+     * MCP spec default (when absent): true — clients assume worst case.
+     * Set to false for safe write operations (e.g. create-if-not-exists).
+     */
+    destructiveHint?: boolean;
+    /**
+     * Calling the tool multiple times with the same args has no additional effect.
+     * MCP spec default (when absent): false.
+     * Set to true for idempotent operations.
+     */
+    idempotentHint?: boolean;
+    /**
+     * Tool may interact with external systems: web, APIs, databases, shell, filesystem.
+     * MCP spec default (when absent): true.
+     * Set to false only for purely in-process, local tools with no side-effects.
+     */
+    openWorldHint?: boolean;
+}
+
 // ── Tool Confirmation (HITL) ─────────────────────────────────
 
 export type ConfirmationLevel = 'high' | 'medium';
@@ -59,6 +101,15 @@ export interface ToolDefinition {
      * Note: Only effective when onToolConfirm callback is provided to AIClient.
      */
     confirmation?: ToolConfirmation;
+    /**
+     * MCP annotation hints describing tool behaviour to clients.
+     * When omitted, the MCP server auto-derives from `confirmation`:
+     *   - confirmation set  → { destructiveHint: true }
+     *   - no confirmation   → annotations omitted (MCP spec defaults apply)
+     * Set explicitly to override — particularly useful for marking read-only tools
+     * (readOnlyHint: true) or idempotent tools (idempotentHint: true).
+     */
+    annotations?: ToolAnnotations;
 }
 
 /**
@@ -71,12 +122,14 @@ export interface ToolSchema {
     description: string;
     parameters: ToolParameters;
     category: string;
-    /** 
+    /**
      * Whether this tool should be cached after discovery via tool.search.
      * If false, the tool must be re-discovered each time it's needed.
      * Default: true
      */
     cacheable?: boolean;
+    /** MCP annotation hints. See ToolAnnotations for details. */
+    annotations?: ToolAnnotations;
 }
 
 // ── Tool Project ──────────────────────────────────────────────

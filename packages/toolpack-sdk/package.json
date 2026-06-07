@@ -1,7 +1,7 @@
 {
   "name": "toolpack-sdk",
   "version": "2.1.1",
-  "description": "Unified TypeScript SDK for AI providers (OpenAI, Anthropic, Gemini, Ollama) with 100+ built-in tools, workflow engine, and mode system for building AI-powered applications",
+  "description": "TypeScript SDK for production AI agents — 110+ built-in tools across 14 categories, multi-provider support (OpenAI, Anthropic, Gemini, Ollama), workflow engine, and mode system",
   "engines": {
     "node": ">=20"
   },
@@ -55,18 +55,22 @@
     "publish:npm": "npm run build && npm run test && npm publish --access public"
   },
   "keywords": [
+    "ai-agent",
+    "production-ai",
     "ai",
     "llm",
+    "typescript",
+    "sdk",
     "openai",
     "anthropic",
     "claude",
     "gemini",
-    "ai-agent",
-    "coding-agent",
+    "ollama",
     "tools",
     "function-calling",
-    "typescript",
-    "sdk"
+    "rag",
+    "knowledge-base",
+    "multi-provider"
   ],
   "author": "Sajeer (https://sajeerzeji.com)",
   "license": "Apache-2.0",
@@ -80,6 +84,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/babel__core": "^7.20.5",
     "@types/babel__traverse": "^7.28.0",
     "@types/better-sqlite3": "^7.6.13",
@@ -100,6 +105,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
+    "jose": "^6.2.3",
+    "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.24.5",
     "@babel/parser": "^7.29.0",
     "@babel/traverse": "^7.29.0",
     "@babel/types": "^7.29.0",
@@ -117,6 +125,14 @@
     "rss-parser": "^3.13.0",
     "simple-git": "^3.32.3",
     "web-tree-sitter": "^0.22.6"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
   },
   "directories": {
     "doc": "docs",

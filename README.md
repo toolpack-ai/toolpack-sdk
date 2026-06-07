@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 100+ built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+The TypeScript SDK for building production AI agents — 100+ built-in tools, 8 channel integrations, a persistent cognitive layer, and full Knowledge/RAG, all in one package.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -17,8 +17,8 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Workflow Engine** — AI-driven planning with plan-direct execution and parallel tool orchestration
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
-- **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **100+ Built-in Tools** across 14 categories:
+- **Extensible at Every Layer** — Every built-in component is a plug-in point: custom tools (`ToolDefinition`), custom channels (`BaseChannel`), custom provider adapters (`ProviderAdapter`), custom agents (`BaseAgent`), custom modes (`createMode()`), and custom interceptors — all using the same interfaces as the built-ins
+- **100+ Built-in Tools** across 12 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -163,15 +163,14 @@ See `packages/toolpack-sdk/docs/examples/kubernetes-usage.ts` for a complete exa
 - **OpenAI**: Supports `reasoningTier` and `costTier` on model info for GPT-5.x reasoning models. API key read from `OPENAI_API_KEY` or `TOOLPACK_OPENAI_KEY`.
 - **Anthropic**: Does not support embeddings. Tool results are converted to `tool_result` content blocks automatically. `tool_choice: none` is handled by omitting tools from the request. `max_tokens` defaults to `4096` if not specified. API key read from `ANTHROPIC_API_KEY` or `TOOLPACK_ANTHROPIC_KEY`.
 
-## MCP Tool Server Support
+## MCP Support
 
-Toolpack now includes first-class support for Model Context Protocol (MCP) adapters and server tool discovery.
+Toolpack has first-class MCP support in both directions: as a **client** (consume external MCP servers) and as a **server** (expose Toolpack tools + agents to any MCP client).
 
-### Quick MCP Setup
+### MCP Client — consume external MCP servers
 
 ```typescript
-import { Toolpack } from 'toolpack-sdk';
-import { createMcpToolProject } from './tools/mcp-tools';
+import { Toolpack, createMcpToolProject } from 'toolpack-sdk';
 
 const mcpToolProject = await createMcpToolProject({
   servers: [
@@ -180,13 +179,6 @@ const mcpToolProject = await createMcpToolProject({
       displayName: 'MCP Filesystem',
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
-      autoConnect: true,
-    },
-    {
-      name: 'custom',
-      displayName: 'Custom MCP',
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-tools'],
       autoConnect: true,
     },
   ],
@@ -198,11 +190,41 @@ const sdk = await Toolpack.init({
   customTools: [mcpToolProject],
 });
 
-// On shutdown/cold path:
+// On shutdown:
 // await disconnectMcpToolProject(mcpToolProject);
 ```
 
-See `docs/MCP_INTEGRATION.md` and `docs/examples/mcp-integration-example.ts` for full instructions and best practices.
+See `docs/MCP_INTEGRATION.md` for full client configuration options.
+
+### MCP Server — expose Toolpack as an MCP server
+
+Expose all 100+ built-in tools (or a filtered subset) to any MCP client — Claude Desktop, Cursor, custom agents:
+
+```typescript
+const handle = await sdk.startMcpServer({
+  transport: 'http',   // or 'stdio' for Claude Desktop / Cursor
+  port: 3000,
+
+  // Optional: restrict exposed tools
+  expose: { categories: ['filesystem', 'version-control'] },
+
+  // Optional: static bearer token auth
+  auth: { mode: 'static', tokens: [process.env.MCP_TOKEN!] },
+
+  // Optional: expose Toolpack agents as MCP tools
+  agents: [mcpChannel.asAgentDefinition(myAgent)],
+
+  // Optional: search mode — expose only tool.search, clients discover tools on demand
+  searchMode: true,
+});
+
+console.log(`MCP server running on port ${handle.port}`);
+// handle.stop() to shut down
+```
+
+**Auth modes:** `static` (pre-shared tokens), `jwt` (JWKS/Auth0/Supabase), `custom` (your own verifier).
+
+**Search mode** reduces context token usage for large tool sets — clients call `tool.search` to discover tools on demand instead of receiving all 100+ upfront.
 - **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GOOGLE_GENERATIVE_AI_KEY` or `TOOLPACK_GEMINI_KEY`.
 - **Ollama**: Auto-discovers all locally pulled models when registered as `{ ollama: {} }`. Uses `/api/show` and tool probing to detect capabilities (tool calling, vision, embeddings) per model. Models without tool support are automatically stripped of tools and given a system instruction to prevent hallucinated tool usage. Uses synthetic tool call IDs (`ollama_<timestamp>_<random>`). Embeddings use the modern `/api/embed` batch endpoint. Legacy per-model registration (`{ 'ollama-llama3': {} }`) is also supported.
 - **OpenRouter**: Routes requests to any of the 300+ models available on [openrouter.ai](https://openrouter.ai) via an OpenAI-compatible API. Models are discovered dynamically from the `/models` endpoint. Tool calling is fully supported; models that reject `tool_choice: 'none'` have tools stripped gracefully instead. No embeddings support. Optional `siteUrl` and `siteName` config for OpenRouter's attribution leaderboard. API key read from `OPENROUTER_API_KEY` or `TOOLPACK_OPENROUTER_KEY`.

@@ -1,4 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { type ZodType } from 'zod';
 import type { Content, Part } from '@google/genai';
 import { ProviderAdapter } from '../base/index.js';
 import type {
@@ -209,6 +211,7 @@ export class VertexAIAdapter extends ProviderAdapter {
     // ─── Private helpers ────────────────────────────────────────────────────────
 
     private buildRequestParams(request: CompletionRequest): { model: string; config: any } {
+        const isZodSchema = request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format;
         const config: any = {
             systemInstruction: this.extractSystemInstruction(request.messages),
             maxOutputTokens: request.max_tokens,
@@ -217,9 +220,12 @@ export class VertexAIAdapter extends ProviderAdapter {
             // responseMimeType must not be set to 'application/json' when function declarations
             // are present — Vertex AI / Gemini does not support both simultaneously and will
             // truncate the response to a single token. JSON mode is honoured only for tool-free requests.
-            responseMimeType: (request.response_format === 'json_object' && !(request.tools?.length))
+            responseMimeType: ((request.response_format === 'json_object' || isZodSchema) && !(request.tools?.length))
                 ? 'application/json'
                 : 'text/plain',
+            ...(isZodSchema && !(request.tools?.length)
+                ? { responseSchema: this.sanitizeSchema(zodToJsonSchema(request.response_format as ZodType)) }
+                : {}),
         };
 
         if (request.tools && request.tools.length > 0) {
@@ -245,7 +251,7 @@ export class VertexAIAdapter extends ProviderAdapter {
         const historyMsgs = conversation.slice(0, -1);
         const lastMsg = conversation[conversation.length - 1];
 
-        const history: Content[] = historyMsgs.map(m => {
+        const rawHistory: Content[] = historyMsgs.map(m => {
             if (m.role === 'tool' && m.tool_call_id) {
                 return {
                     role: 'function',
@@ -282,6 +288,20 @@ export class VertexAIAdapter extends ProviderAdapter {
                 parts: this.contentToParts(m.content),
             };
         });
+
+        // Vertex AI requires that consecutive tool responses belonging to the same
+        // multi-call turn are grouped into a single role:'function' Content with
+        // multiple functionResponse parts — not emitted as separate Content entries.
+        const history: Content[] = [];
+        for (const entry of rawHistory) {
+            const prev = history[history.length - 1];
+            if (entry.role === 'function' && prev?.role === 'function') {
+                // Merge into the previous function Content
+                (prev.parts as Part[]).push(...(entry.parts as Part[]));
+            } else {
+                history.push(entry);
+            }
+        }
 
         return {
             history,

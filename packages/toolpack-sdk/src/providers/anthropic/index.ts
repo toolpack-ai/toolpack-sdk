@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { type ZodType } from 'zod';
 import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
@@ -160,10 +162,16 @@ export class AnthropicAdapter extends ProviderAdapter {
             logDebug(`[Anthropic][${requestId}] generate() request: model=${params.model}, messages=${params.messages.length}, tools=${params.tools?.length || 0}, tool_choice=${params.tool_choice?.type ?? 'unset'}`);
             logMessagePreview(requestId, 'Anthropic', params.messages);
 
-            const response = await this.client.messages.create(
-                params,
-                request.signal ? { signal: request.signal } : undefined,
-            );
+            const isZodSchema = request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format;
+
+            if (isZodSchema) {
+                params.output_config = { format: zodOutputFormat(request.response_format as ZodType) };
+            }
+
+            const rawResponse = isZodSchema
+                ? await (this.client.messages as any).parse(params, request.signal ? { signal: request.signal } : undefined)
+                : await this.client.messages.create(params, request.signal ? { signal: request.signal } : undefined);
+            const response = rawResponse as any;
 
             const textParts: string[] = [];
             const toolCalls: ToolCallResult[] = [];
@@ -182,7 +190,7 @@ export class AnthropicAdapter extends ProviderAdapter {
 
             logDebug(`[Anthropic][${requestId}] Response finish_reason=${response.stop_reason} tool_calls=${toolCalls.length} content_preview=${safePreview(textParts.join(''), 200)}`);
 
-            return {
+            const completionResponse: CompletionResponse = {
                 content: textParts.length > 0 ? textParts.join('') : null,
                 usage: {
                     prompt_tokens: response.usage.input_tokens,
@@ -193,6 +201,12 @@ export class AnthropicAdapter extends ProviderAdapter {
                 tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
                 raw: response,
             };
+
+            if (isZodSchema && response.parsed_output !== undefined) {
+                completionResponse.data = response.parsed_output;
+            }
+
+            return completionResponse;
         } catch (error) {
             throw this.handleError(error);
         }

@@ -26,6 +26,7 @@ import { WorkflowExecutor } from './workflows/workflow-executor.js';
 import { DEFAULT_WORKFLOW_CONFIG } from './workflows/workflow-types.js';
 import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools/index.js';
 import type { ToolpackInterceptor, ToolpackNextFunction } from './interceptors/index.js';
+import type { ToolpackMcpServerConfig, McpServerHandle } from './mcp/server-types.js';
 
 export interface ProviderOptions {
     /**
@@ -866,6 +867,107 @@ export class Toolpack extends EventEmitter {
         } else {
             throw new Error('No tool registry configured. Initialize Toolpack with tools enabled.');
         }
+    }
+
+    /**
+     * Expose Toolpack's built-in tools as an MCP server.
+     *
+     * Any MCP-compatible client (Claude Desktop, Cursor, Windsurf, custom agents)
+     * can connect and use the full tool catalog without importing this SDK.
+     *
+     * Requires `@modelcontextprotocol/sdk` to be installed:
+     *   npm install @modelcontextprotocol/sdk
+     *
+     * @example stdio — Claude Desktop / Cursor
+     * ```typescript
+     * const sdk = await Toolpack.init({ provider: 'anthropic', tools: true });
+     * await sdk.startMcpServer({ transport: 'stdio' });
+     * ```
+     *
+     * @example HTTP — open (localhost only)
+     * ```typescript
+     * await sdk.startMcpServer({ transport: 'http', port: 3000 });
+     * ```
+     *
+     * @example HTTP — with static bearer token auth (dev / self-hosted)
+     * ```typescript
+     * await sdk.startMcpServer({
+     *   transport: 'http',
+     *   port: 3000,
+     *   auth: { mode: 'static', tokens: [process.env.MCP_TOKEN!] },
+     * });
+     * ```
+     *
+     * @example HTTP — with JWT auth (Auth0 / Supabase / Clerk / any OIDC provider)
+     * ```typescript
+     * await sdk.startMcpServer({
+     *   transport: 'http',
+     *   port: 3000,
+     *   auth: {
+     *     mode: 'jwt',
+     *     jwksUrl: 'https://your-tenant.auth0.com/.well-known/jwks.json',
+     *     audience: 'https://your-mcp-server.example.com',
+     *     issuer:   'https://your-tenant.auth0.com/',
+     *   },
+     *   serverUrl: 'https://your-mcp-server.example.com',
+     * });
+     * ```
+     *
+     * @example expose only specific categories
+     * ```typescript
+     * await sdk.startMcpServer({
+     *   transport: 'stdio',
+     *   expose: { categories: ['filesystem', 'github', 'slack'] },
+     * });
+     * ```
+     *
+     * @example search mode — reduces context token usage for 110+ tools
+     * ```typescript
+     * // tools/list returns only tool.search; clients discover tools on-demand.
+     * // Add this to your system prompt:
+     * //   "Use tool.search to discover tools before calling them."
+     * await sdk.startMcpServer({ transport: 'stdio', searchMode: true });
+     * ```
+     */
+    async startMcpServer(config: ToolpackMcpServerConfig): Promise<McpServerHandle> {
+        const registry = this.client.getToolRegistry();
+        if (!registry) {
+            throw new Error(
+                'No tool registry configured. Initialize Toolpack with tools enabled: Toolpack.init({ tools: true })',
+            );
+        }
+
+        // Dynamic import — @modelcontextprotocol/sdk is an optional peer dependency.
+        // Only loaded when startMcpServer() is actually called.
+        // Users who don't use MCP server pay zero overhead.
+        let startMcpServerFn: typeof import('./mcp/server.js').startMcpServer;
+        try {
+            const mod = await import('./mcp/server.js');
+            startMcpServerFn = mod.startMcpServer;
+        } catch (err) {
+            // Only rewrite the error message when the failure is specifically
+            // a missing @modelcontextprotocol/sdk module. Other errors (e.g.
+            // runtime bugs in server.ts) should propagate as-is.
+            const isMissingDep = err instanceof Error &&
+                (err as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND' &&
+                err.message.includes('@modelcontextprotocol');
+            if (isMissingDep) {
+                throw new Error(
+                    'MCP server requires @modelcontextprotocol/sdk. Install it with:\n' +
+                    '  npm install @modelcontextprotocol/sdk',
+                );
+            }
+            throw err;
+        }
+
+        // When search mode is enabled, pass the AIClient's search function so the
+        // MCP server can execute tool.search without creating a separate BM25 instance.
+        // This reuses the already-indexed engine in AIClient instead of re-indexing.
+        const searchFn = config.searchMode
+            ? (args: Record<string, unknown>) => this.client.executeToolSearch(args)
+            : undefined;
+
+        return startMcpServerFn(registry, config, searchFn);
     }
 
     /**

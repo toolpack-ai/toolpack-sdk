@@ -494,7 +494,7 @@ export class AIClient extends EventEmitter {
      * When tools are enabled and autoExecute is true, handles the full
      * tool call → execute → send result → get final answer loop.
      */
-    async generate(request: CompletionRequest, providerName?: string): Promise<CompletionResponse> {
+    async generate<T = unknown>(request: CompletionRequest<T>, providerName?: string): Promise<CompletionResponse<T>> {
         const provider = this.getProvider(providerName);
         try {
             const requestId = newRequestId();
@@ -728,7 +728,13 @@ export class AIClient extends EventEmitter {
                 }
             }
 
-            return response;
+            if (response.data === undefined && response.content && request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format) {
+                response.data = (request.response_format as import('zod').ZodType<T>).parse(
+                    JSON.parse(response.content),
+                );
+            }
+
+            return response as CompletionResponse<T>;
         } catch (error) {
             throw this.wrapError(error);
         }
@@ -1806,7 +1812,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
     /**
      * Execute tool.search using BM25 engine.
      */
-    private executeToolSearch(args: Record<string, any>): string {
+    executeToolSearch(args: Record<string, any>): string {
         const { query, category } = args;
         const limit = this.toolsConfig.toolSearch?.searchResultLimit ?? 5;
         const requestedCategory = typeof category === 'string' && category.length > 0 ? category : undefined;

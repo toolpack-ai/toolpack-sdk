@@ -6,6 +6,8 @@
  * Framework-agnostic — usable from CLI, web servers, Electron, etc.
  */
 
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { type ZodType } from 'zod';
 import { ProviderAdapter } from "../base/index.js";
 import {
     CompletionRequest,
@@ -192,6 +194,10 @@ export class OllamaAdapter extends ProviderAdapter {
             },
         };
 
+        if (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format) {
+            payload.format = zodToJsonSchema(request.response_format as ZodType);
+        }
+
         if (request.tools && request.tools.length > 0 && request.tool_choice !== 'none') {
             payload.tools = request.tools.map(t => ({
                 type: 'function',
@@ -275,6 +281,10 @@ export class OllamaAdapter extends ProviderAdapter {
                 num_ctx: this.config.numCtx,
             },
         };
+
+        if (request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format) {
+            payload.format = zodToJsonSchema(request.response_format as ZodType);
+        }
 
         if (request.tools && request.tools.length > 0 && request.tool_choice !== 'none') {
             payload.tools = request.tools.map(t => ({
