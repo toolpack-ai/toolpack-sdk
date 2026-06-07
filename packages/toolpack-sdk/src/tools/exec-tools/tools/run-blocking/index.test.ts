@@ -27,10 +27,12 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should wait for slow commands to complete naturally', async () => {
+        const isWindows = process.platform === 'win32';
+        const command = isWindows
+            ? 'ping -n 2 127.0.0.1 > nul && echo done'
+            : 'sleep 1 && echo done';
         const start = Date.now();
-        const result = JSON.parse(await execRunBlockingTool.execute({
-            command: 'sleep 1 && echo done',
-        }));
+        const result = JSON.parse(await execRunBlockingTool.execute({ command }));
         const elapsed = Date.now() - start;
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe('done');
@@ -60,11 +62,12 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should accept a cwd argument', async () => {
-        const result = JSON.parse(await execRunBlockingTool.execute({
-            command: 'pwd',
-            cwd: '/tmp',
-        }));
+        const isWindows = process.platform === 'win32';
+        const cwd = isWindows ? process.env.TEMP ?? 'C:\\Windows\\Temp' : '/tmp';
+        const command = isWindows ? 'cd' : 'pwd';
+        const expectedSubstring = isWindows ? 'temp' : 'tmp';
+        const result = JSON.parse(await execRunBlockingTool.execute({ command, cwd }));
         expect(result.exitCode).toBe(0);
-        expect(result.stdout.trim()).toContain('tmp');
+        expect(result.stdout.trim().toLowerCase()).toContain(expectedSubstring);
     });
 });
