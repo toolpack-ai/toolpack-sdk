@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { tmpdir } from 'node:os';
 import { execRunBlockingTool } from './index.js';
 
 describe('exec.run_blocking tool', () => {
@@ -27,12 +28,10 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should wait for slow commands to complete naturally', async () => {
-        const isWindows = process.platform === 'win32';
-        const command = isWindows
-            ? 'ping -n 2 127.0.0.1 > nul && echo done'
-            : 'sleep 1 && echo done';
         const start = Date.now();
-        const result = JSON.parse(await execRunBlockingTool.execute({ command }));
+        const result = JSON.parse(await execRunBlockingTool.execute({
+            command: `node -e "setTimeout(() => { process.stdout.write('done\\n'); }, 1000)"`,
+        }));
         const elapsed = Date.now() - start;
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe('done');
@@ -62,12 +61,12 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should accept a cwd argument', async () => {
-        const isWindows = process.platform === 'win32';
-        const cwd = isWindows ? process.env.TEMP ?? 'C:\\Windows\\Temp' : '/tmp';
-        const command = isWindows ? 'cd' : 'pwd';
-        const expectedSubstring = isWindows ? 'temp' : 'tmp';
-        const result = JSON.parse(await execRunBlockingTool.execute({ command, cwd }));
+        const cwd = tmpdir();
+        const result = JSON.parse(await execRunBlockingTool.execute({
+            command: `node -e "process.stdout.write(process.cwd())"`,
+            cwd,
+        }));
         expect(result.exitCode).toBe(0);
-        expect(result.stdout.trim().toLowerCase()).toContain(expectedSubstring);
+        expect(result.stdout.trim()).toBe(cwd);
     });
 });
