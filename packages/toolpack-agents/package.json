@@ -1,6 +1,6 @@
 {
   "name": "@toolpack-sdk/agents",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Production AI agents for Toolpack SDK — 8 channel integrations (Slack, Discord, Telegram, SMS, Email, Webhook, Scheduled, MCP), AgentMind persistent cognitive layer (goals, beliefs, reflections), interceptors, evals, and multi-agent coordination",
   "engines": {
     "node": ">=20"
@@ -89,11 +89,11 @@
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.x",
-    "@toolpack-sdk/knowledge": "^2.2.0",
+    "@toolpack-sdk/knowledge": "^2.3.0",
     "better-sqlite3": "^12.6.2",
     "discord.js": "^14.x",
     "nodemailer": "^6.x",
-    "toolpack-sdk": "^2.2.0",
+    "toolpack-sdk": "^2.3.0",
     "twilio": "^5.x"
   },
   "peerDependenciesMeta": {

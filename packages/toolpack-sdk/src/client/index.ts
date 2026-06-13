@@ -499,14 +499,20 @@ export class AIClient extends EventEmitter {
         try {
             const requestId = newRequestId();
 
+            // Snapshot the mode for the entire request. activeMode is shared
+            // instance state — without a snapshot, a concurrent setMode() (e.g.
+            // a delegated sub-agent on the same Toolpack) would change tool
+            // filtering between rounds of this request's tool loop.
+            const mode = this.resolveRequestMode(request);
+
             // System prompt injection chain (base → override → mode)
-            let modeAwareRequest = this.injectBaseAgentContext(request);
+            let modeAwareRequest = this.injectBaseAgentContext(request, mode);
             modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
-            modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest);
+            modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest, mode);
 
             // Resolve tools to send with the request
             const resolvedProviderName = providerName || this.defaultProvider;
-            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest);
+            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest, mode);
             let enrichedRequest = initialEnrichment.request;
             const requestToolMap = initialEnrichment.requestToolMap;
             enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
@@ -529,7 +535,7 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const modeResponseFormat = this.activeMode?.response_format;
+            const modeResponseFormat = mode?.response_format;
             const outboundReq: any = {
                 ...this.stripRequestTools(enrichedRequest),
                 __toolpack_request_id: requestId,
@@ -628,7 +634,7 @@ export class AIClient extends EventEmitter {
                         try {
                             toolResults = await this.toolOrchestrator.executeWithDependencies(
                                 toolCallsToExecute,
-                                (toolCall) => this.executeTool(toolCall, requestToolMap),
+                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode),
                                 5 // maxConcurrent
                             );
                         } catch (err: any) {
@@ -675,7 +681,7 @@ export class AIClient extends EventEmitter {
                         for (const toolCall of toolCallsToExecute) {
                             let result: string;
                             try {
-                                result = await this.executeTool(toolCall, requestToolMap);
+                                result = await this.executeTool(toolCall, requestToolMap, mode);
                             } catch (err: any) {
                                 result = JSON.stringify({ error: err.message ?? 'Tool execution failed' });
                             }
@@ -711,8 +717,9 @@ export class AIClient extends EventEmitter {
                         __toolpack_request_id: requestId,
                         ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
                     };
-                    // Re-enrich to include any tools discovered in the previous round
-                    let followupReq = this.stripRequestTools((await this.enrichRequestWithTools(rawFollowupReq)).request);
+                    // Re-enrich to include any tools discovered in the previous round.
+                    // Uses the request-start mode snapshot — NOT live activeMode.
+                    let followupReq = this.stripRequestTools((await this.enrichRequestWithTools(rawFollowupReq, mode)).request);
                     followupReq = await this.enforceContextWindow(followupReq, provider);
 
                     if ((followupReq as any).tool_choice === 'required') {
@@ -751,12 +758,15 @@ export class AIClient extends EventEmitter {
             const requestId = newRequestId();
             const resolvedProviderName = providerName || this.defaultProvider;
 
-            // System prompt injection chain (base → override → mode)
-            let modeAwareRequest = this.injectBaseAgentContext(request);
-            modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
-            modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest);
+            // Snapshot the mode for the entire request (see generate() for rationale).
+            const mode = this.resolveRequestMode(request);
 
-            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest);
+            // System prompt injection chain (base → override → mode)
+            let modeAwareRequest = this.injectBaseAgentContext(request, mode);
+            modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
+            modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest, mode);
+
+            const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest, mode);
             let enrichedRequest = initialEnrichment.request;
             const requestToolMap = initialEnrichment.requestToolMap;
             enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
@@ -779,7 +789,7 @@ export class AIClient extends EventEmitter {
             }
 
             const providerClass = (provider as any)?.constructor?.name || 'UnknownProvider';
-            const modeResponseFormat = this.activeMode?.response_format;
+            const modeResponseFormat = mode?.response_format;
             const baseReq: any = {
                 ...this.stripRequestTools(enrichedRequest),
                 __toolpack_request_id: requestId,
@@ -832,8 +842,9 @@ export class AIClient extends EventEmitter {
                     messages,
                     ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
                 };
-                // Re-enrich to include any newly discovered tools from previous rounds
-                let roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq)).request);
+                // Re-enrich to include any newly discovered tools from previous rounds.
+                // Uses the request-start mode snapshot — NOT live activeMode.
+                let roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq, mode)).request);
                 roundReq = await this.enforceContextWindow(roundReq, provider);
 
                 if (rounds > 1 && (roundReq as any).tool_choice === 'required') {
@@ -936,7 +947,7 @@ export class AIClient extends EventEmitter {
                             toolCallsToExecute,
                             async (toolCall) => {
                                 const t = Date.now();
-                                const r = await this.executeTool(toolCall, requestToolMap);
+                                const r = await this.executeTool(toolCall, requestToolMap, mode);
                                 streamToolDurations!.set(toolCall.id, Date.now() - t);
                                 return r;
                             },
@@ -949,7 +960,7 @@ export class AIClient extends EventEmitter {
                         streamToolResults = new Map();
                         for (const toolCall of toolCallsToExecute) {
                             const t = Date.now();
-                            const r = await this.executeTool(toolCall, requestToolMap);
+                            const r = await this.executeTool(toolCall, requestToolMap, mode);
                             streamToolDurations.set(toolCall.id, Date.now() - t);
                             streamToolResults.set(toolCall.id, r);
                         }
@@ -1034,10 +1045,15 @@ export class AIClient extends EventEmitter {
      * Enrich a request with tools based on the router config.
      * Applies mode-based tool filtering when an active mode is set.
      */
-    private async enrichRequestWithTools(request: CompletionRequest): Promise<EnrichedRequestResult> {
+    /**
+     * @param mode Mode snapshot taken at request start. Passed explicitly (not
+     * read from `this.activeMode`) so that per-round re-enrichment inside the
+     * tool loop is immune to concurrent `setMode()` calls on this instance.
+     */
+    private async enrichRequestWithTools(request: CompletionRequest, mode: ModeConfig | null): Promise<EnrichedRequestResult> {
         // If mode blocks ALL tools, return request with no tools
-        if (this.activeMode?.blockAllTools) {
-            logInfo(`[AIClient] Mode "${this.activeMode.displayName}" blocks all tools`);
+        if (mode?.blockAllTools) {
+            logInfo(`[AIClient] Mode "${mode.displayName}" blocks all tools`);
             return { request, requestToolMap: new Map() };
         }
 
@@ -1052,14 +1068,14 @@ export class AIClient extends EventEmitter {
 
         // Merge mode-specific tool search config with global config
         let resolvedToolsConfig = this.toolsConfig;
-        if (this.activeMode?.toolSearch && this.toolsConfig.toolSearch) {
+        if (mode?.toolSearch && this.toolsConfig.toolSearch) {
             resolvedToolsConfig = {
                 ...this.toolsConfig,
                 toolSearch: {
                     ...this.toolsConfig.toolSearch,
-                    ...(this.activeMode.toolSearch.enabled !== undefined ? { enabled: this.activeMode.toolSearch.enabled } : {}),
-                    ...(this.activeMode.toolSearch.alwaysLoadedTools ? { alwaysLoadedTools: this.activeMode.toolSearch.alwaysLoadedTools } : {}),
-                    ...(this.activeMode.toolSearch.alwaysLoadedCategories ? { alwaysLoadedCategories: this.activeMode.toolSearch.alwaysLoadedCategories } : {}),
+                    ...(mode.toolSearch.enabled !== undefined ? { enabled: mode.toolSearch.enabled } : {}),
+                    ...(mode.toolSearch.alwaysLoadedTools ? { alwaysLoadedTools: mode.toolSearch.alwaysLoadedTools } : {}),
+                    ...(mode.toolSearch.alwaysLoadedCategories ? { alwaysLoadedCategories: mode.toolSearch.alwaysLoadedCategories } : {}),
                 }
             };
             logDebug(`[AIClient] Merged mode toolSearch config: enabled=${resolvedToolsConfig.toolSearch?.enabled}, alwaysLoadedTools=${resolvedToolsConfig.toolSearch?.alwaysLoadedTools?.length || 0}`);
@@ -1085,12 +1101,12 @@ export class AIClient extends EventEmitter {
 
             logDebug(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
 
-            if (this.activeMode && schemas.length > 0) {
+            if (mode && schemas.length > 0) {
                 const beforeCount = schemas.length;
-                schemas = this.filterSchemasByMode(schemas, this.activeMode);
+                schemas = this.filterSchemasByMode(schemas, mode);
                 const filteredCount = beforeCount - schemas.length;
                 if (filteredCount > 0) {
-                    logInfo(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
+                    logInfo(`[AIClient] Mode "${mode.displayName}" filtered out ${filteredCount} tools`);
                 }
             }
 
@@ -1155,12 +1171,12 @@ export class AIClient extends EventEmitter {
         logDebug(`[AIClient] Resolved ${schemas.length} tools to send: ${schemas.map(s => s.name).join(', ') || 'none'}`);
 
         // Apply mode-based filtering
-        if (this.activeMode && schemas.length > 0) {
+        if (mode && schemas.length > 0) {
             const beforeCount = schemas.length;
-            schemas = this.filterSchemasByMode(schemas, this.activeMode);
+            schemas = this.filterSchemasByMode(schemas, mode);
             const filteredCount = beforeCount - schemas.length;
             if (filteredCount > 0) {
-                logInfo(`[AIClient] Mode "${this.activeMode.displayName}" filtered out ${filteredCount} tools`);
+                logInfo(`[AIClient] Mode "${mode.displayName}" filtered out ${filteredCount} tools`);
             }
         }
 
@@ -1298,9 +1314,31 @@ export class AIClient extends EventEmitter {
     }
 
     private stripRequestTools(request: CompletionRequest): CompletionRequest {
-        const { requestTools, ...rest } = request;
+        // Strip SDK-internal fields (requestTools, mode) — providers must not see them.
+        const { requestTools, mode, ...rest } = request;
         void requestTools;
+        void mode;
         return rest;
+    }
+
+    /**
+     * Resolve the mode snapshot for a request.
+     *
+     * - `request.mode` omitted → snapshot the instance's activeMode now
+     * - `request.mode === null` → explicitly no mode
+     * - `request.mode` is a ModeConfig → use it directly
+     * - `request.mode` is a string → mode names are resolved by Toolpack (which
+     *   owns the mode registry) before reaching the client; if an unresolved
+     *   name gets here, warn and fall back to the activeMode snapshot
+     */
+    private resolveRequestMode(request: CompletionRequest<any>): ModeConfig | null {
+        if (request.mode === undefined) return this.activeMode;
+        if (request.mode === null) return null;
+        if (typeof request.mode === 'string') {
+            logWarn(`[AIClient] Unresolved mode name "${request.mode}" on request — falling back to active mode. Pass requests through Toolpack.generate()/stream() to resolve mode names.`);
+            return this.activeMode;
+        }
+        return request.mode;
     }
 
     /**
@@ -1343,17 +1381,17 @@ export class AIClient extends EventEmitter {
     }
 
     /**
-     * Inject the active mode's system prompt into the request messages.
+     * Inject the given mode's system prompt into the request messages.
      * For the "All" mode (empty systemPrompt), this is a no-op.
      */
-    private injectModeSystemPrompt(request: CompletionRequest): CompletionRequest {
-        if (!this.activeMode || !this.activeMode.systemPrompt) {
-            logDebug(`[AIClient] injectModeSystemPrompt: No active mode or empty systemPrompt. activeMode=${this.activeMode?.name}, systemPrompt=${this.activeMode?.systemPrompt?.substring(0, 50)}`);
+    private injectModeSystemPrompt(request: CompletionRequest, mode: ModeConfig | null): CompletionRequest {
+        if (!mode || !mode.systemPrompt) {
+            logDebug(`[AIClient] injectModeSystemPrompt: No active mode or empty systemPrompt. mode=${mode?.name}, systemPrompt=${mode?.systemPrompt?.substring(0, 50)}`);
             return request;
         }
 
-        const modePrompt = this.activeMode.systemPrompt;
-        logDebug(`[AIClient] injectModeSystemPrompt: Injecting mode prompt for ${this.activeMode.name}, length=${modePrompt.length}`);
+        const modePrompt = mode.systemPrompt;
+        logDebug(`[AIClient] injectModeSystemPrompt: Injecting mode prompt for ${mode.name}, length=${modePrompt.length}`);
         const hasSystemMessage = request.messages.some(m => m.role === 'system');
 
         if (hasSystemMessage) {
@@ -1415,21 +1453,21 @@ export class AIClient extends EventEmitter {
      * Inject the Base Agent Context into the request.
      * Tells the agent its CWD, tools, and to be proactive.
      */
-    private injectBaseAgentContext(request: CompletionRequest): CompletionRequest {
-        // Check if active mode has per-mode baseContext config
+    private injectBaseAgentContext(request: CompletionRequest, mode: ModeConfig | null): CompletionRequest {
+        // Check if the mode has per-mode baseContext config
         let includeWd = true;
         let includeCategories = true;
         let customContext: string | undefined;
         const disabled = this.disableBaseContext;
 
-        if (this.activeMode?.baseContext === false) {
+        if (mode?.baseContext === false) {
             // Mode explicitly disables base context entirely
             return request;
-        } else if (this.activeMode?.baseContext) {
+        } else if (mode?.baseContext) {
             // Mode has fine-grained base context config
-            includeWd = this.activeMode.baseContext.includeWorkingDirectory !== false;
-            includeCategories = this.activeMode.baseContext.includeToolCategories !== false;
-            customContext = this.activeMode.baseContext.custom;
+            includeWd = mode.baseContext.includeWorkingDirectory !== false;
+            includeCategories = mode.baseContext.includeToolCategories !== false;
+            customContext = mode.baseContext.custom;
         }
 
         const baseContext = customContext || generateBaseAgentContext({
@@ -1536,7 +1574,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
      * Execute a single tool call via the registry.
      * Emits 'tool:started', 'tool:completed', and 'tool:failed' events.
      */
-    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>): Promise<string> {
+    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null): Promise<string> {
         const startTime = Date.now();
 
         // Emit started event
@@ -1566,7 +1604,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
 
         // Special handling for tool.search (BM25 search)
         if (isToolSearchTool(toolCall.name)) {
-            const result = this.executeToolSearch(toolCall.arguments);
+            const result = this.executeToolSearch(toolCall.arguments, mode);
             const duration = Date.now() - startTime;
             this.emit('tool:completed', {
                 toolName: toolCall.name,
@@ -1812,13 +1850,17 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
     /**
      * Execute tool.search using BM25 engine.
      */
-    executeToolSearch(args: Record<string, any>): string {
+    executeToolSearch(args: Record<string, any>, mode?: ModeConfig | null): string {
         const { query, category } = args;
         const limit = this.toolsConfig.toolSearch?.searchResultLimit ?? 5;
         const requestedCategory = typeof category === 'string' && category.length > 0 ? category : undefined;
 
-        if (this.activeMode) {
-            const searchAllowed = this.filterSchemasByMode([getToolSearchSchema()], this.activeMode).length > 0;
+        // Use the request's mode snapshot when threaded from the tool loop;
+        // fall back to live activeMode for direct callers (e.g. Toolpack facade).
+        const effectiveMode = mode === undefined ? this.activeMode : mode;
+
+        if (effectiveMode) {
+            const searchAllowed = this.filterSchemasByMode([getToolSearchSchema()], effectiveMode).length > 0;
             if (!searchAllowed) {
                 logWarn('[AIClient] tool.search blocked by active mode');
                 return JSON.stringify({
@@ -1834,11 +1876,11 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
 
         // Oversample so mode filtering (allowed/blocked tools and categories) does not starve the
         // final result set when allowlists are restrictive. We slice down to the configured limit below.
-        const oversampleLimit = this.activeMode ? Math.max(limit * 4, limit) : limit;
+        const oversampleLimit = effectiveMode ? Math.max(limit * 4, limit) : limit;
         let results = this.bm25Engine.search(query, { limit: oversampleLimit, category: requestedCategory });
 
-        if (this.activeMode && results.length > 0) {
-            const allowedSchemas = this.filterSchemasByMode(results.map(result => result.tool), this.activeMode);
+        if (effectiveMode && results.length > 0) {
+            const allowedSchemas = this.filterSchemasByMode(results.map(result => result.tool), effectiveMode);
             const allowedToolNames = new Set(allowedSchemas.map(schema => schema.name));
             const beforeCount = results.length;
 
@@ -1846,7 +1888,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
 
             const filteredCount = beforeCount - results.length;
             if (filteredCount > 0) {
-                logDebug(`[AIClient] tool.search filtered out ${filteredCount} disallowed results for mode "${this.activeMode.displayName}"`);
+                logDebug(`[AIClient] tool.search filtered out ${filteredCount} disallowed results for mode "${effectiveMode.displayName}"`);
             }
         }
 

@@ -1,4 +1,4 @@
-import type { Toolpack, Participant, ModeConfig } from 'toolpack-sdk';
+import type { Toolpack, Participant, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
 import type { EventEmitter } from 'events';
 import type { Interceptor } from '../interceptors/types.js';
 
@@ -7,13 +7,15 @@ export type { Participant };
 /**
  * Options for constructing a BaseAgent.
  *
- * - `{ apiKey, provider?, model? }` — agent creates and owns its own Toolpack instance.
+ * - `ToolpackInitConfig` — agent creates and owns its own Toolpack instance using
+ *   the supplied config. Accepts everything `Toolpack.init()` accepts: `apiKey`,
+ *   `provider`, `model`, `customTools`, `tools`, `knowledge`, `customModes`, etc.
  *   The instance is initialised lazily in `start()`.
  * - `{ toolpack }` — agent uses a shared Toolpack instance (e.g. passed from AgentRegistry
- *   for multi-agent setups where API client and config are shared).
+ *   for multi-agent setups where the API client and config are shared).
  */
 export type BaseAgentOptions =
-  | { apiKey: string; provider?: string; model?: string }
+  | ToolpackInitConfig
   | { toolpack: Toolpack };
 
 /**

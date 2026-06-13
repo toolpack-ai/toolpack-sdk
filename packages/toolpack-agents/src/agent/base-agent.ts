@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig } from 'toolpack-sdk';
+import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
 import { Toolpack, InMemoryConversationStore } from 'toolpack-sdk';
 import type { Interceptor } from '../interceptors/types.js';
 import { composeChain, executeChain } from '../interceptors/chain.js';
@@ -103,7 +103,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
   protected toolpack!: Toolpack;
 
-  private readonly _initConfig?: { apiKey: string; provider?: string; model?: string };
+  private readonly _initConfig?: ToolpackInitConfig;
   private _ownedToolpack = false;
   private readonly _conversationLocks = new Map<string, Promise<void>>();
   private _mind?: AgentMind;
@@ -132,11 +132,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     if (!this._initConfig) {
       throw new Error(`[${this.name ?? 'agent'}] Cannot start: no apiKey or toolpack provided`);
     }
-    this.toolpack = await Toolpack.init({
-      provider: this._initConfig.provider ?? 'anthropic',
-      apiKey: this._initConfig.apiKey,
-      model: this._initConfig.model,
-    });
+    this.toolpack = await Toolpack.init(this._initConfig);
     this._ownedToolpack = true;
   }
 
@@ -245,6 +241,13 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // Register-then-activate. registerMode is idempotent for the same name,
       // so calling it on every run is cheap and avoids requiring callers to
       // pre-wire the mode in Toolpack.init({ customModes }).
+      //
+      // setMode() alone is NOT enough for correctness: activeMode is shared
+      // instance state, and another agent on the same Toolpack (e.g. a
+      // delegated sub-agent) may setMode() while this run is in flight. The
+      // mode is therefore ALSO passed per-request to generate() below, which
+      // snapshots it for the whole request. setMode() is kept for backward
+      // compatibility with consumers that read getMode().
       if (typeof this.mode === 'string') {
         this.toolpack.setMode(this.mode);
       } else {
@@ -443,6 +446,10 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
           // Forward the per-run maxToolRounds cap (if any) so AIClient respects it
           // as a hard ceiling, bypassing the query-classifier adjustment.
           maxToolRounds: _options?.maxToolRounds,
+          // Per-request mode: snapshotted by the client for the entire request,
+          // so a concurrent setMode() from another agent sharing this Toolpack
+          // (e.g. awaited delegation) cannot change this run's tool filtering.
+          mode: this.mode,
         },
         this.provider
       );

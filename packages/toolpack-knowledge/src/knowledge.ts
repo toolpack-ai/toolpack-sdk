@@ -9,6 +9,22 @@ export interface KnowledgeOptions {
   sources: KnowledgeSource[];
   embedder: Embedder;
   description: string;
+  /**
+   * Controls the full sync `create()` runs at startup. A full sync CLEARS the
+   * provider store and re-embeds it from `sources` — anything added at
+   * runtime via `knowledge.add()` is lost.
+   *
+   * `false`: skip the full sync when the store already has data (it still
+   * runs once on an empty store, so first-run indexing works). Use this with
+   * persistent providers so runtime-added chunks survive restarts. Setting
+   * the flag here OR on the provider (for providers with their own `reSync`
+   * option) is sufficient — when both are set, the provider's wins.
+   *
+   * `true`: always run the full sync.
+   *
+   * Omitted (default): full sync, unless the provider's own `reSync` option
+   * is explicitly `false`.
+   */
   reSync?: boolean;
   onError?: ErrorHandler;
   onSync?: SyncEventHandler;
@@ -59,16 +75,24 @@ export class Knowledge {
       options
     );
 
-    const userWantsSync = options.reSync !== false;
-
-    if (!userWantsSync && 'shouldReSync' in options.provider) {
-      if ((options.provider as any).shouldReSync()) {
+    // Re-sync policy — a full sync CLEARS the store and re-embeds sources, so
+    // `reSync: false` exists to protect persisted data (incl. runtime adds):
+    //
+    //   - explicit `reSync: true` here forces a full re-sync, always
+    //   - otherwise, providers exposing shouldReSync() decide: the effective
+    //     intent is the provider's own reSync option when set, else the
+    //     Knowledge-level flag — so a single `reSync: false` in EITHER place
+    //     suffices (it previously had to be set in both; missing one wiped
+    //     runtime-added chunks on every restart)
+    //   - providers without shouldReSync(): sync unless reSync === false
+    if (options.reSync !== true && 'shouldReSync' in options.provider) {
+      if ((options.provider as any).shouldReSync(options.reSync)) {
         await kb.sync();
       }
       return kb;
     }
 
-    if (userWantsSync) {
+    if (options.reSync !== false) {
       await kb.sync();
     }
 

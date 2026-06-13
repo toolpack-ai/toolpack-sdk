@@ -657,8 +657,10 @@ export class Toolpack extends EventEmitter {
         }
 
         req = this.prepareRequest(req);
+        req = this.resolveRequestModeName(req);
 
-        const mode = this.getMode();
+        // Prefer the per-request mode (snapshot semantics) over instance state.
+        const mode = req.mode !== undefined ? (req.mode as ModeConfig | null) : this.getMode();
         if (mode?.workflow?.planning?.enabled) {
             // Workflow mode: use WorkflowExecutor
             const result = await this.workflowExecutor.execute(req, providerName || this.activeProviderName);
@@ -733,6 +735,21 @@ export class Toolpack extends EventEmitter {
         return this.client.generate(req, providerName);
     }
 
+    /**
+     * Resolve a string `mode` on the request to its registered ModeConfig.
+     * The AIClient cannot resolve names (the mode registry lives here), so
+     * names must be resolved before the request reaches the client.
+     * Throws for unknown names — same contract as setMode().
+     */
+    private resolveRequestModeName(req: CompletionRequest): CompletionRequest {
+        if (typeof req.mode !== 'string') return req;
+        const resolved = this.modeRegistry.get(req.mode);
+        if (!resolved) {
+            throw new Error(`Mode "${req.mode}" not found. Available modes: ${this.modeRegistry.getNames().join(', ')}`);
+        }
+        return { ...req, mode: resolved };
+    }
+
     private _buildInterceptorChain(
         interceptors: ToolpackInterceptor[],
         finalHandler: ToolpackNextFunction,
@@ -744,8 +761,13 @@ export class Toolpack extends EventEmitter {
     }
 
     async *stream(request: CompletionRequest, providerName?: string): AsyncGenerator<CompletionChunk> {
-        const preparedRequest = this.prepareRequest(request);
-        const mode = this.getMode();
+        let preparedRequest = this.prepareRequest(request);
+        preparedRequest = this.resolveRequestModeName(preparedRequest);
+
+        // Prefer the per-request mode (snapshot semantics) over instance state.
+        const mode = preparedRequest.mode !== undefined
+            ? (preparedRequest.mode as ModeConfig | null)
+            : this.getMode();
         const provider = providerName || this.activeProviderName;
 
         // If mode has workflow enabled, use WorkflowExecutor.stream()

@@ -148,6 +148,18 @@ export interface CompletionRequest<T = unknown> {
      * Useful for agents that should only ever make one tool call (e.g. routers).
      */
     maxToolRounds?: number;
+    /**
+     * Per-request mode override. Snapshotted for the entire duration of the
+     * request — concurrent `setMode()` calls (e.g. from another agent sharing
+     * this Toolpack instance during awaited delegation) cannot affect an
+     * in-flight request's system prompt, tool filtering, or response format.
+     *
+     * - `ModeConfig` — use this mode for the request
+     * - `string`     — mode name, resolved from Toolpack's mode registry
+     * - `null`       — explicitly run without a mode
+     * - omitted      — snapshot the instance's active mode at request start
+     */
+    mode?: import('../modes/mode-types.js').ModeConfig | string | null;
 }
 
 export interface Usage {

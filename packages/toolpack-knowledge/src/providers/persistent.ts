@@ -10,6 +10,15 @@ import { keywordSearch } from '../utils/keyword.js';
 export interface PersistentKnowledgeProviderOptions {
   namespace: string;
   storagePath?: string;
+  /**
+   * When false, `Knowledge.create()` skips the full re-sync (which CLEARS the
+   * store before re-embedding sources) as long as the store already has data.
+   * Runtime-added chunks (`knowledge.add()`) therefore survive restarts.
+   *
+   * Optional here: when omitted, the `reSync` flag passed to `Knowledge.create()`
+   * options applies. Set it explicitly on the provider only to override the
+   * Knowledge-level flag.
+   */
   reSync?: boolean;
 }
 
@@ -273,8 +282,19 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
     });
   }
 
-  shouldReSync(): boolean {
-    if (this.options.reSync === false) {
+  /**
+   * Whether `Knowledge.create()` should run a full sync (clear + re-embed
+   * sources) on startup.
+   *
+   * The effective reSync intent is the provider's own option when explicitly
+   * set, otherwise the Knowledge-level `reSync` flag passed by the caller.
+   * When the effective intent is `false`, sync only happens on an empty store
+   * (first run) — so runtime-added chunks survive restarts with a single
+   * `reSync: false` in either place.
+   */
+  shouldReSync(callerReSync?: boolean): boolean {
+    const reSync = this.options.reSync ?? callerReSync;
+    if (reSync === false) {
       const count = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get() as { count: number };
       return count.count === 0;
     }
