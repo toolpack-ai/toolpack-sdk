@@ -1,6 +1,6 @@
 {
   "name": "toolpack-sdk",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "TypeScript SDK for production AI agents — 110+ built-in tools across 14 categories, multi-provider support (OpenAI, Anthropic, Gemini, Ollama), workflow engine, and mode system",
   "engines": {
     "node": ">=20"
