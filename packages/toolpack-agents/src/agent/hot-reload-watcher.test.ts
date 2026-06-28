@@ -149,6 +149,7 @@ describe('HotReloadWatcher', () => {
       const watcher = new HotReloadWatcher({
         watchPaths: ['/src'],
         cwd: '/project',
+        debounceMs: 500,
         onRestartNeeded: vi.fn(),
         spawnFn: mockSpawn,
         watchFn,
@@ -244,6 +245,7 @@ describe('HotReloadWatcher', () => {
 
       const watcher = new HotReloadWatcher({
         watchPaths: ['/project'],
+        debounceMs: 500,
         onRestartNeeded,
         spawnFn: mockSpawn as unknown as SpawnFn,
         watchFn,
@@ -266,6 +268,7 @@ describe('HotReloadWatcher', () => {
 
       const watcher = new HotReloadWatcher({
         watchPaths: ['/project'],
+        debounceMs: 500,
         onRestartNeeded,
         spawnFn: mockSpawn as unknown as SpawnFn,
         watchFn,
