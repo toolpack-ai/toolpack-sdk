@@ -16,7 +16,20 @@ export function parseSkillFile(content: string, filePath: string, rootDir: strin
 
   if (frontmatterMatch && frontmatterMatch[1]) {
     const lines = frontmatterMatch[1].split('\n');
+    let parsingTagsList = false;
+
     for (const line of lines) {
+      // Collect block-list tag items (e.g. "  - coding") before the colon check
+      // that would otherwise skip them (they have no colon).
+      if (parsingTagsList) {
+        const listItem = line.match(/^\s+-\s+(.+?)\s*$/);
+        if (listItem) {
+          tags.push(listItem[1].replace(/^["']|["']$/g, ''));
+          continue;
+        }
+        parsingTagsList = false;
+      }
+
       const colonIndex = line.indexOf(':');
       if (colonIndex === -1) continue;
 
@@ -27,12 +40,21 @@ export function parseSkillFile(content: string, filePath: string, rootDir: strin
       if (key === 'title') title = value;
       if (key === 'version') version = value;
       if (key === 'tags') {
-        const tagsMatch = value.match(/\[(.*)\]/);
-        if (tagsMatch && tagsMatch[1]) {
-          tags = tagsMatch[1]
-            .split(',')
-            .map(t => t.trim().replace(/"/g, ''))
-            .filter(Boolean);
+        if (value) {
+          // Inline array: tags: ["coding", "quality"] or tags: [coding, quality]
+          // Use [^\]]* (non-greedy-safe) instead of .* to avoid overshooting on
+          // tags that somehow contain a ] character.
+          const tagsMatch = value.match(/\[([^\]]*)\]/);
+          if (tagsMatch) {
+            tags = tagsMatch[1]
+              .split(',')
+              .map(t => t.trim().replace(/^["']|["']$/g, ''))
+              .filter(Boolean);
+          }
+        } else {
+          // Block list — collect subsequent indented "- value" lines.
+          parsingTagsList = true;
+          tags = [];
         }
       }
     }

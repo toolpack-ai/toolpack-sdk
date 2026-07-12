@@ -51,6 +51,11 @@ export function validateSkill(skill: Skill, relativeFile: string): SkillValidati
   if (!skill.triggers || skill.triggers.length === 0) {
     errors.push('## Triggers section must contain at least one trigger');
   } else {
+    if (skill.triggers.length < 3) {
+      warnings.push(
+        `only ${skill.triggers.length} trigger(s) defined; add more variations (synonyms, short forms, longer phrases) so BM25 can match a wider range of user phrasings — aim for at least 3`,
+      );
+    }
     if (skill.triggers.length > SKILL_LIMITS.triggers.count) {
       warnings.push(`too many triggers (${skill.triggers.length}); maximum is ${SKILL_LIMITS.triggers.count}`);
     }
@@ -61,7 +66,7 @@ export function validateSkill(skill: Skill, relativeFile: string): SkillValidati
     }
   }
 
-  // instructions: required, max 2000 chars
+  // instructions: required, max 5000 chars
   if (!skill.instructions) {
     errors.push('## Instructions section is required and must not be empty');
   } else if (skill.instructions.length > SKILL_LIMITS.instructions) {

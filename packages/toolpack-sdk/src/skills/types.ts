@@ -4,7 +4,7 @@ export const SKILL_LIMITS = {
   tags: { count: 10, each: 30 },
   description: 300,
   triggers: { count: 10, min: 1, each: 100 },
-  instructions: 2000,
+  instructions: 5000,
   examples: 3000,
 } as const;
 

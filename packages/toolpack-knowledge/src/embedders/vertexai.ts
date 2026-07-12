@@ -18,8 +18,14 @@ export interface VertexAIEmbedderOptions {
   outputDimensionality?: number;
   /** Max retries on transient errors. Default: 3. */
   retries?: number;
-  /** Delay between retries in ms. Default: 1000. */
+  /** Delay between retries in ms. Default: 1000. For RESOURCE_EXHAUSTED/quota errors, set to 60000+. */
   retryDelay?: number;
+  /**
+   * Milliseconds to wait between consecutive embedBatch calls.
+   * Use this to stay under the Vertex AI embedding QPM quota when syncing large knowledge bases.
+   * Example: 500 adds a 0.5s pause between batches (120 QPM effective rate).
+   */
+  rateLimitMs?: number;
 }
 
 const MODEL_DIMENSIONS: Record<string, number> = {
@@ -36,6 +42,8 @@ export class VertexAIEmbedder implements Embedder {
   private readonly outputDimensionality: number;
   private readonly retries: number;
   private readonly retryDelay: number;
+  private readonly rateLimitMs: number;
+  private lastEmbedAt = 0;
 
   constructor(options: VertexAIEmbedderOptions = {}) {
     this.model = options.model ?? 'gemini-embedding-001';
@@ -63,6 +71,7 @@ export class VertexAIEmbedder implements Embedder {
     this.outputDimensionality = this.dimensions;
     this.retries = options.retries ?? 3;
     this.retryDelay = options.retryDelay ?? 1000;
+    this.rateLimitMs = options.rateLimitMs ?? 0;
   }
 
   async embed(text: string): Promise<number[]> {
@@ -71,11 +80,20 @@ export class VertexAIEmbedder implements Embedder {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    if (this.rateLimitMs > 0) {
+      const elapsed = Date.now() - this.lastEmbedAt;
+      if (elapsed < this.rateLimitMs) {
+        await new Promise(resolve => setTimeout(resolve, this.rateLimitMs - elapsed));
+      }
+    }
+
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.retries; attempt++) {
       try {
-        return await this._request(texts);
+        const result = await this._request(texts);
+        this.lastEmbedAt = Date.now();
+        return result;
       } catch (error) {
         lastError = error as Error;
         console.error(`[${new Date().toISOString()}] [ERROR] [VertexAI Embedder] attempt ${attempt + 1}/${this.retries} failed: ${lastError.message}`);

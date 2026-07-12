@@ -100,6 +100,16 @@ export class SlackChannel extends BaseChannel {
   botUserId?: string;
 
   /**
+   * The bot's Slack integration id (e.g. `'B_BOT123'`), populated by the
+   * startup self-check (`auth.test`) alongside `botUserId`.
+   *
+   * Used internally for self-suppression of DM `bot_message` events where
+   * Slack omits the `user` field (so `botUserId` comparison cannot fire).
+   * Not needed for regular channel posts — those carry `event.user`.
+   */
+  private botId?: string;
+
+  /**
    * Normalized allowlist of channel identifiers, or `null` to accept any channel.
    * Derived from `config.channel` at construction time.
    */
@@ -163,6 +173,7 @@ export class SlackChannel extends BaseChannel {
       const data = await response.json() as {
         ok: boolean;
         user_id?: string;
+        bot_id?: string;
         user?: string;
         team?: string;
         url?: string;
@@ -171,6 +182,7 @@ export class SlackChannel extends BaseChannel {
 
       if (data.ok) {
         this.botUserId = data.user_id;
+        this.botId = data.bot_id;
         console.log(
           `[SlackChannel] Connected as @${data.user} (${data.user_id}) ` +
           `in workspace "${data.team}" — ${data.url}`
@@ -473,10 +485,11 @@ export class SlackChannel extends BaseChannel {
    * 2. Channel allowlist (from `config.channel`): events outside the allowlist
    *    are dropped. DMs (`im`/`mpim`) always pass because they are per-user, not
    *    per-channel. Skipped entirely when `config.channel` is null/omitted.
-   * 3. **Self-suppression (automatic):** events where `event.user` matches this
-   *    channel's own `botUserId` are dropped. This prevents agents from looping
-   *    on their own posts and requires no configuration — `botUserId` is
-   *    discovered via `auth.test` at startup.
+   * 3. **Self-suppression (automatic):** events where `event.user` matches
+   *    `botUserId`, OR where `event.bot_id` matches `botId`, are dropped. This
+   *    handles both channel posts (where Slack sets `event.user`) and DM posts
+   *    (where Slack omits `event.user` but sets `event.bot_id`). Requires no
+   *    configuration — both ids are discovered via `auth.test` at startup.
    * 4. Events without `bot_id` (human messages) pass.
    * 5. Explicit blocklist check (`blockedBotIds`) runs first for bot messages.
    * 6. If `allowedBotIds` is provided, strict mode applies: only listed bots
@@ -511,7 +524,12 @@ export class SlackChannel extends BaseChannel {
     }
 
     const botId = event.bot_id as string | undefined;
+    console.log(`[SlackChannel:shouldProcessEvent] subtype=${event.subtype} user=${userId} bot_id=${botId} this.botUserId=${this.botUserId} this.botId=${this.botId}`);
     if (!botId) return true;
+
+    // Self-suppression for DM bot_message events where Slack omits event.user.
+    // Matches against the bot's own bot_id (B...) captured at startup.
+    if (this.botId && botId === this.botId) return false;
 
     const blockedList = this.config.blockedBotIds ?? [];
     if (

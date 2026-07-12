@@ -38,9 +38,10 @@ export class BM25Engine {
   private tokenize(text: string): string[] {
     if (!text) return [];
 
-    let normalized = text.toLowerCase();
-    // Split camelCase and PascalCase
-    normalized = normalized.replace(/([a-z])([A-Z])/g, '$1 $2');
+    // Split camelCase and PascalCase before lowercasing — doing this after
+    // toLowerCase() would leave no uppercase letters for the regex to match.
+    let normalized = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    normalized = normalized.toLowerCase();
     // Replace non-alphanumeric with spaces
     normalized = normalized.replace(/[^a-z0-9]/g, ' ');
 
