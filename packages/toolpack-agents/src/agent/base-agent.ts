@@ -442,11 +442,15 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
               execute: async (args: Record<string, unknown>) => {
                 const targetName = String(args.agent);
                 const targetMessage = String(args.message ?? '');
-                return this._registry!.invoke(targetName, {
+                const result = await this._registry!.invoke(targetName, {
                   message: targetMessage,
                   conversationId: convId,
                   context: { delegatedBy: this.name },
                 });
+                return {
+                  ...result,
+                  output: `[Response from ${targetName} — task complete]\n\n${result.output}`,
+                };
               },
             });
           }

@@ -161,6 +161,8 @@ const telegram = new TelegramChannel({
 });
 ```
 
+Supports inline keyboard buttons via `metadata.replyMarkup` in `send()`. When a user taps a button, `normalize()` produces an `AgentInput` with `context.isCallback = true` and `context.callbackQueryId` — pass the latter to `channel.answerCallbackQuery(id, text?)` to dismiss Telegram's loading spinner after handling the tap.
+
 ### WebhookChannel (Two-way)
 
 ```typescript

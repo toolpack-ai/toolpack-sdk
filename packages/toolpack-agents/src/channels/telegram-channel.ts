@@ -98,7 +98,9 @@ export class TelegramChannel extends BaseChannel {
 
   /**
    * Send a message back to Telegram.
-   * @param output The agent output to send
+   * @param output The agent output to send. Pass `metadata.replyMarkup` (a Telegram
+   *   `InlineKeyboardMarkup`-shaped object, e.g. `{ inline_keyboard: [[{ text, callback_data }]] }`)
+   *   to attach interactive buttons — optional, existing callers are unaffected.
    */
   async send(output: AgentOutput): Promise<void> {
     // Get chat ID from metadata (set during normalize)
@@ -107,6 +109,8 @@ export class TelegramChannel extends BaseChannel {
     if (!chatId) {
       throw new Error('Telegram send requires chatId in metadata');
     }
+
+    const replyMarkup = output.metadata?.replyMarkup;
 
     const response = await fetch(`https://api.telegram.org/bot${this.config.token}/sendMessage`, {
       method: 'POST',
@@ -117,11 +121,41 @@ export class TelegramChannel extends BaseChannel {
         chat_id: chatId,
         text: output.output,
         parse_mode: 'Markdown',
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       }),
     });
 
     if (!response.ok) {
       throw new Error(`Failed to send Telegram message: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { ok: boolean; description?: string };
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description}`);
+    }
+  }
+
+  /**
+   * Answer a callback query (inline keyboard button tap) so Telegram dismisses
+   * the button's loading spinner. Not called automatically by `normalize()` —
+   * the consuming agent should call this after it has handled the tap.
+   * @param callbackQueryId `callback_query.id` from the normalized update's context
+   * @param text Optional short toast text shown to the user
+   */
+  async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    const response = await fetch(`https://api.telegram.org/bot${this.config.token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        ...(text ? { text } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to answer Telegram callback query: ${response.statusText}`);
     }
 
     const data = await response.json() as { ok: boolean; description?: string };
@@ -137,6 +171,45 @@ export class TelegramChannel extends BaseChannel {
    */
   normalize(incoming: unknown): AgentInput {
     const update = incoming as Record<string, unknown>;
+
+    // Inline-keyboard button tap. Distinct shape from a text message — handle it
+    // separately rather than falling through to the message/edited_message path.
+    const callbackQuery = update.callback_query as Record<string, unknown> | undefined;
+    if (callbackQuery) {
+      const cbMessage = (callbackQuery.message as Record<string, unknown>) || {};
+      const cbChat = (cbMessage.chat as Record<string, unknown>) || {};
+      const cbFrom = (callbackQuery.from as Record<string, unknown>) || {};
+      const cbUserId = cbFrom.id != null ? String(cbFrom.id) : undefined;
+      const cbDisplayName =
+        (cbFrom.first_name as string | undefined) ||
+        (cbFrom.username as string | undefined) ||
+        cbUserId;
+      const cbParticipant: Participant | undefined = cbUserId
+        ? { kind: 'user', id: cbUserId, displayName: cbDisplayName ?? cbUserId }
+        : undefined;
+      const cbChatIdStr = cbChat.id != null ? String(cbChat.id) : '';
+
+      return {
+        message: (callbackQuery.data as string) ?? '',
+        conversationId: cbChatIdStr,
+        data: update,
+        participant: cbParticipant,
+        context: {
+          isCallback: true,
+          callbackQueryId: callbackQuery.id,
+          callbackData: callbackQuery.data,
+          chatId: cbChat.id,
+          userId: cbFrom.id,
+          username: cbFrom.username,
+          firstName: cbFrom.first_name,
+          lastName: cbFrom.last_name,
+          messageId: cbMessage.message_id,
+          channelType: cbChat.type as string | undefined,
+          channelId: cbChatIdStr,
+          channelName: cbChat.title as string | undefined,
+        },
+      };
+    }
 
     // Get message from update (handles both message and edited_message)
     const message = (update.message as Record<string, unknown>) ||

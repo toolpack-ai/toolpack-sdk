@@ -421,6 +421,148 @@ describe('TelegramChannel', () => {
     });
   });
 
+  describe('normalize — callback_query (inline keyboard taps)', () => {
+    it('maps callback_query.data to message and sets context.isCallback', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        callback_query: {
+          id: 'cbq-1',
+          data: 'approve:abc-123',
+          from: { id: 987654321, first_name: 'Alice', username: 'alice_tg' },
+          message: {
+            chat: { id: 555, type: 'private' },
+            message_id: 10,
+          },
+        },
+      });
+
+      expect(input.message).toBe('approve:abc-123');
+      expect(input.conversationId).toBe('555');
+      expect(input.context?.isCallback).toBe(true);
+      expect(input.context?.callbackQueryId).toBe('cbq-1');
+      expect(input.context?.callbackData).toBe('approve:abc-123');
+      expect(input.context?.chatId).toBe(555);
+      expect(input.context?.userId).toBe(987654321);
+      expect(input.participant).toEqual({
+        kind: 'user',
+        id: '987654321',
+        displayName: 'Alice',
+      });
+    });
+
+    it('does not fall through to message/edited_message handling when callback_query is present', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        callback_query: {
+          id: 'cbq-2',
+          data: 'reject:xyz-789',
+          from: { id: 1 },
+          message: { chat: { id: 100 }, message_id: 1 },
+        },
+        message: {
+          text: 'this should be ignored',
+          chat: { id: 999 },
+          from: { id: 2 },
+          message_id: 2,
+        },
+      });
+
+      expect(input.message).toBe('reject:xyz-789');
+      expect(input.conversationId).toBe('100');
+    });
+
+    it('handles missing callback_query.data as empty string', () => {
+      const channel = new TelegramChannel(baseConfig);
+      const input = channel.normalize({
+        callback_query: {
+          id: 'cbq-3',
+          from: { id: 1 },
+          message: { chat: { id: 100 }, message_id: 1 },
+        },
+      });
+
+      expect(input.message).toBe('');
+      expect(input.context?.isCallback).toBe(true);
+    });
+  });
+
+  describe('send — replyMarkup (inline keyboard)', () => {
+    it('includes reply_markup in the request body when metadata.replyMarkup is set', async () => {
+      const channel = new TelegramChannel(baseConfig);
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true }),
+      } as Response);
+
+      const replyMarkup = {
+        inline_keyboard: [[
+          { text: '✅ Approve', callback_data: 'approve:abc' },
+          { text: '❌ Reject', callback_data: 'reject:abc' },
+        ]],
+      };
+
+      await channel.send({
+        output: 'Approve this trade?',
+        metadata: { chatId: 123456789, replyMarkup },
+      });
+
+      const body = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+      expect(body.reply_markup).toEqual(replyMarkup);
+    });
+
+    it('omits reply_markup entirely when metadata.replyMarkup is not set (backward compatible)', async () => {
+      const channel = new TelegramChannel(baseConfig);
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true }),
+      } as Response);
+
+      await channel.send({
+        output: 'Plain message',
+        metadata: { chatId: 123456789 },
+      });
+
+      const body = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+      expect('reply_markup' in body).toBe(false);
+    });
+  });
+
+  describe('answerCallbackQuery', () => {
+    it('posts to the answerCallbackQuery endpoint with the callback query id', async () => {
+      const channel = new TelegramChannel(baseConfig);
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true }),
+      } as Response);
+
+      await channel.answerCallbackQuery('cbq-1', 'Recorded.');
+
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/answerCallbackQuery',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      const body = JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+      expect(body.callback_query_id).toBe('cbq-1');
+      expect(body.text).toBe('Recorded.');
+    });
+
+    it('throws on API error', async () => {
+      const channel = new TelegramChannel(baseConfig);
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: false, description: 'query is too old' }),
+      } as Response);
+
+      await expect(channel.answerCallbackQuery('cbq-old')).rejects.toThrow(
+        'Telegram API error: query is too old',
+      );
+    });
+  });
+
   describe('normalize — mentions', () => {
     it('extracts text_mention entity user ids into context.mentions', () => {
       const channel = new TelegramChannel(baseConfig);
