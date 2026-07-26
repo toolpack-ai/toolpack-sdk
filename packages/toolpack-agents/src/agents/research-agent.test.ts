@@ -41,7 +41,10 @@ describe('ResearchAgent', () => {
 
     const result = await agent.invokeAgent(input);
 
-    expect(mockToolpack.setMode).toHaveBeenCalledWith('research-agent-mode');
+    expect(mockToolpack.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: agent.mode }),
+      undefined,
+    );
     expect(result).toBeDefined();
     expect(result.output).toBeDefined();
   });

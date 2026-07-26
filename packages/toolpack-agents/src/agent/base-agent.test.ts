@@ -120,12 +120,15 @@ describe('BaseAgent', () => {
       });
 
       expect(result.output).toBe('Mock AI response');
-      expect(mockToolpack.setMode).toHaveBeenCalledWith('test-agent-mode');
+      expect(mockToolpack.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: TEST_MODE }),
+        'openai',
+      );
     });
   });
 
   describe('run() execution engine', () => {
-    it('should register and set mode before generate', async () => {
+    it('should register mode and pass it to generate', async () => {
       const agent = new TestAgent({ toolpack: mockToolpack });
       await agent.invokeAgent({
         message: 'Test message',
@@ -133,8 +136,10 @@ describe('BaseAgent', () => {
       });
 
       expect(mockToolpack.registerMode).toHaveBeenCalledWith(TEST_MODE);
-      expect(mockToolpack.setMode).toHaveBeenCalledWith('test-agent-mode');
-      expect(mockToolpack.generate).toHaveBeenCalled();
+      expect(mockToolpack.generate).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: TEST_MODE }),
+        'openai',
+      );
     });
 
     it('should pass provider override to generate', async () => {

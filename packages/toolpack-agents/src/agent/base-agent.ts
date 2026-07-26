@@ -746,6 +746,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
 
       let resultContent: string | null = null;
       let resultUsage: import('toolpack-sdk').Usage | undefined;
+      let fullResult: unknown;
 
       const isStreaming = typeof this.mode !== 'string' && this.mode?.streaming;
       if (isStreaming) {
@@ -755,18 +756,18 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
           if (chunk.usage) resultUsage = chunk.usage;
         }
         resultContent = content || null;
+        fullResult = { content: resultContent, usage: resultUsage };
       } else {
         const generated = await this.toolpack.generate(requestParams, this.provider);
         resultContent = generated.content ?? null;
         resultUsage = generated.usage;
+        fullResult = generated;
       }
 
-      const result = { content: resultContent, usage: resultUsage };
-
       const agentResult: AgentResult = {
-        output: result.content || '',
-        steps: this.extractSteps(result),
-        metadata: result.usage ? { usage: result.usage } : undefined,
+        output: resultContent || '',
+        steps: this.extractSteps(fullResult),
+        metadata: resultUsage ? { usage: resultUsage } : undefined,
       };
 
       await this.onComplete(agentResult);
