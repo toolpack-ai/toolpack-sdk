@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { AsyncLocalStorage } from 'async_hooks';
 import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
 import { Toolpack, InMemoryConversationStore, AGENT_MODE } from 'toolpack-sdk';
 import type { Interceptor } from '../interceptors/types.js';
@@ -119,6 +120,17 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   private _mind?: AgentMind;
   private _mindInitPromise?: Promise<void>;
 
+  // Async-local context set by _bindChannel for each inbound message.
+  // Scoped to the async execution chain so concurrent conversations on the
+  // same agent instance never clobber each other's values.
+  private readonly _channelCtx = new AsyncLocalStorage<{
+    conversationId:    string;
+    triggeringChannel: string;
+    isTriggerChannel:  boolean;
+  }>();
+
+  private _ctx() { return this._channelCtx.getStore(); }
+
   constructor(options: BaseAgentOptions) {
     super();
     // Auto-init here (before child field initialisers run) so that subclass
@@ -231,9 +243,9 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     _options?: AgentRunOptions,
     context?: { conversationId?: string; spawnDepth?: number },
   ): Promise<AgentResult> {
-    // Prefer the explicitly supplied conversationId; fall back to the
-    // instance-level field (set by _bindChannel) for channel-driven invocations.
-    const convId = context?.conversationId ?? this._conversationId;
+    // Prefer the explicitly supplied conversationId, then the async-local context
+    // set by _bindChannel, then the legacy instance field as a last resort.
+    const convId = context?.conversationId ?? this._ctx()?.conversationId ?? this._conversationId;
 
     await this.onBeforeRun({ message, conversationId: convId } as AgentInput<TIntent>);
     this.emit('agent:start', { message });
@@ -253,21 +265,15 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     }
 
     try {
-      // Register-then-activate. registerMode is idempotent for the same name,
-      // so calling it on every run is cheap and avoids requiring callers to
-      // pre-wire the mode in Toolpack.init({ customModes }).
-      //
-      // setMode() alone is NOT enough for correctness: activeMode is shared
-      // instance state, and another agent on the same Toolpack (e.g. a
-      // delegated sub-agent) may setMode() while this run is in flight. The
-      // mode is therefore ALSO passed per-request to generate() below, which
-      // snapshots it for the whole request. setMode() is kept for backward
-      // compatibility with consumers that read getMode().
-      if (typeof this.mode === 'string') {
-        this.toolpack.setMode(this.mode);
-      } else {
+      // registerMode is idempotent — safe to call on every run for agents that
+      // skip start() (e.g. direct invokeAgent callers). The mode is also passed
+      // per-request to generate() below, which snapshots it for the whole
+      // request. setMode() is NOT called here because it mutates shared
+      // AIClient.activeMode — concurrent runs on ephemerals sharing one Toolpack
+      // would clobber each other's value. setMode() is called once in start()
+      // for backward compatibility with getMode() callers.
+      if (typeof this.mode !== 'string') {
         this.toolpack.registerMode(this.mode);
-        this.toolpack.setMode(this.mode.name);
       }
 
       // System prompt is now owned by the mode and injected by the Toolpack
@@ -725,21 +731,37 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         }
       }
 
-      const result = await this.toolpack.generate(
-        {
-          messages,
-          model: this.model || '',
-          requestTools: requestTools.length > 0 ? requestTools : undefined,
-          // Forward the per-run maxToolRounds cap (if any) so AIClient respects it
-          // as a hard ceiling, bypassing the query-classifier adjustment.
-          maxToolRounds: _options?.maxToolRounds,
-          // Per-request mode: snapshotted by the client for the entire request,
-          // so a concurrent setMode() from another agent sharing this Toolpack
-          // (e.g. awaited delegation) cannot change this run's tool filtering.
-          mode: this.mode,
-        },
-        this.provider
-      );
+      const requestParams = {
+        messages,
+        model: this.model || '',
+        requestTools: requestTools.length > 0 ? requestTools : undefined,
+        // Forward the per-run maxToolRounds cap (if any) so AIClient respects it
+        // as a hard ceiling, bypassing the query-classifier adjustment.
+        maxToolRounds: _options?.maxToolRounds,
+        // Per-request mode: snapshotted by the client for the entire request,
+        // so a concurrent setMode() from another agent sharing this Toolpack
+        // (e.g. awaited delegation) cannot change this run's tool filtering.
+        mode: this.mode,
+      };
+
+      let resultContent: string | null = null;
+      let resultUsage: import('toolpack-sdk').Usage | undefined;
+
+      const isStreaming = typeof this.mode !== 'string' && this.mode?.streaming;
+      if (isStreaming) {
+        let content = '';
+        for await (const chunk of this.toolpack.stream(requestParams, this.provider)) {
+          content += chunk.delta || '';
+          if (chunk.usage) resultUsage = chunk.usage;
+        }
+        resultContent = content || null;
+      } else {
+        const generated = await this.toolpack.generate(requestParams, this.provider);
+        resultContent = generated.content ?? null;
+        resultUsage = generated.usage;
+      }
+
+      const result = { content: resultContent, usage: resultUsage };
 
       const agentResult: AgentResult = {
         output: result.content || '',
@@ -816,18 +838,22 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       throw new AgentError('Agent not registered - cannot use ask()');
     }
 
-    if (!this._conversationId) {
+    const convId         = this._ctx()?.conversationId    ?? this._conversationId;
+    const isTrigger      = this._ctx()?.isTriggerChannel  ?? this._isTriggerChannel;
+    const triggeringCh   = this._ctx()?.triggeringChannel ?? this._triggeringChannel;
+
+    if (!convId) {
       throw new AgentError('No conversationId available - ask() requires a conversation channel');
     }
 
-    if (this._isTriggerChannel) {
+    if (isTrigger) {
       throw new AgentError(
         'this.ask() called from a trigger channel (ScheduledChannel). ' +
           'Trigger channels have no human recipient — use a conversation channel (Slack, Telegram, Webhook) instead.'
       );
     }
 
-    if (!this._triggeringChannel || this._triggeringChannel.trim() === '') {
+    if (!triggeringCh || triggeringCh.trim() === '') {
       throw new AgentError(
         'Cannot use ask() - no triggering channel available. ' +
           'The channel must have a name registered with AgentRegistry.'
@@ -835,16 +861,16 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     }
 
     const pendingAsk = this._registry.addPendingAsk({
-      conversationId: this._conversationId,
+      conversationId: convId,
       agentName: this.name,
       question,
       context: options?.context ?? {},
       maxRetries: options?.maxRetries ?? 2,
       expiresAt: options?.expiresIn ? new Date(Date.now() + options.expiresIn) : undefined,
-      channelName: this._triggeringChannel,
+      channelName: triggeringCh,
     });
 
-    await this.sendTo(this._triggeringChannel, question);
+    await this.sendTo(triggeringCh, question);
 
     return {
       output: question,
@@ -862,7 +888,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     if (!this._registry) {
       return null;
     }
-    const convId = conversationId ?? this._conversationId;
+    const convId = conversationId ?? this._ctx()?.conversationId ?? this._conversationId;
     if (!convId) {
       return null;
     }
@@ -893,9 +919,11 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       return options.simpleValidation(answer);
     }
 
+    const evalConvId = this._ctx()?.conversationId ?? this._conversationId;
     const result = await this.run(
       `Evaluate if this answer sufficiently addresses the question.\n\nQuestion: "${question}"\nAnswer: "${answer}"\n\nIs this answer sufficient? Reply with ONLY "yes" or "no".`,
-      { workflow: { mode: 'single-shot' } }
+      { workflow: { mode: 'single-shot' } },
+      { conversationId: evalConvId },
     );
 
     return result.output.toLowerCase().trim().startsWith('yes');
@@ -922,9 +950,10 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     if (pending.retries >= pending.maxRetries) {
       await this.resolvePendingAsk(pending.id, '__insufficient__');
 
-      if (this._triggeringChannel) {
+      const triggeringCh = this._ctx()?.triggeringChannel ?? this._triggeringChannel;
+      if (triggeringCh) {
         await this.sendTo(
-          this._triggeringChannel,
+          triggeringCh,
           'I was unable to get enough information to proceed. Skipping this step.'
         );
       }
@@ -972,7 +1001,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         ...(input.context || {}),
         delegatedBy: this.name,
       },
-      conversationId: input.conversationId || this._conversationId || `delegation-${Date.now()}`,
+      conversationId: input.conversationId || this._ctx()?.conversationId || this._conversationId || `delegation-${Date.now()}`,
     };
 
     return await this._registry.invoke(agentName, fullInput);
@@ -1042,45 +1071,54 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       }
 
       const releaseLock = await this._acquireConversationLock(input.conversationId);
-      try {
-        this._triggeringChannel = channel.name;
-        this._isTriggerChannel = channel.isTriggerChannel;
-        this._conversationId = input.conversationId;
 
-        const chain = composeChain(
-          this._getEffectiveInterceptors(),
-          this, channel, this._registry ?? null
-        );
-        const chainResult = await executeChain(chain, input);
-        if (chainResult === null) return;
-        const result: AgentOutput = { output: chainResult.output, metadata: chainResult.metadata };
+      // Establish an async-local context for this conversation so that all code
+      // downstream (run, ask, delegateAndWait, etc.) reads the correct values
+      // even when multiple conversations execute concurrently on this agent.
+      await this._channelCtx.run(
+        {
+          conversationId:    input.conversationId,
+          triggeringChannel: channel.name ?? '',
+          isTriggerChannel:  channel.isTriggerChannel,
+        },
+        async () => {
+          try {
+            const chain = composeChain(
+              this._getEffectiveInterceptors(),
+              this, channel, this._registry ?? null
+            );
+            const chainResult = await executeChain(chain, input);
+            if (chainResult === null) return;
+            const result: AgentOutput = { output: chainResult.output, metadata: chainResult.metadata };
 
-        await channel.send({
-          output: result.output,
-          metadata: {
-            ...result.metadata,
-            conversationId: input.conversationId,
-            ...input.context,
-          },
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-        console.error(`[${this.name}] Error in agent invocation: ${errorMessage}`);
-        try {
-          await channel.send({
-            output: `Error: ${errorMessage}`,
-            metadata: {
-              conversationId: input.conversationId,
-              error: true,
-              ...input.context,
-            },
-          });
-        } catch (sendError) {
-          console.error(`[${this.name}] Failed to send error to channel: ${sendError}`);
-        }
-      } finally {
-        releaseLock();
-      }
+            await channel.send({
+              output: result.output,
+              metadata: {
+                ...result.metadata,
+                conversationId: input.conversationId,
+                ...input.context,
+              },
+            });
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            console.error(`[${this.name}] Error in agent invocation: ${errorMessage}`);
+            try {
+              await channel.send({
+                output: `Error: ${errorMessage}`,
+                metadata: {
+                  conversationId: input.conversationId,
+                  error: true,
+                  ...input.context,
+                },
+              });
+            } catch (sendError) {
+              console.error(`[${this.name}] Failed to send error to channel: ${sendError}`);
+            }
+          } finally {
+            releaseLock();
+          }
+        },
+      );
     });
   }
 

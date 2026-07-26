@@ -5,6 +5,7 @@ import {
   CreateJobOptions,
   CreateJobResult,
   JobStatus,
+  JobRun,
 } from './scheduler-types.js';
 
 /**
@@ -61,6 +62,18 @@ export class SchedulerStore {
 
       CREATE INDEX IF NOT EXISTS idx_jobs_channel
         ON scheduled_jobs (channel_name, status);
+
+      CREATE TABLE IF NOT EXISTS job_runs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id      TEXT    NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
+        outcome     TEXT    NOT NULL,
+        ran_at      INTEGER NOT NULL,
+        duration_ms INTEGER,
+        error       TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_job_runs_job_id
+        ON job_runs (job_id, ran_at DESC);
     `);
   }
 
@@ -336,11 +349,16 @@ export class SchedulerStore {
   }
 
   /** Mark a completed job. For recurring jobs, calculates and sets the next run time. */
-  markCompleted(id: string): void {
+  markCompleted(id: string, ranAt?: number): void {
     const job = this._getById(id);
     if (!job) return;
 
     const now = Date.now();
+    const startedAt = ranAt ?? now;
+
+    this.db.prepare(`
+      INSERT INTO job_runs (job_id, outcome, ran_at, duration_ms) VALUES (@id, 'completed', @ranAt, @duration)
+    `).run({ id, ranAt: startedAt, duration: now - startedAt });
 
     if (job.cron) {
       // Recurring — reschedule from now
@@ -370,11 +388,16 @@ export class SchedulerStore {
   }
 
   /** Mark a job as failed and store the error. Recurring jobs are rescheduled. */
-  markFailed(id: string, error: string): void {
+  markFailed(id: string, error: string, ranAt?: number): void {
     const job = this._getById(id);
     if (!job) return;
 
     const now = Date.now();
+    const startedAt = ranAt ?? now;
+
+    this.db.prepare(`
+      INSERT INTO job_runs (job_id, outcome, ran_at, duration_ms, error) VALUES (@id, 'failed', @ranAt, @duration, @error)
+    `).run({ id, ranAt: startedAt, duration: now - startedAt, error });
 
     if (job.cron) {
       let nextRunAt: number;
@@ -408,6 +431,26 @@ export class SchedulerStore {
         WHERE id = @id
       `).run({ id, now, error });
     }
+  }
+
+  /**
+   * Return the execution history for a job, newest first.
+   */
+  getHistory(id: string, limit = 20): JobRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM job_runs WHERE job_id = @id ORDER BY ran_at DESC LIMIT @limit
+    `).all({ id, limit }) as Array<{
+      id: number; job_id: string; outcome: string;
+      ran_at: number; duration_ms: number | null; error: string | null;
+    }>;
+    return rows.map(r => ({
+      id:         r.id,
+      jobId:      r.job_id,
+      outcome:    r.outcome as 'completed' | 'failed',
+      ranAt:      r.ran_at,
+      durationMs: r.duration_ms ?? undefined,
+      error:      r.error ?? undefined,
+    }));
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────

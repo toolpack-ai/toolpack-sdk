@@ -31,6 +31,11 @@ export interface RunContext {
  * A fresh DraftBuffer is created per run() call via createRunContext().
  */
 export class AgentMind {
+  // Shared across all concurrent DraftBuffers for this agent. Tracks belief
+  // content keys that have been drafted but not yet flushed, so concurrent
+  // runs don't each write the same belief independently.
+  private readonly _inFlightBeliefs = new Set<string>();
+
   private constructor(
     private readonly store: MindStore,
     private readonly config: ResolvedMindConfig,
@@ -84,6 +89,7 @@ export class AgentMind {
       this.config.maxPinnedReflections,
       committedGoalCount,
       committedPinnedCount,
+      this._inFlightBeliefs,
     );
 
     const tools = buildMindTools(this.store, draftBuffer, this.config);

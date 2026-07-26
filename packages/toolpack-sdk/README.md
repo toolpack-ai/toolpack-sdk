@@ -16,6 +16,7 @@ The TypeScript SDK for building production AI agents — 100+ built-in tools, 8 
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
 - **Workflow Engine** — AI-driven planning with plan-direct execution and parallel tool orchestration
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
+- **Rules** — Always-on behavioral constraints loaded from Markdown files, auto-discovered per mode and globally via `rulesDir`
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Extensible at Every Layer** — Every built-in component is a plug-in point: custom tools (`ToolDefinition`), custom channels (`BaseChannel`), custom provider adapters (`ProviderAdapter`), custom agents (`BaseAgent`), custom modes (`createMode()`), and custom interceptors — all using the same interfaces as the built-ins
 - **100+ Built-in Tools** across 12 categories:

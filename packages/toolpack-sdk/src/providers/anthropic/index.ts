@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { type ZodType } from 'zod';
 import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
@@ -165,7 +164,7 @@ export class AnthropicAdapter extends ProviderAdapter {
             const isZodSchema = request.response_format && typeof request.response_format === 'object' && 'parse' in request.response_format;
 
             if (isZodSchema) {
-                params.output_config = { format: zodOutputFormat(request.response_format as ZodType) };
+                params.output_config = { format: zodOutputFormat(request.response_format as any) };
             }
 
             const rawResponse = isZodSchema

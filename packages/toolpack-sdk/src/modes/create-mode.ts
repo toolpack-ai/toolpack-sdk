@@ -51,6 +51,22 @@ export function createMode(config: {
         planning?: { enabled: boolean; requireApproval?: boolean; };
         progress?: { enabled: boolean; };
     };
+    /**
+     * Enable auto-injection of BM25-matched skill content into the system prompt.
+     * Default: false — opt-in only.
+     */
+    skillInterceptor?: boolean;
+    /**
+     * Root directory for rule files for this mode.
+     * Auto-discovers __global__/ and <mode-name>/ subfolders within it.
+     * Defaults to '.toolpack/rules' if not set.
+     */
+    rulesDir?: string;
+    /**
+     * When true, agent runs use provider.stream() instead of provider.generate().
+     * Prevents NAT/proxy idle timeouts on long-running LLM calls.
+     */
+    streaming?: boolean;
 }): ModeConfig {
     return {
         name: config.name,
@@ -65,5 +81,8 @@ export function createMode(config: {
         response_format: config.response_format,
         baseContext: config.baseContext,
         workflow: config.workflow,
+        skillInterceptor: config.skillInterceptor ?? false,
+        rulesDir: config.rulesDir,
+        streaming: config.streaming,
     };
 }

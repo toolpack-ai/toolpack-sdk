@@ -1,6 +1,7 @@
 import type { ToolpackInterceptor, ToolpackNextFunction } from '../interceptors/types.js';
 import type { CompletionRequest, CompletionResponse } from '../providers/base/index.js';
 import type { SkillInterceptorOptions } from './types.js';
+import type { ModeConfig } from '../modes/mode-types.js';
 import { SkillIndexManager } from './index-manager.js';
 
 export type { SkillInterceptorOptions };
@@ -15,6 +16,13 @@ export function createSkillInterceptor(options?: SkillInterceptorOptions): Toolp
 
   return Object.assign(
     async (request: CompletionRequest, next: ToolpackNextFunction): Promise<CompletionResponse> => {
+      // Skill auto-injection is opt-in per mode. Skip unless the active mode
+      // explicitly sets skillInterceptor: true.
+      const mode = request.mode as ModeConfig | null | undefined;
+      if (!mode || typeof mode !== 'object' || mode.skillInterceptor !== true) {
+        return next(request);
+      }
+
       const messages = request.messages ?? [];
 
       // Find the last user message index (needed for the array-content system prompt fallback)

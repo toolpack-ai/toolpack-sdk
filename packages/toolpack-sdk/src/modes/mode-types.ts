@@ -85,6 +85,29 @@ export interface ModeConfig {
     blockAllTools: boolean;
 
     /**
+     * Whether to auto-inject relevant skill content into the system prompt
+     * via BM25 matching of the user's message (skill interceptor).
+     * Default: false — opt-in only. Set to true to enable auto-injection.
+     */
+    skillInterceptor?: boolean;
+
+    /**
+     * Root directory for rule files.
+     * Auto-discovers:
+     *   <rulesDir>/__global__/   → injected for all modes sharing this dir
+     *   <rulesDir>/<mode-name>/  → injected for this mode only
+     * Defaults to '.toolpack/rules' if not set.
+     */
+    rulesDir?: string;
+
+    /**
+     * When true, agent runs use provider.stream() instead of provider.generate().
+     * Keeps the TCP connection alive via incremental chunks, preventing NAT/proxy
+     * idle timeouts on long-running LLM calls (e.g. browser agent with large context).
+     */
+    streaming?: boolean;
+
+    /**
      * Response format constraint for all requests in this mode.
      * - 'json_object': instructs the model to return valid JSON as its text content.
      *   Useful for evaluator/parser agents whose final response must be machine-readable.

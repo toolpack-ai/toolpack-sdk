@@ -68,6 +68,9 @@ export class DraftBuffer {
     private readonly maxPinnedReflections: number,
     private readonly committedGoalCount: number,
     private readonly committedPinnedReflectionCount: number,
+    // Shared across all in-flight DraftBuffers for the same AgentMind instance.
+    // Used to prevent duplicate beliefs from concurrent runs that haven't flushed yet.
+    private readonly inFlightBeliefs: Set<string>,
   ) {}
 
   // --- Counts (including in-draft items) ---
@@ -127,7 +130,14 @@ export class DraftBuffer {
       return { action: 'updated_draft', id: existing.existingId ?? `draft-${draftMatch}` };
     }
 
-    // 2. Check committed store for dedup
+    // 2. Check in-flight beliefs from concurrent runs that haven't flushed yet.
+    // Normalise to lowercase for key comparison.
+    const inFlightKey = input.content.trim().toLowerCase();
+    if (this.inFlightBeliefs.has(inFlightKey)) {
+      return { action: 'updated_draft', id: `in-flight-dedup` };
+    }
+
+    // 3. Check committed store for dedup
     const storeMatch = await this.store.findSimilarBelief(vector, this.deduplicationThreshold);
     if (storeMatch) {
       const existing: MindBelief = storeMatch.belief;
@@ -154,7 +164,8 @@ export class DraftBuffer {
       return { action: 'updated_store', id: storeMatch.id };
     }
 
-    // 3. New belief — append to draft
+    // 4. New belief — claim the in-flight slot, then append to draft.
+    this.inFlightBeliefs.add(inFlightKey);
     const entry: DraftBelieve = {
       op: 'believe',
       content: input.content,
@@ -260,6 +271,8 @@ export class DraftBuffer {
     for (const op of this.ops) {
       if (op.op === 'believe') {
         const b = op as DraftBelieve;
+        // Release the in-flight claim regardless of outcome.
+        this.inFlightBeliefs.delete(b.content.trim().toLowerCase());
         if (isError) {
           // Flush with error:true; confidence stays as recorded but retrieval clamps it
           if (b.existingId) {
@@ -304,6 +317,14 @@ export class DraftBuffer {
         }
       } else if (op.op === 'reflect') {
         const r = op as DraftReflect;
+        // Re-check live pinned count at flush time for the same race as goals above.
+        if (r.pinned) {
+          const livePinnedCount = await this.store.getPinnedReflectionCount();
+          if (livePinnedCount >= this.maxPinnedReflections) {
+            console.warn(`[AgentMind] pinned reflection cap (${this.maxPinnedReflections}) reached at flush — dropping`);
+            continue;
+          }
+        }
         await this.store.addReflection({
           type: 'reflection',
           content: r.content,
@@ -316,6 +337,13 @@ export class DraftBuffer {
         }, r.vector);
       } else if (op.op === 'set_goal') {
         if (!isError) {
+          // Re-check live goal count at flush time to catch races with concurrent runs
+          // that were both below the cap when they drafted but together would exceed it.
+          const liveGoalCount = await this.store.getActiveGoalCount();
+          if (liveGoalCount >= this.maxGoals) {
+            console.warn(`[AgentMind] goal cap (${this.maxGoals}) reached at flush — dropping goal`);
+            continue;
+          }
           const g = op as DraftSetGoal;
           await this.store.addGoal({
             type: 'goal',

@@ -5,4 +5,5 @@ export type {
   CreateJobOptions,
   CreateJobResult,
   JobStatus,
+  JobRun,
 } from './scheduler-types.js';

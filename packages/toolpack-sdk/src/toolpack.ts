@@ -13,6 +13,7 @@ import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
 import { VertexAIAdapter } from './providers/vertexai/index.js';
+import { AnthropicVertexAdapter } from './providers/anthropic-vertex/index.js';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
 import { OpenRouterAdapter } from './providers/openrouter/index.js';
 import { getOllamaBaseUrl, loadConfig, discoverConfigPath } from './providers/config.js';
@@ -57,6 +58,12 @@ export interface ProviderOptions {
 
     /** Vertex AI only: optional Google Auth options (keyFilename or credentials). When omitted, ADC is used. */
     googleAuthOptions?: { keyFilename?: string; credentials?: Record<string, unknown> };
+
+    /** Vertex AI only: thinking token budget for Gemini 2.5+ models. Set to 0 to disable thinking. */
+    thinkingBudget?: number;
+
+    /** Anthropic Vertex only: GCP region where Claude models are deployed. Defaults to 'us-east5'. */
+    region?: string;
 }
 
 export interface ToolpackInitConfig {
@@ -80,6 +87,12 @@ export interface ToolpackInitConfig {
 
     /** Vertex AI only: optional Google Auth options. When omitted, ADC is used automatically. */
     googleAuthOptions?: { keyFilename?: string; credentials?: Record<string, unknown> };
+
+    /** Vertex AI only: thinking token budget for Gemini 2.5+ models. Set to 0 to disable thinking. */
+    thinkingBudget?: number;
+
+    /** Anthropic Vertex only: GCP region where Claude models are deployed. Defaults to 'us-east5'. */
+    region?: string;
 
     /** Load built-in tools (fs, http, etc.)? Default: false */
     tools?: boolean;
@@ -428,6 +441,8 @@ export class Toolpack extends EventEmitter {
                 projectId: config.projectId,
                 location: config.location,
                 googleAuthOptions: config.googleAuthOptions,
+                thinkingBudget: config.thinkingBudget,
+                region: config.region,
             };
             const provider = await Toolpack.createProvider(config.provider, opts, config.configPath, false);
             if (provider) {
@@ -591,12 +606,21 @@ export class Toolpack extends EventEmitter {
      */
     private static async createProvider(name: string, opts: ProviderOptions, configPath?: string, skipIfNoKey = false): Promise<ProviderAdapter | null> {
         // 1. API Providers
-        // Vertex AI — uses GCP auth (ADC or service account), no API key
+        // Vertex AI (Gemini) — uses GCP auth (ADC or service account), no API key
         if (name === 'vertexai') {
             return new VertexAIAdapter({
                 projectId: opts.projectId,
                 location: opts.location,
                 googleAuthOptions: opts.googleAuthOptions,
+                thinkingBudget: opts.thinkingBudget,
+            });
+        }
+
+        // Anthropic on Vertex AI — uses ADC, no Anthropic API key needed
+        if (name === 'anthropic-vertex') {
+            return new AnthropicVertexAdapter({
+                projectId: opts.projectId,
+                region: opts.region,
             });
         }
 

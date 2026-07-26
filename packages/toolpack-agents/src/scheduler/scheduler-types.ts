@@ -83,3 +83,19 @@ export interface CreateJobResult {
   /** True if an existing pending job matched the dedup key (job was not re-created). */
   duplicate: boolean;
 }
+
+/**
+ * A single execution record for a job.
+ */
+export interface JobRun {
+  id: number;
+  jobId: string;
+  /** 'completed' | 'failed' */
+  outcome: 'completed' | 'failed';
+  /** Epoch ms when the run started. */
+  ranAt: number;
+  /** Duration in ms. */
+  durationMs?: number;
+  /** Error message if outcome is 'failed'. */
+  error?: string;
+}

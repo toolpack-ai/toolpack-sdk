@@ -1,6 +1,8 @@
 // Anthropic
 export * from './anthropic/index.js';
-// Vertex AI
+// Anthropic on Vertex AI (GCP billing, no API key)
+export * from './anthropic-vertex/index.js';
+// Vertex AI (Gemini)
 export * from './vertexai/index.js';
 // Gemini
 export * from './gemini/index.js';

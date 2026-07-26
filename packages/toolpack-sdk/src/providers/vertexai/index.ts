@@ -34,11 +34,24 @@ export interface VertexAIConfig {
         /** Inline service account credentials object. */
         credentials?: Record<string, unknown>;
     };
+
+    /**
+     * Thinking token budget for Gemini 2.5+ models.
+     * Set to 0 to disable thinking entirely.
+     * Omit to use the model's default budget.
+     */
+    thinkingBudget?: number;
 }
 
 export class VertexAIAdapter extends ProviderAdapter {
     private ai: GoogleGenAI;
     private readonly location: string;
+    private readonly thinkingBudget?: number;
+    // Stores raw Vertex AI Content objects keyed by tool call ID list.
+    // Needed to replay thought_signature fields that thinking models (Gemini 3.x+)
+    // attach to function calls — without them the API rejects subsequent turns.
+    private readonly rawContentCache = new Map<string, Content>();
+    private static readonly RAW_CONTENT_CACHE_MAX = 500;
 
     constructor(config: VertexAIConfig = {}) {
         super();
@@ -69,6 +82,8 @@ export class VertexAIAdapter extends ProviderAdapter {
             location: this.location,
             ...(config.googleAuthOptions ? { googleAuthOptions: config.googleAuthOptions as any } : {}),
         } as any);
+
+        this.thinkingBudget = config.thinkingBudget;
     }
 
     getDisplayName(): string {
@@ -77,6 +92,20 @@ export class VertexAIAdapter extends ProviderAdapter {
 
     async getModels(): Promise<ProviderModelInfo[]> {
         return [
+            {
+                id: 'gemini-3.5-flash',
+                displayName: 'Gemini 3.5 Flash',
+                capabilities: { chat: true, streaming: true, toolCalling: true, embeddings: false, vision: true },
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+            },
+            {
+                id: 'gemini-3.1-pro-preview',
+                displayName: 'Gemini 3.1 Pro Preview',
+                capabilities: { chat: true, streaming: true, toolCalling: true, embeddings: false, vision: true },
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+            },
             {
                 id: 'gemini-2.5-pro-preview-05-06',
                 displayName: 'Gemini 2.5 Pro Preview',
@@ -124,17 +153,21 @@ export class VertexAIAdapter extends ProviderAdapter {
             const { model, config } = this.buildRequestParams(request);
             const { history, lastUserMessage } = this.formatHistory(request.messages);
 
-            const contents: Content[] = [
-                ...history,
-                {
-                    role: 'user',
-                    parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage,
-                },
-            ];
+            const contents: Content[] = lastUserMessage !== null
+                ? [...history, { role: 'user', parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage }]
+                : history;
 
             const response = await this.ai.models.generateContent({ model, contents, config });
 
-            const { content, toolCalls } = this.parseResponse(response, request.tools);
+            const { content, toolCalls, rawContent } = this.parseResponse(response, request.tools);
+
+            if (toolCalls.length > 0 && rawContent) {
+                const cacheKey = toolCalls.map(tc => tc.id).join('|');
+                if (this.rawContentCache.size >= VertexAIAdapter.RAW_CONTENT_CACHE_MAX) {
+                    this.rawContentCache.delete(this.rawContentCache.keys().next().value!);
+                }
+                this.rawContentCache.set(cacheKey, rawContent);
+            }
 
             logDebug(`[VertexAI][${requestId}] Response finish_reason=${toolCalls.length > 0 ? 'tool_calls' : 'stop'} tool_calls=${toolCalls.length} content_preview=${safePreview(content, 200)}`);
 
@@ -163,13 +196,9 @@ export class VertexAIAdapter extends ProviderAdapter {
             const { model, config } = this.buildRequestParams(request);
             const { history, lastUserMessage } = this.formatHistory(request.messages);
 
-            const contents: Content[] = [
-                ...history,
-                {
-                    role: 'user',
-                    parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage,
-                },
-            ];
+            const contents: Content[] = lastUserMessage !== null
+                ? [...history, { role: 'user', parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage }]
+                : history;
 
             const chunkStream = await this.ai.models.generateContentStream({ model, contents, config });
 
@@ -238,18 +267,28 @@ export class VertexAIAdapter extends ProviderAdapter {
             }];
         }
 
+        if (this.thinkingBudget !== undefined && this.thinkingBudget !== 0) {
+            config.thinkingConfig = { thinkingBudget: this.thinkingBudget };
+        }
+
         return { model: request.model, config };
     }
 
-    private formatHistory(messages: Message[]): { history: Content[]; lastUserMessage: Part[] | string } {
+    private formatHistory(messages: Message[]): { history: Content[]; lastUserMessage: Part[] | string | null } {
         const conversation = messages.filter(m => m.role !== 'system');
 
         if (conversation.length === 0) {
             return { history: [], lastUserMessage: '' };
         }
 
-        const historyMsgs = conversation.slice(0, -1);
         const lastMsg = conversation[conversation.length - 1];
+        // When the last message is a tool result, keep it in history so it is
+        // properly merged into the function-response turn. Stripping it would
+        // send it as a plain user-text message, causing a mismatch between the
+        // number of functionCall parts and functionResponse parts that VertexAI
+        // strictly enforces (especially visible with parallel tool calls).
+        const isLastMsgTool = lastMsg.role === 'tool' && !!lastMsg.tool_call_id;
+        const historyMsgs = isLastMsgTool ? conversation : conversation.slice(0, -1);
 
         const rawHistory: Content[] = historyMsgs.map(m => {
             if (m.role === 'tool' && m.tool_call_id) {
@@ -268,6 +307,14 @@ export class VertexAIAdapter extends ProviderAdapter {
             }
 
             if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+                // Use the cached raw Vertex AI Content when available — it carries the
+                // thought parts and thought_signature fields that thinking models (Gemini 3.x+)
+                // require on every subsequent turn that references those function calls.
+                const cacheKey = m.tool_calls.map(tc => tc.id).join('|');
+                const cached = this.rawContentCache.get(cacheKey);
+                if (cached) return cached;
+
+                // Fallback reconstruction for non-thinking responses or cache misses.
                 const parts: Part[] = [];
                 if (typeof m.content === 'string' && m.content) parts.push({ text: m.content });
                 for (const tc of m.tool_calls) {
@@ -305,7 +352,7 @@ export class VertexAIAdapter extends ProviderAdapter {
 
         return {
             history,
-            lastUserMessage: this.contentToParts(lastMsg.content),
+            lastUserMessage: isLastMsgTool ? null : this.contentToParts(lastMsg.content),
         };
     }
 
@@ -323,13 +370,16 @@ export class VertexAIAdapter extends ProviderAdapter {
             .filter((p): p is Part => p !== null);
     }
 
-    private parseResponse(response: any, requestTools?: CompletionRequest['tools']): { content: string; toolCalls: ToolCallResult[] } {
+    private parseResponse(response: any, requestTools?: CompletionRequest['tools']): { content: string; toolCalls: ToolCallResult[]; rawContent: Content | null } {
         const toolCalls: ToolCallResult[] = [];
         let content = '';
+        let rawContent: Content | null = null;
 
         for (const candidate of response.candidates ?? []) {
+            if (candidate.content) rawContent = candidate.content as Content;
             for (const part of candidate.content?.parts ?? []) {
-                if ((part as any).text) {
+                // Skip thought parts — they are internal reasoning, not response text.
+                if ((part as any).text && !(part as any).thought) {
                     content += (part as any).text;
                 }
                 if ((part as any).functionCall) {
@@ -343,7 +393,7 @@ export class VertexAIAdapter extends ProviderAdapter {
             }
         }
 
-        return { content, toolCalls };
+        return { content, toolCalls, rawContent };
     }
 
     private extractSystemInstruction(messages: Message[]): string | undefined {

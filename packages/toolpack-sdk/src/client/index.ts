@@ -20,6 +20,7 @@ import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
 import { extractLastUserText } from '../utils/message-utils.js';
 import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from "../providers/provider-logger.js";
+import { RuleLoader } from '../rules/index.js';
 
 let REQUEST_SEQ = 0;
 
@@ -112,11 +113,13 @@ export class AIClient extends EventEmitter {
     private toolResultMaxChars: number;
     private hitlConfig?: HitlConfig;
     private onToolConfirm?: OnToolConfirmCallback;
+    /** @deprecated Internal use only — reads are unreliable under concurrent generate()/stream() calls. */
     private currentRound: number = 0;
     private conversationId?: string;
     private contextWindowConfig?: ContextWindowConfig;
     private contextWindowStateManager?: ContextWindowStateManager;
     private providerModelCache: Map<string, ProviderModelInfo[]> = new Map();
+    private ruleLoader: RuleLoader;
 
     constructor(config: AIClientConfig) {
         super();
@@ -137,6 +140,7 @@ export class AIClient extends EventEmitter {
         this.conversationId = config.conversationId;
         this.contextWindowConfig = config.contextWindowConfig;
         this.providerModelCache = new Map();
+        this.ruleLoader = new RuleLoader();
 
         // Initialize context window state manager if config provided
         if (this.contextWindowConfig && this.contextWindowConfig.enabled !== false) {
@@ -505,10 +509,11 @@ export class AIClient extends EventEmitter {
             // filtering between rounds of this request's tool loop.
             const mode = this.resolveRequestMode(request);
 
-            // System prompt injection chain (base → override → mode)
+            // System prompt injection chain (base → override → mode → rules)
             let modeAwareRequest = this.injectBaseAgentContext(request, mode);
             modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
             modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest, mode);
+            modeAwareRequest = await this.injectModeRules(modeAwareRequest, mode);
 
             // Resolve tools to send with the request
             const resolvedProviderName = providerName || this.defaultProvider;
@@ -583,7 +588,7 @@ export class AIClient extends EventEmitter {
 
                 while (response.tool_calls && response.tool_calls.length > 0 && rounds < maxRounds) {
                     rounds++;
-                    this.currentRound = rounds;
+                    this.currentRound = rounds; // kept for backward compat; unreliable under concurrency
                     logInfo(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
 
                     // Add assistant message with tool calls to conversation
@@ -653,9 +658,15 @@ export class AIClient extends EventEmitter {
                                 ?? JSON.stringify({ error: 'Tool execution result missing' });
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                             const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
+                            // Image data (data:image/...) is exempt from the per-round text budget.
+                            // Truncating base64 produces an invalid image; image bytes also should not
+                            // crowd out subsequent text tool results.
+                            const isImageData = resultStr.startsWith('data:image/');
 
                             let content: string;
-                            if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
+                            if (isImageData) {
+                                content = resultStr;
+                            } else if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
                                 logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
                                 content = this.budgetTruncate(resultStr, remaining);
                             } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
@@ -665,7 +676,7 @@ export class AIClient extends EventEmitter {
                             }
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-                            roundOutputSize += contentStr.length;
+                            if (!isImageData) roundOutputSize += contentStr.length;
 
                             messages.push({
                                 role: 'tool',
@@ -687,9 +698,12 @@ export class AIClient extends EventEmitter {
                             }
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                             const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
+                            const isImageData = resultStr.startsWith('data:image/');
 
                             let content: string;
-                            if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
+                            if (isImageData) {
+                                content = resultStr;
+                            } else if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
                                 logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
                                 content = this.budgetTruncate(resultStr, remaining);
                             } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
@@ -699,7 +713,7 @@ export class AIClient extends EventEmitter {
                             }
 
                             const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-                            roundOutputSize += contentStr.length;
+                            if (!isImageData) roundOutputSize += contentStr.length;
 
                             messages.push({
                                 role: 'tool',
@@ -761,10 +775,11 @@ export class AIClient extends EventEmitter {
             // Snapshot the mode for the entire request (see generate() for rationale).
             const mode = this.resolveRequestMode(request);
 
-            // System prompt injection chain (base → override → mode)
+            // System prompt injection chain (base → override → mode → rules)
             let modeAwareRequest = this.injectBaseAgentContext(request, mode);
             modeAwareRequest = this.injectOverrideSystemPrompt(modeAwareRequest);
             modeAwareRequest = this.injectModeSystemPrompt(modeAwareRequest, mode);
+            modeAwareRequest = await this.injectModeRules(modeAwareRequest, mode);
 
             const initialEnrichment = await this.enrichRequestWithTools(modeAwareRequest, mode);
             let enrichedRequest = initialEnrichment.request;
@@ -985,9 +1000,12 @@ export class AIClient extends EventEmitter {
                     const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                     const remaining = MAX_TOOL_OUTPUT_PER_ROUND - roundOutputSize;
                     const duration = streamToolDurations.get(toolCall.id) ?? 0;
+                    const isImageData = resultStr.startsWith('data:image/');
 
                     let content: string;
-                    if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
+                    if (isImageData) {
+                        content = resultStr;
+                    } else if (roundOutputSize + resultStr.length > MAX_TOOL_OUTPUT_PER_ROUND) {
                         logWarn(`[AIClient][${requestId}] Tool output budget exceeded (${MAX_TOOL_OUTPUT_PER_ROUND} chars)`);
                         content = this.budgetTruncate(resultStr, remaining);
                     } else if (typeof result === 'string' && result.length > this.toolResultMaxChars) {
@@ -997,7 +1015,7 @@ export class AIClient extends EventEmitter {
                     }
 
                     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-                    roundOutputSize += contentStr.length;
+                    if (!isImageData) roundOutputSize += contentStr.length;
 
                     messages.push({
                         role: 'tool',
@@ -1401,7 +1419,7 @@ export class AIClient extends EventEmitter {
                     const existingContent = typeof m.content === 'string' ? m.content : '';
                     return {
                         ...m,
-                        content: `${existingContent}\n\n${modePrompt}`
+                        content: `${modePrompt}\n\n${existingContent}`
                     };
                 }
                 return m;
@@ -1416,6 +1434,39 @@ export class AIClient extends EventEmitter {
                 ]
             };
         }
+    }
+
+    /**
+     * Load and append rule content to the system prompt for the active mode.
+     * Rules are always injected — appended after the mode system prompt so they
+     * sit closest to the conversation (recency effect).
+     */
+    private async injectModeRules(request: CompletionRequest, mode: ModeConfig | null): Promise<CompletionRequest> {
+        if (!mode) return request;
+
+        const rules = await this.ruleLoader.loadForMode(mode.name, mode.rulesDir);
+
+        if (!rules) return request;
+
+        logDebug(`[AIClient] injectModeRules: Injecting rules for mode "${mode.name}", length=${rules.length}`);
+
+        const hasSystemMessage = request.messages.some(m => m.role === 'system');
+
+        if (hasSystemMessage) {
+            const messages = request.messages.map(m => {
+                if (m.role === 'system') {
+                    const existing = typeof m.content === 'string' ? m.content : '';
+                    return { ...m, content: `${existing}\n\n${rules}` };
+                }
+                return m;
+            });
+            return { ...request, messages };
+        }
+
+        return {
+            ...request,
+            messages: [{ role: 'system', content: rules }, ...request.messages]
+        };
     }
 
     /**
@@ -1615,6 +1666,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             } as ToolProgressEvent);
 
             // Emit log event for tool.search
+
             this.emit('tool:log', {
                 id: toolCall.id,
                 name: toolCall.name,
@@ -1720,7 +1772,9 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 toolName: toolCall.name,
                 toolCallId: toolCall.id,
                 status: 'completed',
-                result: typeof result === 'string' ? result.substring(0, 200) : JSON.stringify(result).substring(0, 200),
+                result: typeof result === 'string'
+                    ? result.startsWith('data:image/') ? result : result.substring(0, 200)
+                    : JSON.stringify(result).substring(0, 200),
                 duration,
             } as ToolProgressEvent);
 

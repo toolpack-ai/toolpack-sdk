@@ -512,7 +512,7 @@ function makeSkillListTool(dir: string): ToolDefinition {
       const skills: Array<{
         name: string;
         title: string;
-        tags: string[];
+        tags?: string[];
         category?: string;
         description?: string;
         triggers?: string[];
@@ -541,7 +541,7 @@ function makeSkillListTool(dir: string): ToolDefinition {
             triggers: parseTriggers(content),
           });
         } else {
-          skills.push({ name, title, tags, category });
+          skills.push({ name, title });
         }
       }
 
