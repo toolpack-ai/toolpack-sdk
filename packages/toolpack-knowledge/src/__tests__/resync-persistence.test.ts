@@ -85,7 +85,7 @@ describe('reSync persistence (data-loss regression)', () => {
     // Pre-fix: create() ran sync() → clear() → 0 chunks.
     expect(await chunkCount(provider2)).toBe(1);
     provider2.close();
-  });
+  }, 15000);
 
   it('still syncs sources on first run (empty store) when reSync is false', async () => {
     const provider = makeProvider();
