@@ -136,6 +136,8 @@ export async function startMcpServer(
                 workspaceRoot: process.cwd(),
                 config: registry.getConfig().additionalConfigurations ?? {},
                 log: (msg) => logInfo(`[MCP Tool] ${msg}`),
+                processRegistry: registry.runtimeContext?.processRegistry,
+                githubTokenStore: registry.runtimeContext?.githubTokenStore,
             };
             const result = await tool.execute(args ?? {}, ctx);
             return toMcpResult(result);

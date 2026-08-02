@@ -124,6 +124,9 @@ export interface AgentInput<TIntent extends string = string> {
    * Interceptors such as `participant-resolver` read and/or enrich this.
    */
   participant?: Participant;
+
+  /** Optional abort signal — when aborted, the running LLM stream stops at the next round boundary. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -185,6 +188,8 @@ export interface AgentRunOptions {
    * per invocation (e.g. single-shot routers using delegate_to_agent).
    */
   maxToolRounds?: number;
+  /** Optional abort signal — propagated to the underlying AIClient stream/generate call. */
+  signal?: AbortSignal;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { cloudListSchema } from './schema.js';
 import { NetlifyProvider } from '../../providers/netlify.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
@@ -9,13 +9,13 @@ export const cloudListTool: ToolDefinition = {
     description: 'List recent deployments for a Netlify site.',
     category: 'cloud',
     parameters: cloudListSchema,
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args: Record<string, unknown>, ctx?: ToolContext) => {
         const siteId = args.siteId as string;
         const limit = (args.limit as number) || 5;
         logDebug(`[cloud.list] execute siteId="${siteId}" limit=${limit}`);
 
         try {
-            const client = NetlifyProvider.getClient();
+            const client = NetlifyProvider.getClient(ctx?.config?.credentials?.netlifyAuthToken);
 
             // Note: the netlify package returns an array of deploy objects from this endpoint
             const deploys = await client.listSiteDeploys({

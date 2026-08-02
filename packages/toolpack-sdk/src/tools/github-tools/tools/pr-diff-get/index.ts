@@ -1,14 +1,14 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { buildHeaders } from '../../common.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { resolveGithubToken } from '../../auth.js';
 import { Buffer } from 'node:buffer';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const repo = String(args.repo);
   const number = Number(args.number);
-  const token = await resolveGithubToken(repo, args.token as string | undefined);
+  const token = await resolveGithubToken(repo, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   const maxBytes = args.maxBytes ? Number(args.maxBytes) : undefined;
   const url = `https://api.github.com/repos/${repo}/pulls/${number}`;
   logDebug(`[github.pr.diff.get] repo=${repo} pr=${number}`);

@@ -1,4 +1,4 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { resolveSlackToken } from '../../auth.js';
 import { callSlackApi } from '../../common.js';
@@ -12,10 +12,10 @@ interface SlackMessage {
   reply_count?: number;
 }
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const channel = String(args.channel);
   const limit = typeof args.limit === 'number' ? Math.min(args.limit, 100) : 10;
-  const token = resolveSlackToken(args.token as string | undefined);
+  const token = resolveSlackToken(args.token as string | undefined, ctx?.config?.credentials);
 
   const body: Record<string, unknown> = { channel, limit };
   if (args.oldest) body.oldest = String(args.oldest);

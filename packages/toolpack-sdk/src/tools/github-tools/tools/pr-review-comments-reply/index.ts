@@ -1,15 +1,15 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { buildHeaders } from '../../common.js';
 import { resolveGithubToken } from '../../auth.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const repo = String(args.repo);
   const number = Number(args.number);
   const inReplyTo = Number(args.inReplyTo);
   const body = String(args.body);
-  const token = await resolveGithubToken(repo, args.token as string | undefined);
+  const token = await resolveGithubToken(repo, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   const url = `https://api.github.com/repos/${repo}/pulls/${number}/comments/${inReplyTo}/replies`;
   logDebug(`[github.pr.reviewComments.reply] repo=${repo} inReplyTo=${inReplyTo}`);
   const resp = await fetch(url, {

@@ -1,15 +1,15 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { buildHeaders } from '../../common.js';
 import { resolveGithubToken } from '../../auth.js';
 import { Buffer } from 'node:buffer';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const repo = args.repo as string;
   const path = args.path as string;
   const ref = args.ref as string | undefined;
-  const token = await resolveGithubToken(repo, args.token as string | undefined);
+  const token = await resolveGithubToken(repo, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   const maxBytes = args.maxBytes ? Number(args.maxBytes) : undefined;
   const encodedPath = path.split('/').map((s) => encodeURIComponent(s)).join('/');
   const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;

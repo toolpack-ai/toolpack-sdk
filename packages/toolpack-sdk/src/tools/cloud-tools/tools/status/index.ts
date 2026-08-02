@@ -1,4 +1,4 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { cloudStatusSchema } from './schema.js';
 import { NetlifyProvider } from '../../providers/netlify.js';
 
@@ -8,12 +8,12 @@ export const cloudStatusTool: ToolDefinition = {
     description: 'Check the status of a specific Netlify deployment.',
     category: 'cloud',
     parameters: cloudStatusSchema,
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args: Record<string, unknown>, ctx?: ToolContext) => {
         const siteId = args.siteId as string;
         const deployId = args.deployId as string;
 
         try {
-            const client = NetlifyProvider.getClient();
+            const client = NetlifyProvider.getClient(ctx?.config?.credentials?.netlifyAuthToken);
             const deploy = await client.getSiteDeploy({ site_id: siteId, deploy_id: deployId });
 
             return JSON.stringify({

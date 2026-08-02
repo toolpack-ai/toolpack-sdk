@@ -21,6 +21,7 @@ export interface FullConfig {
 /**
  * Load the full config from toolpack.config.json.
  * Returns the entire parsed config object.
+ * @deprecated Pass config directly to Toolpack.init(). File-based config is no longer read by the SDK.
  */
 export function loadFullConfig(basePath?: string): FullConfig {
     const configPath = resolveConfigPath(basePath);
@@ -40,6 +41,7 @@ export function loadFullConfig(basePath?: string): FullConfig {
 /**
  * Load tools config from toolpack.config.json (tools section).
  * Falls back to defaults if the file doesn't exist or tools section is missing.
+ * @deprecated Pass toolsConfig directly to Toolpack.init(). File-based config is no longer read by the SDK.
  */
 export function loadToolsConfig(basePath?: string): ToolsConfig {
     const fullConfig = loadFullConfig(basePath);

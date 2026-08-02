@@ -1,10 +1,10 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { resolveSlackToken } from '../../auth.js';
 import { callSlackApi } from '../../common.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
-  const token = resolveSlackToken(args.token as string | undefined);
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
+  const token = resolveSlackToken(args.token as string | undefined, ctx?.config?.credentials);
 
   const data = await callSlackApi('auth.test', token, {});
 

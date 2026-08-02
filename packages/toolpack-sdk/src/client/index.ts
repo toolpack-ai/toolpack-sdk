@@ -22,12 +22,6 @@ import { extractLastUserText } from '../utils/message-utils.js';
 import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from "../providers/provider-logger.js";
 import { RuleLoader } from '../rules/index.js';
 
-let REQUEST_SEQ = 0;
-
-function newRequestId(): string {
-    REQUEST_SEQ += 1;
-    return `${Date.now()}-${REQUEST_SEQ}`;
-}
 
 function logRequestMessages(requestId: string, messages: CompletionRequest['messages']): void {
     if (!shouldLog('debug')) return;
@@ -113,13 +107,13 @@ export class AIClient extends EventEmitter {
     private toolResultMaxChars: number;
     private hitlConfig?: HitlConfig;
     private onToolConfirm?: OnToolConfirmCallback;
-    /** @deprecated Internal use only — reads are unreliable under concurrent generate()/stream() calls. */
-    private currentRound: number = 0;
+
     private conversationId?: string;
     private contextWindowConfig?: ContextWindowConfig;
     private contextWindowStateManager?: ContextWindowStateManager;
     private providerModelCache: Map<string, ProviderModelInfo[]> = new Map();
     private ruleLoader: RuleLoader;
+    private requestSeq = 0;
 
     constructor(config: AIClientConfig) {
         super();
@@ -501,13 +495,18 @@ export class AIClient extends EventEmitter {
     async generate<T = unknown>(request: CompletionRequest<T>, providerName?: string): Promise<CompletionResponse<T>> {
         const provider = this.getProvider(providerName);
         try {
-            const requestId = newRequestId();
+            const requestId = this.newRequestId();
 
             // Snapshot the mode for the entire request. activeMode is shared
             // instance state — without a snapshot, a concurrent setMode() (e.g.
             // a delegated sub-agent on the same Toolpack) would change tool
             // filtering between rounds of this request's tool loop.
             const mode = this.resolveRequestMode(request);
+
+            // Per-request effective config: mode.toolsConfig merged over instance config.
+            const effectiveToolsConfig = mode?.toolsConfig
+                ? { ...this.toolsConfig, ...mode.toolsConfig }
+                : this.toolsConfig;
 
             // System prompt injection chain (base → override → mode → rules)
             let modeAwareRequest = this.injectBaseAgentContext(request, mode);
@@ -522,7 +521,7 @@ export class AIClient extends EventEmitter {
             const requestToolMap = initialEnrichment.requestToolMap;
             enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
 
-            const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
+            const policy = (effectiveToolsConfig.toolChoicePolicy || process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
@@ -547,7 +546,7 @@ export class AIClient extends EventEmitter {
                 ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
             };
 
-            logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
+            logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${effectiveToolsConfig.enabled && effectiveToolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
             const callProvider = (req: any) => withRetry(
@@ -560,13 +559,13 @@ export class AIClient extends EventEmitter {
             logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
 
             // Auto-execute tool call loop
-            if (this.toolsConfig.autoExecute && (this.toolRegistry || requestToolMap.size > 0)) {
+            if (effectiveToolsConfig.autoExecute && (this.toolRegistry || requestToolMap.size > 0 || (mode?.customTools?.length ?? 0) > 0)) {
                 // Per-request maxToolRounds (e.g. set by single-shot routers) is a hard cap
                 // that bypasses the query-classifier adjustment entirely.
                 // When not set, classify the query and let the classifier scale the global default.
                 const userMessage = extractLastUserText(enrichedRequest.messages);
                 const classification = this.queryClassifier.classify(userMessage);
-                const baseMaxRounds = this.toolsConfig.maxToolRounds;
+                const baseMaxRounds = effectiveToolsConfig.maxToolRounds;
                 const maxRounds = enrichedRequest.maxToolRounds !== undefined
                     ? enrichedRequest.maxToolRounds
                     : this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
@@ -587,8 +586,11 @@ export class AIClient extends EventEmitter {
                 }
 
                 while (response.tool_calls && response.tool_calls.length > 0 && rounds < maxRounds) {
+                    if (request.signal?.aborted) {
+                        logInfo(`[AIClient][${requestId}] generate() aborted by signal`);
+                        break;
+                    }
                     rounds++;
-                    this.currentRound = rounds; // kept for backward compat; unreliable under concurrency
                     logInfo(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
 
                     // Add assistant message with tool calls to conversation
@@ -639,7 +641,7 @@ export class AIClient extends EventEmitter {
                         try {
                             toolResults = await this.toolOrchestrator.executeWithDependencies(
                                 toolCallsToExecute,
-                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode),
+                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode, rounds),
                                 5 // maxConcurrent
                             );
                         } catch (err: any) {
@@ -692,7 +694,7 @@ export class AIClient extends EventEmitter {
                         for (const toolCall of toolCallsToExecute) {
                             let result: string;
                             try {
-                                result = await this.executeTool(toolCall, requestToolMap, mode);
+                                result = await this.executeTool(toolCall, requestToolMap, mode, rounds);
                             } catch (err: any) {
                                 result = JSON.stringify({ error: err.message ?? 'Tool execution failed' });
                             }
@@ -769,11 +771,16 @@ export class AIClient extends EventEmitter {
     async *stream(request: CompletionRequest, providerName?: string): AsyncGenerator<CompletionChunk> {
         const provider = this.getProvider(providerName);
         try {
-            const requestId = newRequestId();
+            const requestId = this.newRequestId();
             const resolvedProviderName = providerName || this.defaultProvider;
 
             // Snapshot the mode for the entire request (see generate() for rationale).
             const mode = this.resolveRequestMode(request);
+
+            // Per-request effective config: mode.toolsConfig merged over instance config.
+            const effectiveToolsConfig = mode?.toolsConfig
+                ? { ...this.toolsConfig, ...mode.toolsConfig }
+                : this.toolsConfig;
 
             // System prompt injection chain (base → override → mode → rules)
             let modeAwareRequest = this.injectBaseAgentContext(request, mode);
@@ -786,7 +793,7 @@ export class AIClient extends EventEmitter {
             const requestToolMap = initialEnrichment.requestToolMap;
             enrichedRequest = await this.enforceContextWindow(enrichedRequest, provider);
 
-            const policy = (process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || this.toolsConfig.toolChoicePolicy || 'auto') as any;
+            const policy = (effectiveToolsConfig.toolChoicePolicy || process.env.TOOLPACK_SDK_TOOL_CHOICE_POLICY || 'auto') as any;
             const hasTools = (enrichedRequest.tools?.length || 0) > 0;
             const toolChoiceWasSet = (enrichedRequest as any).tool_choice != null;
 
@@ -811,10 +818,10 @@ export class AIClient extends EventEmitter {
                 ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
             };
 
-            logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${this.toolsConfig.enabled && this.toolsConfig.autoExecute}`);
+            logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${effectiveToolsConfig.enabled && effectiveToolsConfig.autoExecute}`);
             logRequestMessages(requestId, enrichedRequest.messages);
 
-            if (!this.toolsConfig.autoExecute || (!this.toolRegistry && requestToolMap.size === 0)) {
+            if (!effectiveToolsConfig.autoExecute || (!this.toolRegistry && requestToolMap.size === 0 && (mode?.customTools?.length ?? 0) === 0)) {
                 yield* provider.stream(baseReq);
                 return;
             }
@@ -826,7 +833,7 @@ export class AIClient extends EventEmitter {
             // Per-request maxToolRounds is a hard cap that bypasses classifier adjustment.
             const userMessage = extractLastUserText(enrichedRequest.messages);
             const classification = this.queryClassifier.classify(userMessage);
-            const baseMaxRounds = this.toolsConfig.maxToolRounds;
+            const baseMaxRounds = effectiveToolsConfig.maxToolRounds;
             const maxRounds = enrichedRequest.maxToolRounds !== undefined
                 ? enrichedRequest.maxToolRounds
                 : this.queryClassifier.getToolRoundsAdjustment(classification, baseMaxRounds);
@@ -848,7 +855,6 @@ export class AIClient extends EventEmitter {
                 const pendingToolCalls: ToolCallResult[] = [];
 
                 rounds++;
-                this.currentRound = rounds;
                 logInfo(`[AIClient][${requestId}] stream() round_start ${rounds}/${maxRounds}`);
                 let lastFinishReason: string | null = null;
 
@@ -962,7 +968,7 @@ export class AIClient extends EventEmitter {
                             toolCallsToExecute,
                             async (toolCall) => {
                                 const t = Date.now();
-                                const r = await this.executeTool(toolCall, requestToolMap, mode);
+                                const r = await this.executeTool(toolCall, requestToolMap, mode, rounds);
                                 streamToolDurations!.set(toolCall.id, Date.now() - t);
                                 return r;
                             },
@@ -975,7 +981,7 @@ export class AIClient extends EventEmitter {
                         streamToolResults = new Map();
                         for (const toolCall of toolCallsToExecute) {
                             const t = Date.now();
-                            const r = await this.executeTool(toolCall, requestToolMap, mode);
+                            const r = await this.executeTool(toolCall, requestToolMap, mode, rounds);
                             streamToolDurations.set(toolCall.id, Date.now() - t);
                             streamToolResults.set(toolCall.id, r);
                         }
@@ -1079,18 +1085,28 @@ export class AIClient extends EventEmitter {
         const requestToolSchemas = Array.from(requestToolMap.values()).map(tool => this.requestToolToSchema(tool));
         const hasRequestTools = requestToolMap.size > 0;
 
-        if (!this.toolsConfig.enabled && !hasRequestTools) {
-            logDebug(`[AIClient] Tools disabled and no request-scoped tools`);
+        // Mode-level toolsConfig merged over instance config — enables per-agent behavioral overrides.
+        const effectiveToolsConfig = mode?.toolsConfig
+            ? { ...this.toolsConfig, ...mode.toolsConfig }
+            : this.toolsConfig;
+
+        // Mode custom tool schemas — always sent to the AI in this mode, not subject to BM25 filtering.
+        const modeToolSchemas = this.toolDefinitionsToSchemas(mode?.customTools ?? []);
+        // Merge priority: request tools > mode tools (both always-loaded, not filtered by registry)
+        const alwaysLoadedSchemas = this.mergeSchemas(modeToolSchemas, requestToolSchemas);
+
+        if (!effectiveToolsConfig.enabled && !hasRequestTools && modeToolSchemas.length === 0) {
+            logDebug(`[AIClient] Tools disabled and no request-scoped or mode tools`);
             return { request, requestToolMap };
         }
 
-        // Merge mode-specific tool search config with global config
-        let resolvedToolsConfig = this.toolsConfig;
-        if (mode?.toolSearch && this.toolsConfig.toolSearch) {
+        // Merge mode-specific tool search config on top of the effective config
+        let resolvedToolsConfig = effectiveToolsConfig;
+        if (mode?.toolSearch && effectiveToolsConfig.toolSearch) {
             resolvedToolsConfig = {
-                ...this.toolsConfig,
+                ...effectiveToolsConfig,
                 toolSearch: {
-                    ...this.toolsConfig.toolSearch,
+                    ...effectiveToolsConfig.toolSearch,
                     ...(mode.toolSearch.enabled !== undefined ? { enabled: mode.toolSearch.enabled } : {}),
                     ...(mode.toolSearch.alwaysLoadedTools ? { alwaysLoadedTools: mode.toolSearch.alwaysLoadedTools } : {}),
                     ...(mode.toolSearch.alwaysLoadedCategories ? { alwaysLoadedCategories: mode.toolSearch.alwaysLoadedCategories } : {}),
@@ -1103,7 +1119,7 @@ export class AIClient extends EventEmitter {
         if (request.tools && request.tools.length > 0) {
             if (!resolvedToolsConfig.toolSearch?.enabled || !this.toolRegistry) {
                 logDebug(`[AIClient] Request already has ${request.tools.length} tools`);
-                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(requestToolSchemas));
+                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(alwaysLoadedSchemas));
                 const nextRequest = tools === request.tools ? request : { ...request, tools };
                 return {
                     request: this.injectRequestToolGuidance(nextRequest, tools),
@@ -1142,7 +1158,7 @@ export class AIClient extends EventEmitter {
 
             if (newTools.length === 0) {
                 logDebug(`[AIClient] Request already has ${request.tools.length} tools (no new discoveries)`);
-                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(requestToolSchemas));
+                const tools = this.mergeToolCallRequests(request.tools, this.schemasToToolCallRequests(alwaysLoadedSchemas));
                 const nextRequest = tools === request.tools ? request : { ...request, tools };
                 return {
                     request: this.injectRequestToolGuidance(nextRequest, tools),
@@ -1154,7 +1170,7 @@ export class AIClient extends EventEmitter {
                 ...request,
                 tools: this.mergeToolCallRequests(
                     [...request.tools, ...newTools],
-                    this.schemasToToolCallRequests(requestToolSchemas)
+                    this.schemasToToolCallRequests(alwaysLoadedSchemas)
                 ),
             };
 
@@ -1170,7 +1186,7 @@ export class AIClient extends EventEmitter {
 
         if (!this.toolRegistry) {
             logDebug('[AIClient] Tool registry not configured, skipping tool resolution');
-            const tools = this.schemasToToolCallRequests(requestToolSchemas);
+            const tools = this.schemasToToolCallRequests(alwaysLoadedSchemas);
             const nextRequest = tools.length > 0 ? { ...request, tools } : request;
             return {
                 request: this.injectRequestToolGuidance(nextRequest, tools),
@@ -1198,7 +1214,7 @@ export class AIClient extends EventEmitter {
             }
         }
 
-        const tools = this.schemasToToolCallRequests(this.mergeSchemas(schemas, requestToolSchemas));
+        const tools = this.schemasToToolCallRequests(this.mergeSchemas(schemas, alwaysLoadedSchemas));
 
         if (tools.length === 0) {
             return { request, requestToolMap };
@@ -1207,7 +1223,7 @@ export class AIClient extends EventEmitter {
         let enrichedRequest: CompletionRequest = { ...request, tools };
 
         // Inject Tool Search system prompt if enabled
-        if (this.toolsConfig.toolSearch?.enabled && activeRegistry) {
+        if (effectiveToolsConfig.toolSearch?.enabled && activeRegistry) {
             enrichedRequest = this.injectToolSearchPrompt(enrichedRequest);
         }
 
@@ -1215,6 +1231,18 @@ export class AIClient extends EventEmitter {
             request: this.injectRequestToolGuidance(enrichedRequest, tools),
             requestToolMap,
         };
+    }
+
+    private toolDefinitionsToSchemas(tools: ToolDefinition[]): ToolSchema[] {
+        return tools.map(t => ({
+            name: t.name,
+            displayName: t.displayName,
+            description: t.description,
+            parameters: t.parameters,
+            category: t.category,
+            ...(t.cacheable !== undefined && { cacheable: t.cacheable }),
+            ...(t.annotations !== undefined && { annotations: t.annotations }),
+        }));
     }
 
     private buildRequestToolMap(requestTools?: RequestToolDefinition[]): Map<string, RequestToolDefinition> {
@@ -1349,6 +1377,10 @@ export class AIClient extends EventEmitter {
      *   owns the mode registry) before reaching the client; if an unresolved
      *   name gets here, warn and fall back to the activeMode snapshot
      */
+    private newRequestId(): string {
+        return `${Date.now()}-${++this.requestSeq}`;
+    }
+
     private resolveRequestMode(request: CompletionRequest<any>): ModeConfig | null {
         if (request.mode === undefined) return this.activeMode;
         if (request.mode === null) return null;
@@ -1625,7 +1657,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
      * Execute a single tool call via the registry.
      * Emits 'tool:started', 'tool:completed', and 'tool:failed' events.
      */
-    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null): Promise<string> {
+    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0): Promise<string> {
         const startTime = Date.now();
 
         // Emit started event
@@ -1639,9 +1671,10 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
         logInfo(`[AIClient] Executing tool: ${toolCall.name} with args: ${safePreview(toolCall.arguments, 500)}`);
 
         const requestTool = requestToolMap.get(toolCall.name);
-        const registryTool = requestTool ? undefined : this.toolRegistry?.get(toolCall.name);
+        const modeTool = requestTool ? undefined : mode?.customTools?.find(t => t.name === toolCall.name);
+        const registryTool = requestTool || modeTool ? undefined : this.toolRegistry?.get(toolCall.name);
 
-        if (!requestTool && !this.toolRegistry) {
+        if (!requestTool && !modeTool && !this.toolRegistry) {
             const error = 'No tool registry configured';
             this.emit('tool:failed', {
                 toolName: toolCall.name,
@@ -1679,9 +1712,9 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             return result;
         }
 
-        const tool = requestTool || registryTool;
+        const tool = requestTool || modeTool || registryTool;
         if (!tool) {
-            logWarn(`[AIClient] Tool '${toolCall.name}' not found in registry`);
+            logWarn(`[AIClient] Tool '${toolCall.name}' not found in registry or mode`);
 
             // Fuzzy match: detect common hallucination patterns
             const suggestion = this.findSimilarToolName(toolCall.name);
@@ -1704,27 +1737,29 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             let args = toolCall.arguments;
 
             // Human-in-the-loop confirmation check
-            if (registryTool?.confirmation && this.onToolConfirm && !this.isBypassed(registryTool)) {
+            // Applies to registry tools and mode tools (not inline request tools).
+            const hitlTool = modeTool ?? registryTool;
+            if (hitlTool?.confirmation && this.onToolConfirm && !this.isBypassed(hitlTool)) {
                 // Emit confirmation requested event
                 this.emit('tool:confirmation_requested', {
-                    tool: registryTool,
+                    tool: hitlTool,
                     args,
-                    level: registryTool.confirmation.level,
-                    reason: registryTool.confirmation.reason,
+                    level: hitlTool.confirmation.level,
+                    reason: hitlTool.confirmation.reason,
                 } as ToolConfirmationRequestedEvent);
 
                 // Wait for user decision
-                const decision = await this.onToolConfirm(registryTool, args, {
-                    roundNumber: this.currentRound,
+                const decision = await this.onToolConfirm(hitlTool, args, {
+                    roundNumber,
                     conversationId: this.conversationId,
                 });
 
                 // Emit confirmation resolved event
                 this.emit('tool:confirmation_resolved', {
-                    tool: registryTool,
+                    tool: hitlTool,
                     args,
-                    level: registryTool.confirmation.level,
-                    reason: registryTool.confirmation.reason,
+                    level: hitlTool.confirmation.level,
+                    reason: hitlTool.confirmation.reason,
                     decision,
                 } as ToolConfirmationResolvedEvent);
 
@@ -1757,14 +1792,20 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 // 'allow' falls through to execution
             }
 
+            // Merge mode-level additionalConfigurations over instance-level so that
+            // per-request credentials/settings (credentials, gitClone, webSearch) set
+            // on mode.toolsConfig reach tools, consistent with effectiveToolsConfig.
+            const effectiveAdditional = mode?.toolsConfig?.additionalConfigurations
+                ? { ...this.toolsConfig?.additionalConfigurations, ...mode.toolsConfig.additionalConfigurations }
+                : this.toolsConfig?.additionalConfigurations ?? {};
             const ctx: ToolContext = {
                 workspaceRoot: process.cwd(),
-                config: this.toolsConfig?.additionalConfigurations ?? {},
+                config: effectiveAdditional,
                 log: (msg) => logInfo(`[Tool] ${msg}`),
+                processRegistry: this.toolRegistry?.runtimeContext?.processRegistry,
+                githubTokenStore: this.toolRegistry?.runtimeContext?.githubTokenStore,
             };
-            const result = requestTool
-                ? await requestTool.execute(args)
-                : await tool.execute(args, ctx);
+            const result = await tool.execute(args, ctx);
             const duration = Date.now() - startTime;
 
             // Emit completed event

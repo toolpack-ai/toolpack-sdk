@@ -11,11 +11,76 @@ export const LEVEL_VALUES: Record<LogLevel, number> = {
     trace: 4,
 };
 
-// ── Internal state ──────────────────────
-let _enabled = false;
-let _level: LogLevel = 'info';
-let _logFile = join(process.cwd(), 'toolpack-sdk.log');
-let _console = false;
+// ── Logger class ─────────────────────────────────────────────────
+// One instance per Toolpack — held by ToolRuntimeContext and wired into
+// ToolContext.log so each tenant's tool calls write to their own log config.
+
+export class Logger {
+    private _enabled = false;
+    private _level: LogLevel = 'info';
+    private _logFile = join(process.cwd(), 'toolpack-sdk.log');
+    private _console = false;
+
+    init(config?: LoggingConfig): void {
+        if (config?.enabled !== undefined) this._enabled = config.enabled;
+        if (config?.filePath) this._logFile = config.filePath;
+        if (config?.level) this._level = parseLevel(config.level) || 'info';
+
+        if (process.env.TOOLPACK_SDK_LOG_ENABLED !== undefined)
+            this._enabled = process.env.TOOLPACK_SDK_LOG_ENABLED === 'true';
+        if (process.env.TOOLPACK_SDK_LOG_FILE) {
+            this._logFile = process.env.TOOLPACK_SDK_LOG_FILE;
+            this._enabled = true;
+        }
+        if (process.env.TOOLPACK_SDK_LOG_LEVEL)
+            this._level = parseLevel(process.env.TOOLPACK_SDK_LOG_LEVEL) || this._level;
+        if (process.env.TOOLPACK_SDK_LOG_CONSOLE !== undefined)
+            this._console = process.env.TOOLPACK_SDK_LOG_CONSOLE === 'true';
+        else if (config?.console !== undefined)
+            this._console = config.console;
+
+        if (this._enabled) {
+            try {
+                this._logFile = isAbsolute(this._logFile)
+                    ? this._logFile
+                    : resolve(process.cwd(), this._logFile);
+                mkdirSync(dirname(this._logFile), { recursive: true });
+                appendFileSync(
+                    this._logFile,
+                    `[${new Date().toISOString()}] [INFO] [Logger] initialized level=${this._level} file=${this._logFile}\n`,
+                );
+            } catch (err) {
+                console.warn(`[Toolpack Warning] Failed to initialize log file "${this._logFile}": ${(err as Error).message}`);
+                this._enabled = false;
+            }
+        }
+    }
+
+    shouldLog(level: LogLevel): boolean {
+        return this._enabled && LEVEL_VALUES[level] <= LEVEL_VALUES[this._level];
+    }
+
+    getLevel(): LogLevel { return this._level; }
+
+    write(level: LogLevel, message: string): void {
+        if (!this.shouldLog(level)) return;
+        const entry = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${redact(message)}`;
+        appendFileSync(this._logFile, entry + '\n');
+        if (this._console) {
+            const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+            fn(entry);
+        }
+    }
+
+    error(msg: string): void { this.write('error', msg); }
+    warn(msg: string):  void { this.write('warn',  msg); }
+    info(msg: string):  void { this.write('info',  msg); }
+    debug(msg: string): void { this.write('debug', msg); }
+    trace(msg: string): void { this.write('trace', msg); }
+}
+
+// ── Process-default logger (single-tenant / backward compat) ──────
+const _defaultLogger = new Logger();
 
 export interface LoggingConfig {
     /** Enable file logging.  Default: false */
@@ -47,83 +112,24 @@ function parseLevel(value: string | undefined): LogLevel | undefined {
  *   3. Defaults               (disabled, info)
  */
 export function initLogger(config?: LoggingConfig): void {
-    // 1. Config values (only when explicitly provided)
-    if (config?.enabled !== undefined) _enabled = config.enabled;
-    if (config?.filePath) _logFile = config.filePath;
-    
-    if (config?.level) {
-        _level = parseLevel(config.level) || 'info';
-    }
-
-    // 2. Env-var overrides always win
-    if (process.env.TOOLPACK_SDK_LOG_ENABLED !== undefined) {
-        _enabled = process.env.TOOLPACK_SDK_LOG_ENABLED === 'true';
-    }
-    if (process.env.TOOLPACK_SDK_LOG_FILE) {
-        _logFile = process.env.TOOLPACK_SDK_LOG_FILE;
-        _enabled = true; // setting a file path implies enabled
-    }
-    if (process.env.TOOLPACK_SDK_LOG_LEVEL) {
-        _level = parseLevel(process.env.TOOLPACK_SDK_LOG_LEVEL) || _level;
-    }
-    if (process.env.TOOLPACK_SDK_LOG_CONSOLE !== undefined) {
-        _console = process.env.TOOLPACK_SDK_LOG_CONSOLE === 'true';
-    }
-    if (config?.console !== undefined && process.env.TOOLPACK_SDK_LOG_CONSOLE === undefined) {
-        _console = config.console;
-    }
-
-    // Normalize log file path and ensure its parent directory exists so appendFileSync
-    // doesn't throw ENOENT for relative/nested paths like "./toolpack/logs/kael-debug.log".
-    if (_enabled) {
-        try {
-            _logFile = isAbsolute(_logFile) ? _logFile : resolve(process.cwd(), _logFile);
-            mkdirSync(dirname(_logFile), { recursive: true });
-            // Emit a sentinel line so it's obvious logging is working.
-            appendFileSync(
-                _logFile,
-                `[${new Date().toISOString()}] [INFO] [Logger] initialized level=${_level} file=${_logFile}\n`
-            );
-        } catch (err) {
-            console.warn(`[Toolpack Warning] Failed to initialize log file "${_logFile}": ${(err as Error).message}`);
-            _enabled = false;
-        }
-    }
+    _defaultLogger.init(config);
 }
 
 // ── Public API (unchanged signatures) ────────────────────────────
 
 /** Get the currently configured log level. */
-export function getLogLevel(): LogLevel {
-    return _level;
-}
+export function getLogLevel(): LogLevel { return _defaultLogger.getLevel(); }
 
 /** Check if a given level should be logged based on current config. */
-export function shouldLog(level: LogLevel): boolean {
-    if (!_enabled) return false;
-    return LEVEL_VALUES[level] <= LEVEL_VALUES[_level];
-}
+export function shouldLog(level: LogLevel): boolean { return _defaultLogger.shouldLog(level); }
 
-// ── Shared write function ────────────────────────────────────────
+// ── Level API (delegates to _defaultLogger) ──────────────────────
 
-function writeLog(level: LogLevel, message: string): void {
-    if (!shouldLog(level)) return;
-    const timestamp = new Date().toISOString();
-    const entry = `[${timestamp}] [${level.toUpperCase()}] ${redact(message)}`;
-    appendFileSync(_logFile, entry + '\n');
-    if (_console) {
-        const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
-        fn(entry);
-    }
-}
-
-// ── Level API ────────────────────────────────────────────────────
-
-export function logError(message: string): void { writeLog('error', message); }
-export function logWarn(message: string): void { writeLog('warn', message); }
-export function logInfo(message: string): void { writeLog('info', message); }
-export function logDebug(message: string): void { writeLog('debug', message); }
-export function logTrace(message: string): void { writeLog('trace', message); }
+export function logError(message: string): void { _defaultLogger.error(message); }
+export function logWarn(message: string):  void { _defaultLogger.warn(message);  }
+export function logInfo(message: string):  void { _defaultLogger.info(message);  }
+export function logDebug(message: string): void { _defaultLogger.debug(message); }
+export function logTrace(message: string): void { _defaultLogger.trace(message); }
 
 // ── Formatting Utilities ─────────────────────────────────────────
 

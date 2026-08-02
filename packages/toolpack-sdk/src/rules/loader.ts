@@ -3,16 +3,27 @@ import { resolve, join, extname } from 'path';
 import { parseRuleFile } from './parser.js';
 
 const DEFAULT_RULES_DIR = '.toolpack/rules';
+const DEFAULT_CACHE_TTL_MS = 30_000; // 30 seconds
+
+interface CachedModeEntry {
+    value: string;
+    cachedAt: number;
+}
 
 export class RuleLoader {
-    private fileCache: Map<string, string> = new Map();
-    private modeCache: Map<string, string> = new Map();
+    // modeCache entries expire after cacheTtlMs so rule edits are picked up
+    // without a process restart. fileCache is intentionally NOT persisted across
+    // loadForMode() calls — it only deduplicates files within one call.
+    private modeCache: Map<string, CachedModeEntry> = new Map();
+
+    constructor(private readonly cacheTtlMs: number = DEFAULT_CACHE_TTL_MS) {}
 
     async loadForMode(modeName: string, rulesDir?: string): Promise<string> {
         const dir = rulesDir ?? DEFAULT_RULES_DIR;
         const cacheKey = `${modeName}:${dir}`;
-        if (this.modeCache.has(cacheKey)) {
-            return this.modeCache.get(cacheKey)!;
+        const cached = this.modeCache.get(cacheKey);
+        if (cached && (Date.now() - cached.cachedAt) < this.cacheTtlMs) {
+            return cached.value;
         }
 
         const collected = new Set<string>();
@@ -26,26 +37,33 @@ export class RuleLoader {
         }
 
         if (collected.size === 0) {
-            this.modeCache.set(cacheKey, '');
+            this.modeCache.set(cacheKey, { value: '', cachedAt: Date.now() });
             return '';
         }
 
+        // Per-call file read cache: deduplicates files that appear in multiple
+        // subfolders within this one loadForMode() call, but does NOT persist
+        // across calls so stale file content is never served after an edit.
+        const fileReadCache = new Map<string, string>();
         const contents: string[] = [];
         for (const filePath of collected) {
-            const raw = await this.readFileCached(filePath);
+            const raw = await this.readFile(filePath, fileReadCache);
             if (!raw) continue;
             const parsed = parseRuleFile(raw);
             if (parsed) contents.push(parsed);
         }
 
-        if (contents.length === 0) {
-            this.modeCache.set(cacheKey, '');
-            return '';
-        }
+        const value = contents.length === 0
+            ? ''
+            : `<rules>\n${contents.join('\n\n')}\n</rules>`;
 
-        const merged = `<rules>\n${contents.join('\n\n')}\n</rules>`;
-        this.modeCache.set(cacheKey, merged);
-        return merged;
+        this.modeCache.set(cacheKey, { value, cachedAt: Date.now() });
+        return value;
+    }
+
+    /** Evict all cached entries — useful in tests or after a known rule file change. */
+    clearCache(): void {
+        this.modeCache.clear();
     }
 
     private async collectFromFolder(folderPath: string, collected: Set<string>): Promise<void> {
@@ -69,13 +87,11 @@ export class RuleLoader {
         }
     }
 
-    private async readFileCached(filePath: string): Promise<string> {
-        if (this.fileCache.has(filePath)) {
-            return this.fileCache.get(filePath)!;
-        }
+    private async readFile(filePath: string, cache: Map<string, string>): Promise<string> {
+        if (cache.has(filePath)) return cache.get(filePath)!;
         try {
             const content = await readFile(filePath, 'utf-8');
-            this.fileCache.set(filePath, content);
+            cache.set(filePath, content);
             return content;
         } catch {
             return '';

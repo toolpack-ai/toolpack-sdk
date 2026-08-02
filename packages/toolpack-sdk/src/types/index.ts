@@ -96,7 +96,8 @@ export interface RequestToolDefinition {
     description: string;
     parameters: Record<string, any>;
     category: string;
-    execute: (args: Record<string, any>) => Promise<any>;
+    /** Same optional `ctx` as ToolDefinition.execute — per-tenant credentials/runtime scoping. */
+    execute: (args: Record<string, any>, ctx?: import('../tools/types.js').ToolContext) => Promise<any>;
     cacheable?: boolean;
     confirmation?: import('../tools/types.js').ToolConfirmation;
 }

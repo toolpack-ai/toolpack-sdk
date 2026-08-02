@@ -8,9 +8,9 @@ import { gitBlameTool } from './tools/blame/index.js';
 import { gitBranchListTool } from './tools/branch-list/index.js';
 import { gitBranchCreateTool } from './tools/branch-create/index.js';
 import { gitCheckoutTool } from './tools/checkout/index.js';
-import { gitCloneTool } from './tools/clone/index.js';
+import { gitCloneTool, createGitCloneTool } from './tools/clone/index.js';
 
-export { gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool, gitBlameTool, gitBranchListTool, gitBranchCreateTool, gitCheckoutTool, gitCloneTool };
+export { gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool, gitBlameTool, gitBranchListTool, gitBranchCreateTool, gitCheckoutTool, gitCloneTool, createGitCloneTool };
 
 export const gitToolsProject: ToolProject = {
     manifest: {
