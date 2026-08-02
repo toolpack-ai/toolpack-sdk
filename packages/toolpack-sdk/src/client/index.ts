@@ -1805,9 +1805,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 processRegistry: this.toolRegistry?.runtimeContext?.processRegistry,
                 githubTokenStore: this.toolRegistry?.runtimeContext?.githubTokenStore,
             };
-            const result = requestTool
-                ? await requestTool.execute(args)
-                : await tool.execute(args, ctx);
+            const result = await tool.execute(args, ctx);
             const duration = Date.now() - startTime;
 
             // Emit completed event

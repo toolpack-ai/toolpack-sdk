@@ -196,8 +196,10 @@ const mcpToolProject = await createMcpToolProject({
 const sdk = await Toolpack.init({
   provider: 'openai',
   tools: true,
-  customTools: [mcpToolProject],
 });
+
+// Use MCP tools via ModeConfig.customTools (per-agent or per-request):
+// agent.mode = { ...myMode, customTools: [...mcpToolProject.tools] };
 
 // On shutdown/cold path:
 // await disconnectMcpToolProject(mcpToolProject);
@@ -344,6 +346,8 @@ sdk.cycleMode(); // Cycles through all registered modes
 | `blockAllTools` | boolean | `false` | If `true`, disables all tools (pure conversation) |
 | `baseContext` | object/false | `undefined` | Controls working directory and tool category injection |
 | `workflow` | WorkflowConfig | `undefined` | Planning, execution mode, and progress configuration |
+| `customTools` | ToolDefinition[] | `[]` | Agent-specific tools — never shared across agents |
+| `toolsConfig` | Partial\<ToolsConfig\> | `{}` | Per-agent tool behavior overrides (merged over global `toolsConfig`) |
 
 ## Workflow Engine
 
@@ -535,11 +539,20 @@ const myToolProject = createToolProject({
   ],
 });
 
-// Register custom tools at init
+// Attach custom tools to a mode — scoped to that agent, not global.
 const sdk = await Toolpack.init({
   provider: 'openai',
-  tools: true,              // Load built-in tools
-  customTools: [myToolProject], // Add your custom tools
+  tools: true,
+});
+
+// Option A: set on your agent class
+// agent.mode = { ...agentMode, customTools: [...myToolProject.tools] };
+
+// Option B: pass inline per-request
+const result = await sdk.generate({
+  messages: [{ role: 'user', content: 'Use my tool!' }],
+  model: 'gpt-4.1',
+  mode: { ...sdk.getMode()!, customTools: [...myToolProject.tools] },
 });
 ```
 
@@ -608,15 +621,17 @@ The skills system lets you define **reusable behavioral instructions** in `.skil
 ```typescript
 import { Toolpack, createSkillInterceptor, createSkillTools } from 'toolpack-sdk';
 
+const skillTools = createSkillTools({ dir: '.toolpack/skills' });
+
 const toolpack = await Toolpack.init({
   provider: 'anthropic',
   interceptors: [
     createSkillInterceptor({ dir: '.toolpack/skills', maxSkills: 3, minScore: 0.3 }),
   ],
-  customTools: [
-    createSkillTools({ dir: '.toolpack/skills' }),
-  ],
 });
+
+// Attach skill tools per agent via ModeConfig.customTools:
+// agent.mode = { ...agentMode, customTools: [...skillTools.tools] };
 ```
 
 Create a skill file at `.toolpack/skills/code-review.skill.md`:
@@ -1076,147 +1091,103 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_GENERATIVE_AI_KEY="AIza..."
 export OPENROUTER_API_KEY="sk-or-..."
 
-# SDK logging (override — prefer toolpack.config.json instead)
+# SDK logging (override programmatic config)
 export TOOLPACK_SDK_LOG_FILE="./toolpack.log"    # Log file path (also enables logging)
-export TOOLPACK_SDK_LOG_LEVEL="debug"            # Log level override (error, warn, info, debug, trace)
+export TOOLPACK_SDK_LOG_LEVEL="debug"            # Log level (error, warn, info, debug, trace)
+export TOOLPACK_SDK_LOG_ENABLED="true"           # Enable/disable logging
+export TOOLPACK_SDK_LOG_CONSOLE="true"           # Mirror log output to console
 ```
 
-## Configuration Architecture
+### Logging Configuration
 
-Toolpack uses a hierarchical configuration system that separates build-time (SDK) and runtime (CLI) configurations.
+Pass `logging` to `Toolpack.init()`:
 
-### Configuration Layers
-
-1. **Workspace Local (Highest Priority)**
-   - Location: `<workspace>/.toolpack/config/toolpack.config.json`
-   - Purpose: Project-specific overrides for the CLI tool.
-
-2. **Global Default (CLI First Run)**
-   - Location: `~/.toolpack/config/toolpack.config.json`
-   - Purpose: Global default settings for the CLI tool across all projects. Created automatically on first run.
-
-3. **Build Time / SDK Base**
-   - Location: `toolpack.config.json` in project root.
-   - Purpose: Static configuration used when bundling the SDK or running it directly in an app.
-
-### Settings UI
-
-The CLI includes a settings screen to view the active configuration source and its location. Press `Ctrl+S` from the Home screen to access it.
-
-### Configuration Sections
-
-The `toolpack.config.json` file supports several sections:
-
-#### Global Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `systemPrompt` | - | Override the base system prompt |
-| `baseContext` | `true` | Agent context configuration (`{ includeWorkingDirectory, includeToolCategories, custom }` or `false`) |
-| `modeOverrides` | `{}` | Mode-specific system prompt and toolSearch overrides |
-
-#### Logging Configuration
-
-Create a `toolpack.config.json` in your project root:
-
-```json
-{
-  "logging": {
-    "enabled": true,
-    "filePath": "./toolpack.log",
-    "level": "info"
-  }
-}
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'anthropic',
+  logging: {
+    enabled: true,
+    filePath: './toolpack.log',
+    level: 'debug',
+    console: false,
+  },
+});
 ```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable file logging |
-| `filePath` | `toolpack-sdk.log` | Log file path (relative to CWD) |
-| `level` | `info` | Log level (`error`, `warn`, `info`, `debug`, `trace`) |
-
-### Tools Configuration
-
-Create a `toolpack.config.json` in your project root:
-
-```json
-{
-  "tools": {
-    "enabled": true,
-    "autoExecute": true,
-    "maxToolRounds": 5,
-    "toolChoicePolicy": "auto",
-    "resultMaxChars": 20000,
-    "enabledTools": [],
-    "enabledToolCategories": [],
-    "additionalConfigurations": {
-      "webSearch": {
-        "tavilyApiKey": "tvly-...",
-        "braveApiKey": "BSA..."
-      }
-    },
-    "toolSearch": {
-      "enabled": false,
-      "alwaysLoadedTools": ["fs.read_file", "fs.write_file", "fs.list_dir"],
-      "alwaysLoadedCategories": [],
-      "searchResultLimit": 5,
-      "cacheDiscoveredTools": true
-    }
-  }
-}
-```
-
-#### Configuration Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Enable/disable tool system |
+| `enabled` | boolean | `false` | Enable file logging |
+| `filePath` | string | `toolpack-sdk.log` | Log file path (relative to CWD) |
+| `level` | string | `info` | Log level (`error`, `warn`, `info`, `debug`, `trace`) |
+| `console` | boolean | `false` | Mirror log output to console |
+
+Environment variables override programmatic config (highest precedence).
+
+### Tools Configuration
+
+Pass `toolsConfig` to `Toolpack.init()` for global defaults, or set `ModeConfig.toolsConfig` for per-agent overrides:
+
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'anthropic',
+  tools: true,
+  toolsConfig: {
+    autoExecute: true,
+    maxToolRounds: 10,
+    toolChoicePolicy: 'auto',
+    resultMaxChars: 20000,
+    additionalConfigurations: {
+      webSearch: {
+        tavilyApiKey: 'tvly-...',
+        braveApiKey: 'BSA...',
+      },
+    },
+    toolSearch: {
+      enabled: false,
+      alwaysLoadedTools: ['fs.read_file', 'fs.write_file', 'fs.list_dir'],
+      searchResultLimit: 5,
+      cacheDiscoveredTools: true,
+    },
+  },
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable/disable the tool system entirely |
 | `autoExecute` | boolean | `true` | Auto-execute tool calls from AI |
 | `maxToolRounds` | number | `5` | Max tool execution rounds per request |
 | `toolChoicePolicy` | string | `"auto"` | `"auto"`, `"required"`, or `"required_for_actions"` |
+| `resultMaxChars` | number | `20000` | Max characters in a tool result |
 | `enabledTools` | string[] | `[]` | Whitelist specific tools (empty = all) |
 | `enabledToolCategories` | string[] | `[]` | Whitelist categories (empty = all) |
 
 ### HITL (Human-in-the-Loop) Configuration
 
-Configure user confirmation for high-risk tool operations:
+Configure user confirmation for high-risk tool operations via `Toolpack.init()`:
 
-```json
-{
-  "hitl": {
-    "enabled": true,
-    "confirmationMode": "all",
-    "bypass": {
-      "tools": ["fs.write_file"],
-      "categories": ["filesystem"],
-      "levels": ["medium"]
-    }
-  }
-}
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'anthropic',
+  hitl: {
+    enabled: true,
+    confirmationMode: 'all',
+    bypass: {
+      tools: ['fs.write_file'],
+      categories: ['filesystem'],
+      levels: ['medium'],
+    },
+  },
+});
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Master switch for HITL confirmation |
+| `enabled` | boolean | `false` | Enable HITL. Auto-enabled when `onToolConfirm` is provided |
 | `confirmationMode` | string | `"all"` | `"off"`, `"high-only"`, or `"all"` |
 | `bypass.tools` | string[] | `[]` | Tool names to bypass (e.g., `["fs.write_file"]`) |
 | `bypass.categories` | string[] | `[]` | Categories to bypass (e.g., `["filesystem"]`) |
 | `bypass.levels` | string[] | `[]` | Risk levels to bypass (`["high"]` or `["medium"]`) |
-
-**Programmatic API:**
-
-```typescript
-import { addBypassRule, removeBypassRule } from 'toolpack-sdk';
-
-// Add bypass rule
-await addBypassRule({ type: 'tool', value: 'fs.delete_file' });
-
-// Remove bypass rule
-await removeBypassRule({ type: 'tool', value: 'fs.delete_file' });
-
-// Reload config to apply changes
-toolpack.reloadConfig();
-```
 
 See the [HITL documentation](https://toolpacksdk.com/guides/hitl-confirmation) for detailed configuration options and best practices.
 
@@ -1232,17 +1203,19 @@ The `web.search` tool supports multiple search backends with automatic fallback:
 
 When you have many tools (50+), enable tool search to reduce token usage. The AI discovers tools on-demand via a built-in `tool.search` meta-tool using BM25 ranking:
 
-```json
-{
-  "tools": {
-    "toolSearch": {
-      "enabled": true,
-      "alwaysLoadedTools": ["fs.read_file", "fs.write_file", "web.search"],
-      "searchResultLimit": 5,
-      "cacheDiscoveredTools": true
-    }
-  }
-}
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'anthropic',
+  tools: true,
+  toolsConfig: {
+    toolSearch: {
+      enabled: true,
+      alwaysLoadedTools: ['fs.read_file', 'fs.write_file', 'web.search'],
+      searchResultLimit: 5,
+      cacheDiscoveredTools: true,
+    },
+  },
+});
 ```
 
 ## API Reference
@@ -1252,6 +1225,12 @@ When you have many tools (50+), enable tool search to reduce token usage. The AI
 ```typescript
 import { Toolpack } from 'toolpack-sdk';
 
+// ToolpackInitConfig — fields removed in v2.8:
+//   customTools   → use ModeConfig.customTools per agent instead
+//   modeOverrides → configure modes directly via registerMode()
+//   configPath    → configuration is now passed inline to Toolpack.init()
+//
+// Fields added in v2.8: logging, hitl, toolsConfig
 const sdk = await Toolpack.init(config: ToolpackInitConfig): Promise<Toolpack>
 
 // Completions (routes through workflow engine if mode has workflow enabled)

@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolContext } from '../../../types.js';
+import { ToolDefinition, ToolContext, ToolpackCredentials } from '../../../types.js';
 import type { GithubTokenStore } from '../../../github-tools/auth.js';
 import { gitCloneSchema } from './schema.js';
 import { getGit } from '../../utils.js';
@@ -34,8 +34,9 @@ async function performClone(
     depth: number,
     cloneRoot: string,
     tokenStore?: GithubTokenStore,
+    credentials?: ToolpackCredentials,
 ): Promise<string> {
-    const authToken = await resolveGithubToken(repo, undefined, tokenStore);
+    const authToken = await resolveGithubToken(repo, undefined, tokenStore, credentials);
     const cloneUrl = `https://x-access-token:${authToken}@github.com/${repo}.git`;
     const repoSlug = repo.replace('/', '_');
     const cloneDir = path.resolve(cloneRoot, repoSlug);
@@ -135,7 +136,11 @@ export function createGitCloneTool(state: CloneState): ToolDefinition {
                 }
 
                 await state.evictIfNeeded(100_000_000, maxBytes);
-                const cloneDir = await performClone(state, repo, sha, filter, depth, cloneRoot, ctx?.githubTokenStore);
+                const cloneDir = await performClone(
+                    state, repo, sha, filter, depth, cloneRoot,
+                    ctx?.githubTokenStore,
+                    ctx?.config?.credentials,
+                );
                 return JSON.stringify({
                     cloneDir,
                     next: 'Pass cloneDir to compatible git, filesystem, or coding tools to inspect this checkout.',

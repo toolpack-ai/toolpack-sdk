@@ -1065,6 +1065,71 @@ console.log(formatEvalReport(report));
 expect(report.regressions).toHaveLength(0); // CI gate
 ```
 
+## Stopping Agents
+
+Every `AgentInput` and `AgentRunOptions` accepts an optional `signal?: AbortSignal`. Passing a signal lets you cancel an in-flight agent run from outside.
+
+### Basic pattern
+
+```typescript
+import { BaseAgent } from '@toolpack-sdk/agents';
+
+const controller = new AbortController();
+
+// Pass the signal when invoking the agent
+const resultPromise = agent.invokeAgent({
+  message: 'Do something long-running',
+  signal: controller.signal,
+});
+
+// Abort from wherever you need — HTTP stop endpoint, UI button, timeout, etc.
+controller.abort();
+
+const result = await resultPromise;
+// result.output will indicate the run was stopped
+```
+
+### In a web server (stop endpoint)
+
+```typescript
+const activeRuns = new Map<string, AbortController>();
+
+app.post('/api/chat', async (req, res) => {
+  const { sessionId, message } = req.body;
+  const controller = new AbortController();
+  activeRuns.set(sessionId, controller);
+
+  const result = await agent.invokeAgent({ message, signal: controller.signal });
+  activeRuns.delete(sessionId);
+
+  res.json(result);
+});
+
+app.post('/api/chat/stop', (req, res) => {
+  const controller = activeRuns.get(req.body.sessionId);
+  if (controller) {
+    controller.abort();
+    activeRuns.delete(req.body.sessionId);
+  }
+  res.json({ ok: true });
+});
+```
+
+### Signal propagation through delegation
+
+When you pass `signal` to `invokeAgent()`, it is automatically propagated into any sub-agents spawned via `delegate_to_agent` or `delegate_and_forget`. You do not need to pass the signal manually to delegated agents — the parent agent's abort signal flows through the entire delegation chain.
+
+```typescript
+// Aborting the root agent also stops all delegated sub-agents
+const controller = new AbortController();
+await executiveAgent.invokeAgent({ message: '...', signal: controller.signal });
+controller.abort(); // stops executive + all delegates it spawned
+```
+
+### Limitation
+
+The signal fires at **tool-round boundaries**, not mid-tool-execution. A running tool call (including a delegation) finishes its current step before the abort is observed. Sub-agents stop at their own next round boundary once the signal is propagated. This is the standard behavior for cooperative cancellation with `AbortSignal`.
+
 ## Testing
 
 ```bash
