@@ -16,10 +16,11 @@ import { VertexAIAdapter } from './providers/vertexai/index.js';
 import { AnthropicVertexAdapter } from './providers/anthropic-vertex/index.js';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
 import { OpenRouterAdapter } from './providers/openrouter/index.js';
-import { getOllamaBaseUrl, loadConfig, discoverConfigPath } from './providers/config.js';
-import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger.js';
+import { getOllamaBaseUrl, loadConfig, discoverConfigPath, HitlConfig } from './providers/config.js';
+import { initLogger, logWarn,logError,logInfo, LoggingConfig } from './providers/provider-logger.js';
 import { ToolRegistry } from './tools/registry.js';
-import { loadToolsConfig, loadFullConfig, ToolProject } from './tools/index.js';
+import { ToolProject } from './tools/index.js';
+import { ToolsConfig, DEFAULT_TOOLS_CONFIG } from './tools/types.js';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
@@ -100,8 +101,11 @@ export interface ToolpackInitConfig {
     /** Context window management configuration for automatic conversation pruning/summarization */
     contextWindow?: ContextWindowConfig;
 
-    /** Custom tool projects to load in addition to built-ins */
-    customTools?: ToolProject[];
+    /**
+     * Tool runtime configuration (autoExecute, maxToolRounds, additionalConfigurations, etc.).
+     * Merged over DEFAULT_TOOLS_CONFIG. Use ModeConfig.toolsConfig for per-agent overrides.
+     */
+    toolsConfig?: Partial<ToolsConfig>;
 
     /** Multi-provider config (overrides single provider settings) */
     providers?: Record<string, ProviderOptions>;
@@ -115,9 +119,6 @@ export interface ToolpackInitConfig {
     /** Default mode to activate on init (default: 'default') */
     defaultMode?: string;
 
-    /** Optional system prompt overrides for specific modes */
-    modeOverrides?: Record<string, Partial<ModeConfig>>;
-
     /**
      * Custom provider adapter instances.
      * Can be:
@@ -129,14 +130,8 @@ export interface ToolpackInitConfig {
     /** Disable base agent context injection (for testing or custom prompts) */
     disableBaseContext?: boolean;
 
-    /** 
-     * Optional path to a configuration file. 
-     * If provided, the SDK will load configuration from this path instead of the default toolpack.config.json in the current working directory.
-     */
-    configPath?: string;
-
-    /* MCP Tools configuration 
-    * When provided. copnnects to MCP servers and register tools */
+    /* MCP Tools configuration
+     * When provided, connects to MCP servers and registers tools */
     mcp?: McpToolsConfig;
 
     /**
@@ -178,6 +173,19 @@ export interface ToolpackInitConfig {
      * The workflow execution path (when a mode has planning enabled) is also unaffected.
      */
     interceptors?: ToolpackInterceptor[];
+
+    /**
+     * Logging configuration. Takes precedence over any value in toolpack.config.json.
+     * Env vars (TOOLPACK_SDK_LOG_ENABLED, TOOLPACK_SDK_LOG_FILE, etc.) still override this.
+     */
+    logging?: LoggingConfig;
+
+    /**
+     * Human-in-the-loop configuration. Takes precedence over any value in toolpack.config.json.
+     * Merged with confirmationMode and onToolConfirm — the most-specific setting wins.
+     */
+    hitl?: HitlConfig;
+
 }
 
 /**
@@ -382,25 +390,21 @@ export class Toolpack extends EventEmitter {
      * @returns Ready-to-use Toolpack instance
      */
     static async init(config: ToolpackInitConfig): Promise<Toolpack> {
-        // 0. Load full config once and initialize logger first
-        const fullConfig = loadFullConfig(config.configPath);
-        initLogger(fullConfig.logging);
-        
+        // 0. Initialize logger
+        initLogger(config.logging);
+
         // 1. Setup Tool Registry
         const registry = new ToolRegistry();
-        const toolsConfig = loadToolsConfig(config.configPath);
+        const toolsConfig: ToolsConfig = { ...DEFAULT_TOOLS_CONFIG, ...(config.toolsConfig || {}) };
         registry.setConfig(toolsConfig);
 
         if (config.tools) {
             await registry.loadBuiltIn();
         }
-        if (config.customTools) {
-            await registry.loadProjects(config.customTools);
-        }
 
-        // Load MCP tools from config if provided
+        // Load MCP tools if provided
         let mcpToolProject: ToolProject | null = null;
-        const mcpConfig = config.mcp || fullConfig.mcp;
+        const mcpConfig = config.mcp;
         if (mcpConfig) {
             try {
                 logInfo('[MCP] Initializing MCP tool integration');
@@ -414,10 +418,8 @@ export class Toolpack extends EventEmitter {
             }
         }
 
-        // 1b. Extract config overrides (systemPrompt, baseContext, modeOverrides)
-        const systemPrompt = fullConfig.systemPrompt;
-        const disableBaseContext = config.disableBaseContext || fullConfig.disableBaseContext || fullConfig.baseContext === false || false;
-        const configModeOverrides = fullConfig.modeOverrides || {};
+        // 1b. Base context
+        const disableBaseContext = config.disableBaseContext ?? false;
 
         // 2. Resolve Providers
         const providers: Record<string, ProviderAdapter> = {};
@@ -428,7 +430,7 @@ export class Toolpack extends EventEmitter {
             // Multi-provider mode - skip providers without API keys (they can be used later if keys are set)
             for (const [name, opts] of Object.entries(config.providers)) {
                 const isDefault = name === defaultProviderName;
-                const provider = await Toolpack.createProvider(name, opts, config.configPath, !isDefault);
+                const provider = await Toolpack.createProvider(name, opts, undefined, !isDefault);
                 if (provider) {
                     providers[name] = provider;
                 }
@@ -444,7 +446,7 @@ export class Toolpack extends EventEmitter {
                 thinkingBudget: config.thinkingBudget,
                 region: config.region,
             };
-            const provider = await Toolpack.createProvider(config.provider, opts, config.configPath, false);
+            const provider = await Toolpack.createProvider(config.provider, opts, undefined, false);
             if (provider) {
                 providers[config.provider] = provider;
             }
@@ -510,35 +512,8 @@ export class Toolpack extends EventEmitter {
             }
         }
 
-        // Apply mode overrides
-        const finalModeOverrides = { ...configModeOverrides, ...(config.modeOverrides || {}) };
-        for (const [modeName, override] of Object.entries(finalModeOverrides)) {
-            const mode = modeRegistry.get(modeName);
-            if (mode) {
-                // Merge system prompt
-                if (override.systemPrompt !== undefined) {
-                    mode.systemPrompt = override.systemPrompt;
-                }
-                
-                // Deep merge toolSearch configuration
-                if (override.toolSearch) {
-                    mode.toolSearch = {
-                        ...(mode.toolSearch || {}),
-                        ...override.toolSearch
-                    };
-                }
-                
-                // Apply other shallow overrides
-                for (const [key, value] of Object.entries(override)) {
-                    if (key !== 'systemPrompt' && key !== 'toolSearch') {
-                        (mode as any)[key] = value;
-                    }
-                }
-            }
-        }
-
-        // 4. Prepare HITL config (merge file-based with programmatic overrides)
-        const hitlConfig = fullConfig.hitl || {};
+        // 4. Prepare HITL config
+        const hitlConfig = { ...(config.hitl || {}) };
         // Programmatic confirmationMode takes precedence over file config
         if (config.confirmationMode !== undefined) {
             hitlConfig.confirmationMode = config.confirmationMode;
@@ -558,7 +533,6 @@ export class Toolpack extends EventEmitter {
             defaultProvider: defaultProviderName,
             toolRegistry: registry,
             toolsConfig: registry.getConfig(),
-            systemPrompt: systemPrompt,
             disableBaseContext: disableBaseContext,
             hitlConfig: Object.keys(hitlConfig).length > 0 ? hitlConfig : undefined,
             onToolConfirm: config.onToolConfirm,

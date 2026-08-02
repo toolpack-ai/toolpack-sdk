@@ -1,12 +1,12 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { buildHeaders } from '../../common.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { resolveGithubToken } from '../../auth.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const id = String(args.threadId);
-  const token = await resolveGithubToken(args.repo as string | undefined, args.token as string | undefined);
+  const token = await resolveGithubToken(args.repo as string | undefined, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   logDebug(`[github.pr.reviewThreads.resolve] threadId=${id}`);
   const mutation = 'mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }';
   const resp = await fetch('https://api.github.com/graphql', {

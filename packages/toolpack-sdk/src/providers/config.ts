@@ -127,19 +127,16 @@ export function loadConfig(configPath: string | null): ToolpackConfig | null {
 // Cached Config Reader
 // ============================================================================
 
-let _cachedConfig: ToolpackConfig | null = null;
-
+/**
+ * @deprecated Pass config directly to Toolpack.init(). File-based config is no longer read by the SDK.
+ */
 export function getToolpackConfig(configPath?: string): ToolpackConfig {
-    if (_cachedConfig) return _cachedConfig;
-
     const resolved = configPath || discoverConfigPath();
-    _cachedConfig = loadConfig(resolved) || {};
-    return _cachedConfig;
+    return loadConfig(resolved) || {};
 }
 
-export function reloadToolpackConfig(): void {
-    _cachedConfig = null;
-}
+/** @deprecated No-op. The process-global config cache has been removed. */
+export function reloadToolpackConfig(): void {}
 
 // ============================================================================
 // Ollama Config Helpers

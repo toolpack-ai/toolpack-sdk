@@ -21,13 +21,42 @@ export interface ToolParameters {
     required?: string[];
 }
 
+/**
+ * Per-tenant tool credentials passed via toolsConfig.additionalConfigurations.credentials.
+ * Each field is a programmatic override; tools fall back to the corresponding
+ * env var when the field is absent.
+ */
+export interface ToolpackCredentials {
+    /** GitHub personal access token. Fallback: GITHUB_PAT */
+    githubPat?: string;
+    /** GitHub App ID. Fallback: GITHUB_APP_ID */
+    githubAppId?: string;
+    /** GitHub App private key (PEM). Fallback: GITHUB_APP_PRIVATE_KEY */
+    githubAppPrivateKey?: string;
+    /** Slack bot token. Fallback: TOOLPACK_SLACK_BOT_TOKEN */
+    slackBotToken?: string;
+    /** Netlify auth token. Fallback: NETLIFY_AUTH_TOKEN */
+    netlifyAuthToken?: string;
+}
+
 export interface ToolContext {
     /** Absolute path to the workspace/project root */
     workspaceRoot: string;
-    /** Tool-specific config from toolpack.config.json additionalConfigurations */
+    /**
+     * Tool-specific config from toolsConfig.additionalConfigurations.
+     * Includes credentials (ctx.config.credentials) and per-tool settings
+     * (ctx.config.gitClone, ctx.config.webSearch, etc.).
+     */
     config: Record<string, any>;
     /** Scoped logger — writes to toolpack-sdk.log */
     log: (message: string) => void;
+    // ── Scoped per-Toolpack registries (§2.1, §2.4) ──────────────
+    // Present when built-in tools are loaded via ToolRegistry.loadBuiltIn().
+    // Tools fall back to the module-level default when absent (single-tenant use).
+    /** Per-tenant background-process registry (exec-tools). */
+    processRegistry?: import('./exec-tools/process-registry.js').ProcessRegistry;
+    /** Per-tenant GitHub App installation-token cache (github-tools). */
+    githubTokenStore?: import('./github-tools/auth.js').GithubTokenStore;
 }
 
 // ── Tool Annotations (MCP) ────────────────────────────────────

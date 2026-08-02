@@ -1,4 +1,5 @@
 import { ToolDefinition, ToolSchema, ToolProject, ToolsConfig, DEFAULT_TOOLS_CONFIG } from "./types.js";
+import type { ToolRuntimeContext } from './tool-runtime-context.js';
 
 /**
  * Central registry for all tools (built-in + custom).
@@ -9,6 +10,8 @@ export class ToolRegistry {
     private tools: Map<string, ToolDefinition> = new Map();
     private projects: Map<string, ToolProject> = new Map();
     private config: ToolsConfig = DEFAULT_TOOLS_CONFIG;
+    /** Scoped runtime state created by loadBuiltIn(). Undefined when built-in tools are not loaded. */
+    runtimeContext?: ToolRuntimeContext;
 
     /**
      * Register a tool (built-in or custom).
@@ -226,6 +229,11 @@ export class ToolRegistry {
      * Load all built-in tool projects.
      */
     async loadBuiltIn(): Promise<void> {
+        if (this.runtimeContext) return;
+
+        const { ToolRuntimeContext } = await import('./tool-runtime-context.js');
+        this.runtimeContext = new ToolRuntimeContext();
+
         const { fsToolsProject } = await import('./fs-tools/index.js');
         const { execToolsProject } = await import('./exec-tools/index.js');
         const { systemToolsProject } = await import('./system-tools/index.js');
@@ -233,12 +241,26 @@ export class ToolRegistry {
         const { githubToolsProject } = await import('./github-tools/index.js');
         const { webToolsProject } = await import('./web-tools/index.js');
         const { codingToolsProject } = await import('./coding-tools/index.js');
-        const { gitToolsProject } = await import('./git-tools/index.js');
+        const { gitToolsProject, createGitCloneTool } = await import('./git-tools/index.js');
         const { diffToolsProject } = await import('./diff-tools/index.js');
         const { dbToolsProject } = await import('./db-tools/index.js');
         const { cloudToolsProject } = await import('./cloud-tools/index.js');
         const { slackToolsProject } = await import('./slack-tools/index.js');
         const { k8sToolsProject } = await import('./k8s-tools/index.js');
-        await this.loadProjects([fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject, githubToolsProject, webToolsProject, codingToolsProject, gitToolsProject, diffToolsProject, dbToolsProject, cloudToolsProject, slackToolsProject, k8sToolsProject]);
+
+        // Replace the static gitCloneTool with a scoped instance that uses this
+        // registry's CloneState, isolating disk quota and cache from other tenants.
+        const scopedGitProject = {
+            ...gitToolsProject,
+            tools: gitToolsProject.tools.map(t =>
+                t.name === 'git.clone' ? createGitCloneTool(this.runtimeContext!.cloneState) : t
+            ),
+        };
+
+        await this.loadProjects([
+            fsToolsProject, execToolsProject, systemToolsProject, httpToolsProject,
+            githubToolsProject, webToolsProject, codingToolsProject, scopedGitProject,
+            diffToolsProject, dbToolsProject, cloudToolsProject, slackToolsProject, k8sToolsProject,
+        ]);
     }
 }

@@ -1,13 +1,13 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { resolveSlackToken } from '../../auth.js';
 import { callSlackApi } from '../../common.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const channel = String(args.channel);
   const timestamp = String(args.timestamp);
   const reactionName = String(args.name);
-  const token = resolveSlackToken(args.token as string | undefined);
+  const token = resolveSlackToken(args.token as string | undefined, ctx?.config?.credentials);
 
   try {
     await callSlackApi('reactions.add', token, {

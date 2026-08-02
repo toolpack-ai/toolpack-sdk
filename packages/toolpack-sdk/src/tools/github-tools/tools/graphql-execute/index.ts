@@ -1,13 +1,13 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { buildHeaders } from '../../common.js';
 import { resolveGithubToken } from '../../auth.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const query = args.query as string;
   const variables = (args.variables ?? {}) as Record<string, any>;
-  const token = await resolveGithubToken(args.repo as string | undefined, args.token as string | undefined);
+  const token = await resolveGithubToken(args.repo as string | undefined, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   logDebug(`[github.graphql.execute] query_len=${query?.length ?? 0}`);
 
   const resp = await fetch('https://api.github.com/graphql', {

@@ -1,13 +1,13 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
 import { buildHeaders } from '../../common.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
 import { resolveGithubToken } from '../../auth.js';
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
   const [owner, repoName] = String(args.repo).split('/');
   const number = Number(args.number);
-  const token = await resolveGithubToken(args.repo as string, args.token as string | undefined);
+  const token = await resolveGithubToken(args.repo as string, args.token as string | undefined, ctx?.githubTokenStore, ctx?.config?.credentials);
   const unresolvedOnly = Boolean(args.unresolvedOnly);
   const first = args.first ? Number(args.first) : 100;
   const after = args.after ? String(args.after) : undefined;

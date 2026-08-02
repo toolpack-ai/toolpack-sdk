@@ -1,4 +1,4 @@
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { cloudDeploySchema } from './schema.js';
 import { NetlifyProvider } from '../../providers/netlify.js';
 import { logDebug } from '../../../../providers/provider-logger.js';
@@ -9,14 +9,14 @@ export const cloudDeployTool: ToolDefinition = {
     description: 'Deploy a static directory to Netlify.',
     category: 'cloud',
     parameters: cloudDeploySchema,
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args: Record<string, unknown>, ctx?: ToolContext) => {
         const siteId = args.siteId as string;
         const dir = args.dir as string;
         const message = args.message as string | undefined;
         logDebug(`[cloud.deploy] execute siteId="${siteId}" dir="${dir}" message="${message ?? 'none'}"`);
 
         try {
-            const client = NetlifyProvider.getClient();
+            const client = NetlifyProvider.getClient(ctx?.config?.credentials?.netlifyAuthToken);
 
             // Netlify's deploy method often handles Folder uploads but it sits on older API versions differently
             // We'll use the proper createSiteDeploy payload or deploy function depending on version.

@@ -1,7 +1,6 @@
 import * as cheerio from 'cheerio';
-import { ToolDefinition } from '../../../types.js';
+import { ToolDefinition, ToolContext } from '../../../types.js';
 import { name, displayName, description, parameters, category } from './schema.js';
-import { loadToolsConfig } from '../../../config-loader.js';
 import { logDebug, logError, logWarn } from '../../../../providers/provider-logger.js';
 
 const SEARCH_URL = 'https://lite.duckduckgo.com/lite/';
@@ -67,7 +66,7 @@ function mapFreshnessToBrave(freshness?: string): string {
     }
 }
 
-async function execute(args: Record<string, any>): Promise<string> {
+async function execute(args: Record<string, any>, ctx?: ToolContext): Promise<string> {
     const query = args.query as string;
     const maxResults = (args.max_results || 5) as number;
     const includeAnswer = (args.include_answer || false) as boolean;
@@ -85,10 +84,12 @@ async function execute(args: Record<string, any>): Promise<string> {
         throw new Error('query is required');
     }
 
-    const config = loadToolsConfig();
-    logDebug(`[web.search] config=${JSON.stringify(config)}`);
+    // ctx.config is additionalConfigurations from the effective toolsConfig.
+    // Fall back to env vars so the tool still works when invoked without ctx.
+    const tavilyApiKey = (ctx?.config?.webSearch?.tavilyApiKey as string | undefined) ?? process.env.TOOLPACK_TAVILY_API_KEY;
+    const braveApiKey = (ctx?.config?.webSearch?.braveApiKey as string | undefined) ?? process.env.TOOLPACK_BRAVE_API_KEY;
 
-    if (config.additionalConfigurations?.webSearch?.tavilyApiKey) {
+    if (tavilyApiKey) {
         logDebug(`[web.search] using Tavily API`);
         try {
             const { signal, clear } = getSignal();
@@ -99,7 +100,7 @@ async function execute(args: Record<string, any>): Promise<string> {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    api_key: config.additionalConfigurations.webSearch.tavilyApiKey,
+                    api_key: tavilyApiKey,
                     query: query,
                     max_results: maxResults,
                     include_answer: includeAnswer,
@@ -137,7 +138,7 @@ async function execute(args: Record<string, any>): Promise<string> {
         }
     }
 
-    if (config.additionalConfigurations?.webSearch?.braveApiKey) {
+    if (braveApiKey) {
         try {
             const { signal, clear } = getSignal();
             
@@ -152,7 +153,7 @@ async function execute(args: Record<string, any>): Promise<string> {
                     headers: {
                         'Accept': 'application/json',
                         'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': config.additionalConfigurations.webSearch.braveApiKey,
+                        'X-Subscription-Token': braveApiKey,
                     },
                     signal,
                 }).finally(clear);
@@ -167,7 +168,7 @@ async function execute(args: Record<string, any>): Promise<string> {
                         const summaryResponse = await fetch(`https://api.search.brave.com/res/v1/summarizer/search?key=${summaryKey}`, {
                             headers: {
                                 'Accept': 'application/json',
-                                'X-Subscription-Token': config.additionalConfigurations.webSearch.braveApiKey,
+                                'X-Subscription-Token': braveApiKey,
                             },
                             signal: signal2,
                         }).finally(clear2);
@@ -210,7 +211,7 @@ async function execute(args: Record<string, any>): Promise<string> {
                     headers: {
                         'Accept': 'application/json',
                         'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': config.additionalConfigurations.webSearch.braveApiKey,
+                        'X-Subscription-Token': braveApiKey,
                     },
                     signal,
                 }).finally(clear);

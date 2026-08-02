@@ -96,17 +96,11 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   _registry?: IAgentRegistry;
 
   /**
-   * Invocation-scoped context fields — set by `_bindChannel` immediately before
-   * calling `invokeAgent` and read inside `run()`, `ask()`, and `delegate()`.
-   *
-   * KNOWN LIMITATION: these are instance-level fields, not async-local storage.
-   * Two different conversations processed concurrently by the same agent can
-   * clobber each other's values. The conversation lock serialises within a single
-   * conversationId, but distinct conversationIds run concurrently.
-   *
-   * Fix: replace with `AsyncLocalStorage` in a future release. For now, agents
-   * that call `this.run()` while processing multiple concurrent conversations
-   * should pass `conversationId` explicitly to avoid relying on these fields.
+   * Legacy fallback fields for code that calls `invokeAgent()` directly (no channel).
+   * Channel-driven flows no longer write to these — `_bindChannel` establishes an
+   * async-local context (`_channelCtx`) so concurrent conversations on the same
+   * agent instance never clobber each other. These remain for backward compatibility
+   * with direct callers that set `_conversationId` manually before invoking.
    */
   _triggeringChannel?: string;
   _conversationId?: string;
@@ -413,6 +407,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
                   message: targetMessage,
                   conversationId: convId,
                   context: { delegatedBy: this.name },
+                  signal: _options?.signal,
                 }).catch(err => {
                   console.error(`[${this.name}] delegate_and_forget to ${targetName} failed:`, err);
                 });
@@ -452,6 +447,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
                   message: targetMessage,
                   conversationId: convId,
                   context: { delegatedBy: this.name },
+                  signal: _options?.signal,
                 });
                 return {
                   ...result,
@@ -742,6 +738,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         // so a concurrent setMode() from another agent sharing this Toolpack
         // (e.g. awaited delegation) cannot change this run's tool filtering.
         mode: this.mode,
+        // Abort signal — checked at every round boundary in AIClient.stream/generate.
+        signal: _options?.signal,
       };
 
       let resultContent: string | null = null;

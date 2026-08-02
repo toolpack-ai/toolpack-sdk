@@ -1,4 +1,5 @@
 import { WorkflowConfig } from '../workflows/workflow-types.js';
+import type { ToolDefinition, ToolsConfig } from '../tools/types.js';
 
 /**
  * Configuration for an AI agent mode.
@@ -116,6 +117,20 @@ export interface ModeConfig {
      * - 'text' (default): plain text, no constraint.
      */
     response_format?: 'text' | 'json_object';
+
+    /**
+     * Tools available only in this mode/agent.
+     * Resolved before the shared ToolRegistry — allows agent-specific tools
+     * without registering them globally.
+     */
+    customTools?: ToolDefinition[];
+
+    /**
+     * Tool behavior overrides for this mode/agent.
+     * Merged over the Toolpack-level ToolsConfig at request time.
+     * Use for per-agent autoExecute, maxToolRounds, resultMaxChars, etc.
+     */
+    toolsConfig?: Partial<ToolsConfig>;
 }
 
 /**
