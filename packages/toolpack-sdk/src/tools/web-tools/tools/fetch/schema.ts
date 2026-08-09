@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.fetch';
 export const displayName = 'Fetch';
 export const description = 'Fetch content from a URL. Supports multiple extraction modes: full (raw HTML up to 15K chars), structured (title, excerpt, key points), or minimal (title + snippet).';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

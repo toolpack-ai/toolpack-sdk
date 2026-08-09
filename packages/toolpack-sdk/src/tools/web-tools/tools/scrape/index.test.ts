@@ -10,7 +10,7 @@ describe('web.scrape tool', () => {
 
     it('should have correct metadata', () => {
         expect(webScrapeTool.name).toBe('web.scrape');
-        expect(webScrapeTool.category).toBe('network');
+        expect(webScrapeTool.category).toBe('web');
     });
 
     it('should throw if url is missing', async () => {

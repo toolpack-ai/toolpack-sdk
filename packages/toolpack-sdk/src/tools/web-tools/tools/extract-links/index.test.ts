@@ -10,7 +10,7 @@ describe('web.extract_links tool', () => {
 
     it('should have correct metadata', () => {
         expect(webExtractLinksTool.name).toBe('web.extract_links');
-        expect(webExtractLinksTool.category).toBe('network');
+        expect(webExtractLinksTool.category).toBe('web');
     });
 
     it('should throw if url is missing', async () => {

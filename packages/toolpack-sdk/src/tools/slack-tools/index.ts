@@ -29,7 +29,7 @@ export const slackToolsProject: ToolProject = {
       'slack.conversations.replies',
       'slack.auth.test',
     ],
-    category: 'network',
+    category: 'slack',
   },
   tools: [
     slackChatPostMessageTool,

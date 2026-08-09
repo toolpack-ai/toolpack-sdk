@@ -10,7 +10,7 @@ describe('http.put tool', () => {
 
     it('should have correct metadata', () => {
         expect(httpPutTool.name).toBe('http.put');
-        expect(httpPutTool.category).toBe('network');
+        expect(httpPutTool.category).toBe('http');
     });
 
     it('should throw if url is missing', async () => {

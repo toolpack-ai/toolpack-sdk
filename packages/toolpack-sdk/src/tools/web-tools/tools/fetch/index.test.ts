@@ -10,7 +10,7 @@ describe('web.fetch tool', () => {
 
     it('should have correct metadata', () => {
         expect(webFetchTool.name).toBe('web.fetch');
-        expect(webFetchTool.category).toBe('network');
+        expect(webFetchTool.category).toBe('web');
     });
 
     it('should throw if url is missing', async () => {

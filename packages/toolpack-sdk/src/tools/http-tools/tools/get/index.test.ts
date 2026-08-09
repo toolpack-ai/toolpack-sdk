@@ -10,7 +10,7 @@ describe('http.get tool', () => {
 
     it('should have correct metadata', () => {
         expect(httpGetTool.name).toBe('http.get');
-        expect(httpGetTool.category).toBe('network');
+        expect(httpGetTool.category).toBe('http');
     });
 
     it('should throw if url is missing', async () => {

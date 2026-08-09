@@ -6,7 +6,7 @@ describe('http-tools project', () => {
     it('should have a valid manifest', () => {
         expect(httpToolsProject.manifest.name).toBe('http-tools');
         expect(httpToolsProject.manifest.version).toBe('1.0.0');
-        expect(httpToolsProject.manifest.category).toBe('network');
+        expect(httpToolsProject.manifest.category).toBe('http');
         expect(httpToolsProject.manifest.author).toBe('Sajeer');
     });
 
@@ -29,7 +29,7 @@ describe('http-tools project', () => {
 
     it('should have all tools in the network category', () => {
         for (const tool of httpToolsProject.tools) {
-            expect(tool.category).toBe('network');
+            expect(tool.category).toBe('http');
         }
     });
 

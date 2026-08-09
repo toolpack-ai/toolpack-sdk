@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.feed';
 export const displayName = 'Extract Feed';
 export const description = 'Parse RSS/Atom feeds and return structured entries. Requires rss-parser library to be installed.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

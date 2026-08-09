@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.search';
 export const displayName = 'Search';
 export const description = 'Search the web using multiple providers (Tavily, Brave, DuckDuckGo Lite) with automatic fallback. Supports real-time results via freshness parameter and AI-generated answers. Configure API keys via environment variables (TOOLPACK_TAVILY_API_KEY, TOOLPACK_BRAVE_API_KEY) or toolpack.config.json for best results.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

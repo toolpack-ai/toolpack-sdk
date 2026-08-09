@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { KnowledgeProvider, KnowledgeSource, Embedder, QueryOptions, QueryResult, Chunk } from './interfaces.js';
+import { KnowledgeProvider, KnowledgeSource, Embedder, QueryOptions, QueryResult, Chunk, MetadataFilter } from './interfaces.js';
 import { keywordSearch, combineScores } from './utils/keyword.js';
 import { matchesFilter } from './utils/cosine.js';
 import { IngestionError } from './errors.js';
@@ -29,6 +29,8 @@ export interface KnowledgeOptions {
   onError?: ErrorHandler;
   onSync?: SyncEventHandler;
   onEmbeddingProgress?: EmbeddingProgressHandler;
+  onAdd?: KnowledgeAddHandler;
+  onDelete?: KnowledgeDeleteHandler;
   streamingBatchSize?: number;
 }
 
@@ -54,6 +56,21 @@ export interface EmbeddingProgressEvent {
 }
 
 export type EmbeddingProgressHandler = (event: EmbeddingProgressEvent) => void;
+
+export interface KnowledgeAddEvent {
+  id: string;
+  content: string;
+  metadata: Record<string, unknown>;
+}
+
+export type KnowledgeAddHandler = (event: KnowledgeAddEvent) => void;
+
+export interface KnowledgeDeleteEvent {
+  ids: string[];
+  filter?: MetadataFilter;
+}
+
+export type KnowledgeDeleteHandler = (event: KnowledgeDeleteEvent) => void;
 
 export class Knowledge {
   private constructor(
@@ -333,21 +350,10 @@ export class Knowledge {
   async add(content: string, metadata?: Record<string, unknown>): Promise<string> {
     try {
       const id = randomUUID();
-
-      // Embed the content
       const vector = await this.embedder.embed(content);
-
-      // Create the chunk
-      const chunk: Chunk = {
-        id,
-        content,
-        metadata: metadata || {},
-        vector,
-      };
-
-      // Add to provider
+      const chunk: Chunk = { id, content, metadata: metadata ?? {}, vector };
       await this.provider.add([chunk]);
-
+      this.options.onAdd?.({ id, content, metadata: chunk.metadata });
       return id;
     } catch (error) {
       throw new IngestionError(
@@ -355,6 +361,61 @@ export class Knowledge {
         'add'
       );
     }
+  }
+
+  /**
+   * Embeds and stores all chunks from a source without clearing existing data.
+   * Use this for adding or updating individual items in a persistent store.
+   * Returns the number of chunks ingested.
+   */
+  async ingest(source: KnowledgeSource): Promise<number> {
+    const batchSize = this.options.streamingBatchSize ?? 100;
+    const buffer: Chunk[] = [];
+    let total = 0;
+
+    for await (const chunk of source.load()) {
+      buffer.push(chunk);
+      if (buffer.length >= batchSize) {
+        const embedded = await this.embedChunks(buffer);
+        if (embedded.length > 0) {
+          await this.provider.add(embedded);
+          total += embedded.length;
+        }
+        buffer.length = 0;
+      }
+    }
+
+    if (buffer.length > 0) {
+      const embedded = await this.embedChunks(buffer);
+      if (embedded.length > 0) {
+        await this.provider.add(embedded);
+        total += embedded.length;
+      }
+    }
+
+    return total;
+  }
+
+  async delete(ids: string[]): Promise<void> {
+    await this.provider.delete(ids);
+    this.options.onDelete?.({ ids });
+  }
+
+  /**
+   * Deletes all chunks whose metadata matches every key-value pair in the
+   * filter. Returns the IDs of the deleted chunks.
+   *
+   * Useful for cascade-deleting all chunks that belong to a platform item:
+   *   `knowledge.deleteWhere({ knowledge_item_id: "abc" })`
+   */
+  async deleteWhere(filter: MetadataFilter): Promise<string[]> {
+    const all = await this.getAllChunks();
+    const matching = all.filter(c => matchesFilter(c.metadata, filter));
+    if (matching.length === 0) return [];
+    const ids = matching.map(c => c.id);
+    await this.provider.delete(ids);
+    this.options.onDelete?.({ ids, filter });
+    return ids;
   }
 
   async stop(): Promise<void> {

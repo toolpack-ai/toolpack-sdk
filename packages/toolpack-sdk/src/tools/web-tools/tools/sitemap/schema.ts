@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.sitemap';
 export const displayName = 'Extract Sitemap';
 export const description = 'Parse sitemap.xml or robots.txt to discover all pages on a site. Returns an array of URLs with lastmod/priority if available.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

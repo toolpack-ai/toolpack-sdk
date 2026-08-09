@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.screenshot';
 export const displayName = 'Screenshot';
 export const description = 'Render a page with headless browser and return screenshot Base64 PNG or rendered HTML.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

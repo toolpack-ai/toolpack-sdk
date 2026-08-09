@@ -68,8 +68,10 @@ export class ToolRouter {
         const schemas: ToolSchema[] = [];
         const seen = new Set<string>();
 
-        // 1. Always include tool.search itself
-        schemas.push(getToolSearchSchema());
+        // 1. Always include tool.search itself — category enum built dynamically
+        //    from registered tools, excluding 'meta' (tool.search itself).
+        const registeredCategories = registry.getCategories().filter(c => c !== 'meta');
+        schemas.push(getToolSearchSchema(registeredCategories.length ? registeredCategories : undefined));
         seen.add(TOOL_SEARCH_NAME);
 
         // 2. Always-loaded tools (user's top 3-5)

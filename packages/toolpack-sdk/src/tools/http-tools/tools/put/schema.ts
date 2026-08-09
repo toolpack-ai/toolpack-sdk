@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'http.put';
 export const displayName = 'PUT';
 export const description = 'Make an HTTP PUT request to a URL with an optional body and return the response.';
-export const category = 'network';
+export const category = 'http';
 
 export const parameters: ToolParameters = {
     type: 'object',

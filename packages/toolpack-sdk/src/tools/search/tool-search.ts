@@ -34,7 +34,7 @@ After discovering tools, you can call them directly by name.`,
             category: {
                 type: 'string',
                 description: 'Optional: filter by category',
-                enum: ['filesystem', 'network', 'execution', 'system', 'meta'],
+                enum: ['filesystem', 'http', 'web', 'github', 'slack', 'execution', 'system', 'meta'],
             },
         },
         required: ['query'],
@@ -47,14 +47,29 @@ After discovering tools, you can call them directly by name.`,
 };
 
 /**
- * Get the tool.search schema (without execute function).
+ * Get the tool.search schema, optionally with a dynamic category enum
+ * derived from the currently registered tool categories.
  */
-export function getToolSearchSchema(): ToolSchema {
+export function getToolSearchSchema(categories?: string[]): ToolSchema {
+    const parameters = categories?.length
+        ? {
+            ...toolSearchDefinition.parameters,
+            properties: {
+                ...toolSearchDefinition.parameters.properties,
+                category: {
+                    type: 'string' as const,
+                    description: 'Optional: filter by category',
+                    enum: categories,
+                },
+            },
+        }
+        : toolSearchDefinition.parameters;
+
     return {
         name: toolSearchDefinition.name,
         displayName: toolSearchDefinition.displayName,
         description: toolSearchDefinition.description,
-        parameters: toolSearchDefinition.parameters,
+        parameters,
         category: toolSearchDefinition.category,
     };
 }

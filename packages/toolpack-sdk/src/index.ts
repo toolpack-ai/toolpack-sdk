@@ -16,5 +16,8 @@ export * from './utils/context-window-state.js';
 export * from './mcp/index.js';
 export type { ToolpackInterceptor, ToolpackNextFunction } from './interceptors/index.js';
 export { createSkillInterceptor } from './skills/interceptor.js';
+export { BM25Engine } from './skills/bm25.js';
+export type { BM25SearchResult } from './skills/bm25.js';
+export { parseSkillFile } from './skills/parser.js';
 export type { Skill, SkillSection, SkillInterceptorOptions, SkillValidationMode } from './skills/types.js';
 export { RuleLoader } from './rules/index.js';

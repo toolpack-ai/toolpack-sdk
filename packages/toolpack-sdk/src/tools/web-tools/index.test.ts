@@ -6,7 +6,7 @@ describe('web-tools project', () => {
     it('should have a valid manifest', () => {
         expect(webToolsProject.manifest.name).toBe('web-tools');
         expect(webToolsProject.manifest.version).toBe('1.0.0');
-        expect(webToolsProject.manifest.category).toBe('network');
+        expect(webToolsProject.manifest.category).toBe('web');
         expect(webToolsProject.manifest.author).toBe('Sajeer');
     });
 
@@ -29,7 +29,7 @@ describe('web-tools project', () => {
 
     it('should have all tools in the network category', () => {
         for (const tool of webToolsProject.tools) {
-            expect(tool.category).toBe('network');
+            expect(tool.category).toBe('web');
         }
     });
 

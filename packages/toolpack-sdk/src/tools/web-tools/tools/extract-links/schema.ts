@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.extract_links';
 export const displayName = 'Extract Links';
 export const description = 'Extract all links from a webpage. Returns an array of objects with text and URL. Optionally filter by pattern.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

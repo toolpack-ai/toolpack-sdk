@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'http.download';
 export const displayName = 'Download';
 export const description = 'Download a file from a URL and save it to a local path.';
-export const category = 'network';
+export const category = 'http';
 
 export const parameters: ToolParameters = {
     type: 'object',

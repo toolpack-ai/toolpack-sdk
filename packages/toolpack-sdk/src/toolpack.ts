@@ -98,6 +98,13 @@ export interface ToolpackInitConfig {
     /** Load built-in tools (fs, http, etc.)? Default: false */
     tools?: boolean;
 
+    /**
+     * Tool projects that override built-in tools by name.
+     * Loaded after built-ins, so any tool with the same name replaces the built-in version.
+     * Also used to extend the tool.search category enum dynamically.
+     */
+    toolOverrides?: ToolProject[];
+
     /** Context window management configuration for automatic conversation pruning/summarization */
     contextWindow?: ContextWindowConfig;
 
@@ -400,6 +407,11 @@ export class Toolpack extends EventEmitter {
 
         if (config.tools) {
             await registry.loadBuiltIn();
+        }
+
+        // Load tool overrides after built-ins so they replace any same-named tools
+        if (config.toolOverrides?.length) {
+            await registry.loadProjects(config.toolOverrides);
         }
 
         // Load MCP tools if provided
@@ -881,12 +893,37 @@ export class Toolpack extends EventEmitter {
      * Validates dependencies and registers all tools.
      */
     async loadToolProject(project: ToolProject): Promise<void> {
+        return this.loadToolProjects([project]);
+    }
+
+    /**
+     * Load multiple tool projects at runtime, rebuilding the BM25 index once after all are registered.
+     */
+    async loadToolProjects(projects: ToolProject[]): Promise<void> {
         const registry = this.client.getToolRegistry();
-        if (registry) {
-            await registry.loadProject(project);
-        } else {
+        if (!registry) {
             throw new Error('No tool registry configured. Initialize Toolpack with tools enabled.');
         }
+        for (const project of projects) {
+            await registry.loadProject(project);
+        }
+        this.client.reindexTools();
+    }
+
+    /**
+     * Search registered tools using BM25. Returns parsed search results ranked by relevance.
+     * Useful for inspecting what tools are available and verifiable in tests.
+     */
+    searchTools(query: string, category?: string): { found: number; tools: { name: string; description: string; category: string }[] } {
+        const raw = this.client.executeToolSearch({ query, ...(category ? { category } : {}) });
+        return JSON.parse(raw) as { found: number; tools: { name: string; description: string; category: string }[] };
+    }
+
+    /**
+     * Get all registered tool names. Useful for verifying tool registration in tests.
+     */
+    getRegisteredToolNames(): string[] {
+        return this.client.getToolRegistry()?.getNames() ?? [];
     }
 
     /**

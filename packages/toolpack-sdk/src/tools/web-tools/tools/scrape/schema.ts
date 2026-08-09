@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'web.scrape';
 export const displayName = 'Scrape';
 export const description = 'Extract clean text content from a webpage. RECOMMENDED WORKFLOW: Use web.map first to see page structure, then use section parameter to extract specific sections. Strips scripts, styles, navigation, and other junk. By default, auto-detects and extracts the main article/content area.';
-export const category = 'network';
+export const category = 'web';
 
 export const parameters: ToolParameters = {
     type: 'object',

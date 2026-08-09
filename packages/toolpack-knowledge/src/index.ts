@@ -11,6 +11,9 @@ export type { PersistentKnowledgeProviderOptions } from './providers/persistent.
 export { MarkdownSource } from './sources/markdown.js';
 export type { MarkdownSourceOptions } from './sources/markdown.js';
 
+export { TextSource } from './sources/text.js';
+export type { TextSourceOptions } from './sources/text.js';
+
 export { WebUrlSource } from './sources/web-url.js';
 export type { WebUrlSourceOptions } from './sources/web-url.js';
 
@@ -40,3 +43,4 @@ export type { VertexAIEmbedderOptions } from './embedders/vertexai.js';
 
 // Utility functions
 export { keywordSearch, combineScores } from './utils/keyword.js';
+export { matchesFilter } from './utils/cosine.js';

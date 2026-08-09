@@ -10,7 +10,7 @@ describe('http.post tool', () => {
 
     it('should have correct metadata', () => {
         expect(httpPostTool.name).toBe('http.post');
-        expect(httpPostTool.category).toBe('network');
+        expect(httpPostTool.category).toBe('http');
     });
 
     it('should throw if url is missing', async () => {

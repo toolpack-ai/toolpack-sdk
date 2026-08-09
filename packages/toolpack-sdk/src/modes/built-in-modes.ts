@@ -63,7 +63,7 @@ export const CHAT_MODE: ModeConfig = {
         'If the user asks for local file operations or code changes,',
         'explain that you are in Chat mode and suggest they switch to Agent mode.',
     ].join(' '),
-    allowedToolCategories: ['network'],
+    allowedToolCategories: ['http', 'web'],
     blockedToolCategories: ['filesystem', 'execution', 'system', 'coding', 'git', 'database'],
     allowedTools: [],
     blockedTools: [],

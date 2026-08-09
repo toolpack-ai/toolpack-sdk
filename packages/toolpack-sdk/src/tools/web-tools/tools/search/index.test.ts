@@ -10,7 +10,7 @@ describe('web.search tool', () => {
 
     it('should have correct metadata', () => {
         expect(webSearchTool.name).toBe('web.search');
-        expect(webSearchTool.category).toBe('network');
+        expect(webSearchTool.category).toBe('web');
     });
 
     it('should throw if query is missing', async () => {

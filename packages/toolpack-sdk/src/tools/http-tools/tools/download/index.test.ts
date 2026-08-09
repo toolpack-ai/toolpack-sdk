@@ -19,7 +19,7 @@ describe('http.download tool', () => {
 
     it('should have correct metadata', () => {
         expect(httpDownloadTool.name).toBe('http.download');
-        expect(httpDownloadTool.category).toBe('network');
+        expect(httpDownloadTool.category).toBe('http');
     });
 
     it('should throw if url is missing', async () => {

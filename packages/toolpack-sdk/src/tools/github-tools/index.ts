@@ -37,7 +37,7 @@ export const githubToolsProject: ToolProject = {
       'github.pr.reviews.submit',
       'github.issues.comments.create',
     ],
-    category: 'network',
+    category: 'github',
   },
   tools: [
     githubGraphqlExecuteTool,

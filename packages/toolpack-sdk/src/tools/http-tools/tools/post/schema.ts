@@ -3,7 +3,7 @@ import { ToolParameters } from '../../../types.js';
 export const name = 'http.post';
 export const displayName = 'POST';
 export const description = 'Make an HTTP POST request to a URL with an optional body and return the response.';
-export const category = 'network';
+export const category = 'http';
 
 export const parameters: ToolParameters = {
     type: 'object',

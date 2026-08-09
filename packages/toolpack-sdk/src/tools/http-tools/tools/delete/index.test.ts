@@ -10,7 +10,7 @@ describe('http.delete tool', () => {
 
     it('should have correct metadata', () => {
         expect(httpDeleteTool.name).toBe('http.delete');
-        expect(httpDeleteTool.category).toBe('network');
+        expect(httpDeleteTool.category).toBe('http');
     });
 
     it('should throw if url is missing', async () => {

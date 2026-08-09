@@ -31,7 +31,7 @@ export const webToolsProject: ToolProject = {
             'web.fetch', 'web.search', 'web.scrape', 'web.extract_links', 'web.map',
             'web.metadata', 'web.sitemap', 'web.feed', 'web.screenshot'
         ],
-        category: 'network',
+        category: 'web',
     },
     tools: [
         webFetchTool, webSearchTool, webScrapeTool, webExtractLinksTool, webMapTool,

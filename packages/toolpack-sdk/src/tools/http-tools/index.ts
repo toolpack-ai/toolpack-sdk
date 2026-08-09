@@ -20,7 +20,7 @@ export const httpToolsProject: ToolProject = {
         description: 'HTTP tools for making GET, POST, PUT, DELETE requests and downloading files.',
         author: 'Sajeer',
         tools: ['http.get', 'http.post', 'http.put', 'http.delete', 'http.download'],
-        category: 'network',
+        category: 'http',
     },
     tools: [httpGetTool, httpPostTool, httpPutTool, httpDeleteTool, httpDownloadTool],
     dependencies: {},
