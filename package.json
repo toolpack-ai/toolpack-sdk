@@ -2,10 +2,11 @@
   "name": "toolpack-monorepo",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "enterprise/packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w packages/toolpack-knowledge && npm run build -w packages/toolpack-sdk && npm run build -w packages/toolpack-agents",
+    "build": "npm run build -w packages/toolpack-knowledge && npm run build -w packages/toolpack-sdk && npm run build -w packages/toolpack-agents && npm run build -w enterprise/packages/tools",
     "test": "npm run test -w packages/toolpack-knowledge && npm run test -w packages/toolpack-sdk && npm run test -w packages/toolpack-agents",
     "lint": "eslint packages/*/src/**"
   },
