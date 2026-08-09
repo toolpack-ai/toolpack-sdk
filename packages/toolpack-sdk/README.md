@@ -19,7 +19,7 @@ The TypeScript SDK for building production AI agents — 100+ built-in tools, 8 
 - **Rules** — Always-on behavioral constraints loaded from Markdown files, auto-discovered per mode and globally via `rulesDir`
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Extensible at Every Layer** — Every built-in component is a plug-in point: custom tools (`ToolDefinition`), custom channels (`BaseChannel`), custom provider adapters (`ProviderAdapter`), custom agents (`BaseAgent`), custom modes (`createMode()`), and custom interceptors — all using the same interfaces as the built-ins
-- **100+ Built-in Tools** across 12 categories:
+- **100+ Built-in Tools** across 15 categories:
 - **MCP Client & Server** — consume external MCP servers via `createMcpToolProject()`, or expose Toolpack as an MCP server via `sdk.startMcpServer()` with static/JWT/custom auth, search mode, and agent exposure.
 
 | Category | Tools | Description |
@@ -505,7 +505,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 100+ built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 100+ built-in tools, you can create and register your own custom tool projects using `createToolProject()`. Built-in tool categories used for mode filtering include `filesystem`, `coding`, `version-control`, `http`, `web`, `github`, `slack`, `execution`, `system`, and others — there is no combined `network` category.
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -540,6 +540,7 @@ const myToolProject = createToolProject({
 });
 
 // Attach custom tools to a mode — scoped to that agent, not global.
+// To replace built-ins by name at init time, pass toolOverrides: [myToolProject].
 const sdk = await Toolpack.init({
   provider: 'openai',
   tools: true,
@@ -554,6 +555,9 @@ const result = await sdk.generate({
   model: 'gpt-4.1',
   mode: { ...sdk.getMode()!, customTools: [...myToolProject.tools] },
 });
+
+// Option C: load projects at runtime (rebuilds the tool search index once)
+await sdk.loadToolProjects([myToolProject]);
 ```
 
 ### Tool Project Structure
@@ -606,11 +610,12 @@ const response = await toolpack.chat('How do I configure authentication?');
 
 - **Multiple Providers**: In-memory (`MemoryProvider`) or persistent SQLite (`PersistentKnowledgeProvider`)
 - **Multiple Embedders**: OpenAI, Ollama (local), or custom embedders
-- **Multiple Sources**: Markdown, JSON, SQLite ingestion
+- **Multiple Sources**: Markdown, text, web, API, JSON, SQLite, and more
 - **Progress Events**: Track embedding progress with `onEmbeddingProgress`
 - **Metadata Filtering**: Query with filters like `{ hasCode: true, category: 'api' }`
+- **Incremental updates**: `ingest()`, `delete()`, and `deleteWhere()` for per-item lifecycle
 
-See the [Knowledge package README](./packages/toolpack-knowledge/README.md) for full documentation.
+See the [Knowledge package README](../toolpack-knowledge/README.md) for full documentation.
 
 ## Skills
 
@@ -1225,12 +1230,12 @@ const sdk = await Toolpack.init({
 ```typescript
 import { Toolpack } from 'toolpack-sdk';
 
-// ToolpackInitConfig — fields removed in v2.8:
+// ToolpackInitConfig — fields removed in v3.0.0:
 //   customTools   → use ModeConfig.customTools per agent instead
 //   modeOverrides → configure modes directly via registerMode()
 //   configPath    → configuration is now passed inline to Toolpack.init()
 //
-// Fields added in v2.8: logging, hitl, toolsConfig
+// Fields: logging, hitl, toolsConfig, toolOverrides (v3.1.0)
 const sdk = await Toolpack.init(config: ToolpackInitConfig): Promise<Toolpack>
 
 // Completions (routes through workflow engine if mode has workflow enabled)
@@ -1249,6 +1254,12 @@ sdk.getMode(): ModeConfig | null
 sdk.getModes(): ModeConfig[]
 sdk.cycleMode(): ModeConfig
 sdk.registerMode(mode: ModeConfig): void
+
+// Tool projects
+await sdk.loadToolProject(project: ToolProject): Promise<void>
+await sdk.loadToolProjects(projects: ToolProject[]): Promise<void>
+sdk.searchTools(query: string, category?: string)
+sdk.getRegisteredToolNames(): string[]
 
 // Internal access
 sdk.getClient(): AIClient

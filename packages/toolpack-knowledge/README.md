@@ -275,6 +275,21 @@ new MarkdownSource('./docs/**/*.md', {
 - Code block detection (`hasCode` metadata)
 - Deterministic chunk IDs
 
+### TextSource
+
+Chunk plain text (for example platform / tenant knowledge items) with optional metadata.
+
+```typescript
+import { TextSource } from '@toolpack-sdk/knowledge';
+
+new TextSource('item-abc', documentBody, {
+  maxChunkSize: 2000,
+  chunkOverlap: 200,
+  namespace: 'tenant-knowledge',
+  metadata: { knowledge_item_id: 'abc', tenant_id: 't1' },
+})
+```
+
 ### WebUrlSource
 
 Crawl and index web pages with HTML parsing.
@@ -488,6 +503,8 @@ interface KnowledgeOptions {
   onError?: (error, context) => 'skip' | 'abort';
   onSync?: (event: SyncEvent) => void;
   onEmbeddingProgress?: (event: EmbeddingProgressEvent) => void;
+  onAdd?: (event: KnowledgeAddEvent) => void;       // After add()
+  onDelete?: (event: KnowledgeDeleteEvent) => void; // After delete() / deleteWhere()
 }
 ```
 
@@ -508,10 +525,19 @@ await kb.query('search query', {
 });
 ```
 
+### Incremental updates
+
+```typescript
+await kb.add(content, metadata);                 // Embed + store one chunk
+await kb.ingest(source);                         // Add source chunks without clearing
+await kb.delete([id]);                           // Delete by IDs
+await kb.deleteWhere({ knowledge_item_id: 'abc' }); // Delete by metadata match
+```
+
 ### Utility Functions
 
 ```typescript
-import { keywordSearch, combineScores } from '@toolpack-sdk/knowledge';
+import { keywordSearch, combineScores, matchesFilter } from '@toolpack-sdk/knowledge';
 
 // Manual keyword search
 const score = keywordSearch('document content', 'search query');

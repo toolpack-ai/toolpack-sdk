@@ -22,7 +22,7 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 ## Installation
 
 ```bash
-npm install @toolpack-sdk/agents
+npm install toolpack-sdk @toolpack-sdk/agents
 ```
 
 ## Stable API (Phase 4)
@@ -561,9 +561,12 @@ const toolpack = await Toolpack.init({
 
 ## Peer Dependencies
 
-The following are optional peer dependencies. Install only what you need:
+Requires `toolpack-sdk` (`^3.1.0`). Optional peers — install only what you need:
 
 ```bash
+# Knowledge / RAG (optional)
+npm install @toolpack-sdk/knowledge
+
 # For DiscordChannel
 npm install discord.js
 
