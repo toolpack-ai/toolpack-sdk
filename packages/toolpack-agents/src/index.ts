@@ -43,6 +43,8 @@ export { EmailChannel, EmailChannelConfig } from './channels/email-channel.js';
 export { SMSChannel, SMSChannelConfig } from './channels/sms-channel.js';
 export { McpChannel } from './channels/mcp-channel.js';
 export type { McpChannelConfig } from './channels/mcp-channel.js';
+export { ChatChannel } from './channels/chat-channel.js';
+export type { ChatChannelConfig } from './channels/chat-channel.js';
 
 // Transport layer for agent-to-agent communication
 export {
