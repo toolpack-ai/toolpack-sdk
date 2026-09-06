@@ -323,12 +323,19 @@ export class AnthropicAdapter extends ProviderAdapter {
                 }
             } else if (msg.role === 'tool' && msg.tool_call_id) {
                 // Tool result — Anthropic expects this as a user message with tool_result content
+                const rawContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const toolResultContent: any = dataMatch
+                    ? dataMatch[1].startsWith('image/')
+                        ? [{ type: 'image', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
+                        : [{ type: 'document', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
+                    : rawContent;
                 userMessages.push({
                     role: 'user',
                     content: [{
                         type: 'tool_result',
                         tool_use_id: msg.tool_call_id,
-                        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                        content: toolResultContent,
                     }],
                 });
             } else if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
@@ -381,7 +388,23 @@ export class AnthropicAdapter extends ProviderAdapter {
                                 source: { type: 'base64', media_type: mimeType, data: data }
                             };
                         }
-                        
+
+                        if (part.type === 'file') {
+                            const { url, mimeType } = part.file;
+                            const dataMatch = url.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                            if (dataMatch) {
+                                const [, media_type, data] = dataMatch;
+                                if (media_type.startsWith('image/')) {
+                                    return { type: 'image', source: { type: 'base64', media_type, data } };
+                                }
+                                return { type: 'document', source: { type: 'base64', media_type, data } };
+                            }
+                            if (mimeType.startsWith('image/')) {
+                                return { type: 'image', source: { type: 'url', url } };
+                            }
+                            return { type: 'document', source: { type: 'url', url } };
+                        }
+
                         return null;
                     }))).filter(Boolean) as any;
                 }

@@ -37,7 +37,7 @@ export class ResearchAgent extends BaseAgent {
   }
 
   async invokeAgent(input: AgentInput): Promise<AgentResult> {
-    const result = await this.run(input.message || '', undefined, { conversationId: input.conversationId });
+    const result = await this.run(input.message || '', undefined, { conversationId: input.conversationId }, input.attachments);
     await this.onComplete(result);
     return result;
   }

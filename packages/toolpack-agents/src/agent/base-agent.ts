@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { AsyncLocalStorage } from 'async_hooks';
-import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
+import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig, ToolpackInitConfig, MessageContent, ImagePart, FilePart } from 'toolpack-sdk';
 import { Toolpack, InMemoryConversationStore, AGENT_MODE } from 'toolpack-sdk';
 import type { Interceptor } from '../interceptors/types.js';
 import { composeChain, executeChain } from '../interceptors/chain.js';
@@ -236,6 +236,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     message: string,
     _options?: AgentRunOptions,
     context?: { conversationId?: string; spawnDepth?: number },
+    attachments?: Array<ImagePart | FilePart>,
   ): Promise<AgentResult> {
     // Prefer the explicitly supplied conversationId, then the async-local context
     // set by _bindChannel, then the legacy instance field as a last resort.
@@ -249,13 +250,12 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     await this._ensureMind();
     let mindFlush: ((isError: boolean) => Promise<void>) | undefined;
     let mindHeader = '';
-    let mindTools: RequestToolDefinition[] = [];
 
     if (this._mind) {
       const runCtx = await this._mind.createRunContext();
       mindHeader = runCtx.mindHeader;
-      mindTools = runCtx.tools;
       mindFlush = runCtx.flush;
+      this.toolpack.loadRequestToolProject(runCtx.toolProject);
     }
 
     try {
@@ -273,7 +273,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // System prompt is now owned by the mode and injected by the Toolpack
       // client (see injectModeSystemPrompt). BaseAgent no longer pushes its
       // own system message.
-      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: MessageContent }> = [];
 
       // If the mind produced a header, prepend it as a system message.
       // injectModeSystemPrompt() will prepend the mode system prompt to the
@@ -319,13 +319,22 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       }
 
       // Guard against empty content — Anthropic rejects user messages with empty content.
-      if (message.trim()) {
-        messages.push({ role: 'user', content: message });
+      const hasAttachments = attachments && attachments.length > 0;
+      if (message.trim() || hasAttachments) {
+        if (hasAttachments) {
+          const contentBlocks: MessageContent = [
+            ...(message.trim() ? [{ type: 'text' as const, text: message }] : []),
+            ...attachments!,
+          ];
+          messages.push({ role: 'user', content: contentBlocks });
+        } else {
+          messages.push({ role: 'user', content: message });
+        }
       }
 
       // Expose a search tool when a conversation is active so the LLM can
       // retrieve specific past turns beyond the assembled context window.
-      const requestTools: RequestToolDefinition[] = [...mindTools];
+      const requestTools: RequestToolDefinition[] = [];
       if (convId) {
         const store = this.conversationHistory;
         requestTools.push({

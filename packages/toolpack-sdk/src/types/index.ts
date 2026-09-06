@@ -36,7 +36,26 @@ export interface ImageUrlPart {
 
 export type ImagePart = ImageDataPart | ImageFilePart | ImageUrlPart;
 
-export type MessageContent = string | (TextPart | ImagePart)[] | null;
+export interface FilePart {
+    type: 'file';
+    file: {
+        /** Public or pre-signed bucket URL */
+        url: string;
+        /** MIME type, e.g. 'image/jpeg', 'application/pdf' */
+        mimeType: string;
+        /** Original filename, for display only */
+        name?: string;
+        /** File size in bytes — used for client-side validation */
+        size?: number;
+    };
+}
+
+export const FILE_LIMITS = {
+    image:    { maxBytes: 10 * 1024 * 1024 },                       // 10 MB
+    document: { maxBytes: 10 * 1024 * 1024, maxPages: 20 },         // 10 MB / 20 pages
+} as const;
+
+export type MessageContent = string | (TextPart | ImagePart | FilePart)[] | null;
 
 export type MediaUploadStrategy = 'inline' | 'upload' | 'auto';
 

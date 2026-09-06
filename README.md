@@ -972,7 +972,7 @@ class FintechResearchAgent extends ResearchAgent {
 
 ### Features
 
-- ✅ **7 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled
+- ✅ **8 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled, Chat
 - ✅ **4 Built-in Agents** — Research, Coding, Data, Browser
 - ✅ **Event-Driven** — Full lifecycle events for monitoring
 - ✅ **Knowledge Integration** — Conversation memory and RAG
@@ -985,10 +985,10 @@ See the [Agents package README](./packages/toolpack-agents/README.md) for full d
 
 ## Multimodal Support
 
-The SDK supports multimodal inputs (text + images) across all vision-capable providers. Images can be provided in three formats:
+The SDK supports multimodal inputs (text + images + files) across all vision-capable providers. Images can be provided in three formats:
 
 ```typescript
-import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart } from 'toolpack-sdk';
+import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart, FilePart } from 'toolpack-sdk';
 
 const sdk = await Toolpack.init({ provider: 'openai' });
 
@@ -1023,6 +1023,30 @@ const response = await sdk.generate({
 });
 ```
 
+### File Attachments (Documents)
+
+Use `FilePart` to attach non-image files such as PDFs. Pass a public or pre-signed URL and the MIME type:
+
+```typescript
+import { FilePart, FILE_LIMITS } from 'toolpack-sdk';
+
+const doc: FilePart = {
+  type: 'file',
+  file: {
+    url: 'https://example.com/report.pdf',
+    mimeType: 'application/pdf',
+    name: 'report.pdf',  // optional
+    size: 204800,        // optional bytes, used for client-side limit checks
+  },
+};
+
+// FILE_LIMITS.image.maxBytes    → 10 MB
+// FILE_LIMITS.document.maxBytes → 10 MB
+// FILE_LIMITS.document.maxPages → 20 pages
+```
+
+A data URI (`data:<mime>;base64,<data>`) is also accepted in `file.url` for inline embedding.
+
 ### Provider Behavior
 
 | Provider | File Path | Base64 | URL |
@@ -1031,6 +1055,16 @@ const response = await sdk.generate({
 | Anthropic | Converted to base64 | ✓ Native | Downloaded → base64 |
 | Gemini | Converted to base64 | ✓ Native | Downloaded → base64 |
 | Ollama | Converted to base64 | ✓ Native | Downloaded → base64 |
+
+### Provider Support for File Attachments (FilePart)
+
+| Provider | URL | Inline base64 (`data:` URI) |
+|----------|-----|-----------------------------|
+| **Anthropic** | ✓ images and documents | ✓ auto-routed to `image` or `document` block |
+| **Anthropic Vertex** | ✓ | ✓ |
+| **Gemini** | ✓ (`fileData`) | ✓ (`inlineData`) |
+| **VertexAI** | ✓ (`fileData`) | ✓ (`inlineData`) |
+| **OpenAI** | ✓ images and documents | Images only (non-image base64 is dropped) |
 
 ## Configuration
 

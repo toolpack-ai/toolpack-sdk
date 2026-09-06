@@ -227,6 +227,7 @@ export class Toolpack extends EventEmitter {
     public customProviderNames: Set<string> = new Set();
     private mcpToolProject: ToolProject | null = null;
     private _interceptors: ToolpackInterceptor[] = [];
+    private _instanceRequestTools: RequestToolDefinition[] = [];
 
     private constructor(client: AIClient, defaultProvider: string, modeRegistry: ModeRegistry) {
         super();
@@ -245,7 +246,7 @@ export class Toolpack extends EventEmitter {
         this.forwardWorkflowEvents();
     }
 
-    private buildKnowledgeRequestTools(): RequestToolDefinition[] {
+    private _buildKnowledgeRequestTools(): RequestToolDefinition[] {
         if (this.knowledgeLayers.length === 0) {
             return [];
         }
@@ -373,8 +374,27 @@ export class Toolpack extends EventEmitter {
         return [knowledgeSearchTool, knowledgeAddTool];
     }
 
+    /**
+     * Register tools that bypass mode filtering and are always available to the model.
+     * Use this for tools that must be accessible regardless of allowedToolCategories —
+     * the same mechanism used by knowledge, skill, and scheduler tools internally.
+     *
+     * Prefer `loadRequestToolProject` when you have a ToolProject; call this directly
+     * when you have a plain RequestToolDefinition array.
+     */
+    registerRequestTools(tools: RequestToolDefinition[]): void {
+        for (const tool of tools) {
+            const idx = this._instanceRequestTools.findIndex(t => t.name === tool.name);
+            if (idx >= 0) {
+                this._instanceRequestTools[idx] = tool;
+            } else {
+                this._instanceRequestTools.push(tool);
+            }
+        }
+    }
+
     private prepareRequest(request: CompletionRequest): CompletionRequest {
-        const requestTools = [...this.buildKnowledgeRequestTools(), ...(request.requestTools || [])];
+        const requestTools = [...this._instanceRequestTools, ...(request.requestTools || [])];
         if (requestTools.length === 0) {
             return request;
         }
@@ -562,6 +582,7 @@ export class Toolpack extends EventEmitter {
             (x): x is KnowledgeInstance =>
                 !!x && typeof (x as KnowledgeInstance).toTool === 'function'
         );
+        instance.registerRequestTools(instance._buildKnowledgeRequestTools());
         instance.customProviderNames = customProviderNames;
         instance.mcpToolProject = mcpToolProject;
         instance._interceptors = config.interceptors ?? [];
@@ -908,6 +929,15 @@ export class Toolpack extends EventEmitter {
             await registry.loadProject(project);
         }
         this.client.reindexTools();
+    }
+
+    /**
+     * Register a tool project's tools as request tools, bypassing mode filtering entirely.
+     * Use this instead of loadToolProject when the tools must always be available regardless
+     * of allowedToolCategories (analogous to how knowledge and mind tools bypass filtering).
+     */
+    loadRequestToolProject(project: ToolProject): void {
+        this.registerRequestTools(project.tools as unknown as RequestToolDefinition[]);
     }
 
     /**

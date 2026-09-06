@@ -292,18 +292,17 @@ export class VertexAIAdapter extends ProviderAdapter {
 
         const rawHistory: Content[] = historyMsgs.map(m => {
             if (m.role === 'tool' && m.tool_call_id) {
-                return {
-                    role: 'function',
-                    parts: [{
-                        functionResponse: {
-                            name: this.sanitizeToolName(m.name ?? m.tool_call_id),
-                            response: {
-                                name: this.sanitizeToolName(m.name ?? m.tool_call_id),
-                                content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-                            },
-                        },
-                    }],
-                } as unknown as Content;
+                const toolName = this.sanitizeToolName(m.name ?? m.tool_call_id);
+                const rawContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const parts: Part[] = [{
+                    functionResponse: {
+                        name: toolName,
+                        response: { name: toolName, content: dataMatch ? 'File data attached as sibling part.' : rawContent },
+                    },
+                } as unknown as Part];
+                if (dataMatch) parts.push({ inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } } as unknown as Part);
+                return { role: 'function', parts } as unknown as Content;
             }
 
             if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
@@ -363,7 +362,16 @@ export class VertexAIAdapter extends ProviderAdapter {
             .map((p: any) => {
                 if (p.type === 'text') return { text: p.text } as Part;
                 if (p.type === 'image_data') {
-                    return { inlineData: { mimeType: p.mimeType ?? 'image/jpeg', data: p.data } } as unknown as Part;
+                    const { data, mimeType } = p.image_data ?? {};
+                    return { inlineData: { mimeType: mimeType ?? 'image/jpeg', data: data ?? '' } } as unknown as Part;
+                }
+                if (p.type === 'image_url') {
+                    return { fileData: { mimeType: 'image/jpeg', fileUri: p.image_url?.url ?? '' } } as unknown as Part;
+                }
+                if (p.type === 'file') {
+                    const dataMatch = p.file.url.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                    if (dataMatch) return { inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } } as unknown as Part;
+                    return { fileData: { mimeType: p.file.mimeType, fileUri: p.file.url } } as unknown as Part;
                 }
                 return null;
             })

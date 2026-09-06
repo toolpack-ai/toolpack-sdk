@@ -1,4 +1,6 @@
 import { AgentInput, AgentOutput } from '../agent/types.js';
+import type { ImagePart, FilePart } from 'toolpack-sdk';
+import { FILE_LIMITS } from 'toolpack-sdk';
 
 /**
  * Abstract base class for all agent channels.
@@ -53,6 +55,38 @@ export abstract class BaseChannel {
   protected async handleMessage(input: AgentInput): Promise<void> {
     if (this._handler) {
       await this._handler(input);
+    }
+  }
+
+  /**
+   * Validate attachment sizes against FILE_LIMITS.
+   * Call this inside normalize() for any channel that accepts attachments.
+   * Throws with a descriptive message if a limit is exceeded.
+   */
+  protected validateAttachments(attachments: Array<ImagePart | FilePart> | undefined): void {
+    if (!attachments || attachments.length === 0) return;
+
+    for (const att of attachments) {
+      if (att.type === 'file') {
+        const { url, mimeType, size, name } = att.file;
+        const label = name ?? url;
+        const isImage = mimeType.startsWith('image/');
+        const limitBytes = isImage ? FILE_LIMITS.image.maxBytes : FILE_LIMITS.document.maxBytes;
+        const limitMB = limitBytes / (1024 * 1024);
+        if (size !== undefined && size > limitBytes) {
+          throw new Error(
+            `Attachment "${label}" exceeds the ${isImage ? 'image' : 'document'} size limit of ${limitMB} MB`,
+          );
+        }
+      } else if (att.type === 'image_data') {
+        // Estimate decoded size from base64 length (base64 inflates by ~4/3)
+        const approxBytes = Math.ceil(att.image_data.data.length * 0.75);
+        if (approxBytes > FILE_LIMITS.image.maxBytes) {
+          const limitMB = FILE_LIMITS.image.maxBytes / (1024 * 1024);
+          throw new Error(`Inline image exceeds the size limit of ${limitMB} MB`);
+        }
+      }
+      // image_url and image_file: size is unknown server-side, skip
     }
   }
 }

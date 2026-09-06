@@ -52,11 +52,6 @@ export function createMode(config: {
         progress?: { enabled: boolean; };
     };
     /**
-     * Enable auto-injection of BM25-matched skill content into the system prompt.
-     * Default: false — opt-in only.
-     */
-    skillInterceptor?: boolean;
-    /**
      * Root directory for rule files for this mode.
      * Auto-discovers __global__/ and <mode-name>/ subfolders within it.
      * Defaults to '.toolpack/rules' if not set.
@@ -81,8 +76,7 @@ export function createMode(config: {
         response_format: config.response_format,
         baseContext: config.baseContext,
         workflow: config.workflow,
-        skillInterceptor: config.skillInterceptor ?? false,
-        rulesDir: config.rulesDir,
+rulesDir: config.rulesDir,
         streaming: config.streaming,
     };
 }

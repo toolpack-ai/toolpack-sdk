@@ -8,7 +8,7 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 ## Features
 
 - **4 Built-in Agents** — Research, Coding, Data, Browser
-- **8 Channel Types** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled, MCP
+- **9 Channel Types** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled, MCP, Chat
 - **Event-Driven** — Full lifecycle hooks and events
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
@@ -265,6 +265,41 @@ await sdk.startMcpServer({
 ```
 
 `ch.asAgentDefinition(agent)` produces the entry that `startMcpServer` registers in `tools/list`. Each MCP `tools/call` for `agent.<name>` is routed through the channel to `agent.invokeAgent()` and the output is returned as the tool result.
+
+### ChatChannel (Externally-driven)
+
+`ChatChannel` is a non-trigger channel intended for use cases where your own HTTP server or framework receives requests and drives the agent directly. `listen()` and `send()` are no-ops — the caller invokes `agent.invokeAgent()` manually.
+
+```typescript
+import { BaseAgent, ChatChannel } from '@toolpack-sdk/agents';
+
+const chat = new ChatChannel({ name: 'chat' });
+
+class MyAgent extends BaseAgent {
+  name = 'my-agent';
+  channels = [chat];
+
+  async invokeAgent(input) {
+    const result = await this.run(input.message, undefined, {
+      conversationId: input.conversationId,
+    }, input.attachments);
+    return result;
+  }
+}
+
+const agent = new MyAgent({ toolpack });
+await agent.start();
+
+// In your HTTP handler:
+const result = await agent.invokeAgent({
+  message: req.body.message,
+  attachments: req.body.attachments,  // optional FilePart / ImagePart array
+  conversationId: req.body.conversationId,
+  participant: { id: req.body.userId },
+});
+```
+
+`normalize()` parses the incoming body and populates `message`, `attachments`, `conversationId`, and `participant`. Attachment size limits are validated inside `normalize()` via `validateAttachments()` — `FilePart` size is only checked when the `size` field is supplied.
 
 ## Creating Custom Agents
 

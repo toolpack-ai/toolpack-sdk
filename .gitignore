@@ -55,3 +55,6 @@ samples/
 
 # Local toolpack config with user settings
 .toolpack/
+
+# Enterprise packages — private repo, gitignored from SDK
+enterprise/

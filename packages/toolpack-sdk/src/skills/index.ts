@@ -5,7 +5,6 @@ export {
   type Skill,
   type SkillValidationError,
   type SkillSearchResult,
-  type SkillInterceptorOptions,
   type SkillToolsOptions,
 } from './types.js';
 

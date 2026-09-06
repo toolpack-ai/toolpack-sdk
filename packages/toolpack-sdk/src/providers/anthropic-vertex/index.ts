@@ -233,12 +233,19 @@ export class AnthropicVertexAdapter extends ProviderAdapter {
             if (msg.role === 'system') {
                 system = typeof msg.content === 'string' ? msg.content : '';
             } else if (msg.role === 'tool' && msg.tool_call_id) {
+                const rawContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const toolResultContent: any = dataMatch
+                    ? dataMatch[1].startsWith('image/')
+                        ? [{ type: 'image', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
+                        : [{ type: 'document', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
+                    : rawContent;
                 userMessages.push({
                     role: 'user',
                     content: [{
                         type: 'tool_result',
                         tool_use_id: msg.tool_call_id,
-                        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                        content: toolResultContent,
                     }],
                 });
             } else if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
@@ -254,10 +261,40 @@ export class AnthropicVertexAdapter extends ProviderAdapter {
                 }
                 userMessages.push({ role: 'assistant', content });
             } else {
-                userMessages.push({
-                    role: msg.role === 'user' ? 'user' : 'assistant',
-                    content: typeof msg.content === 'string' ? msg.content : '',
-                });
+                let content: any;
+                if (typeof msg.content === 'string' || msg.content === null) {
+                    content = msg.content ?? '';
+                } else {
+                    content = (await Promise.all(msg.content.map(async (part: any) => {
+                        if (part.type === 'text') return { type: 'text', text: part.text };
+                        if (part.type === 'image_url') {
+                            const url: string = part.image_url.url;
+                            if (url.startsWith('data:')) {
+                                const match = url.match(/^data:(image\/\w+);base64,(.+)$/);
+                                if (match) return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+                            }
+                            return { type: 'image', source: { type: 'url', url } };
+                        }
+                        if (part.type === 'image_data' || part.type === 'image_file') {
+                            const { normalizeImagePart } = await import('../media-utils.js');
+                            const { data, mimeType } = await normalizeImagePart(part);
+                            return { type: 'image', source: { type: 'base64', media_type: mimeType, data } };
+                        }
+                        if (part.type === 'file') {
+                            const { url, mimeType } = part.file;
+                            const dataMatch = url.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                            if (dataMatch) {
+                                const [, media_type, data] = dataMatch;
+                                if (media_type.startsWith('image/')) return { type: 'image', source: { type: 'base64', media_type, data } };
+                                return { type: 'document', source: { type: 'base64', media_type, data } };
+                            }
+                            if (mimeType.startsWith('image/')) return { type: 'image', source: { type: 'url', url } };
+                            return { type: 'document', source: { type: 'url', url } };
+                        }
+                        return null;
+                    }))).filter(Boolean);
+                }
+                userMessages.push({ role: msg.role === 'user' ? 'user' : 'assistant', content });
             }
         }
 

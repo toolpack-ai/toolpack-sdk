@@ -32,6 +32,6 @@ export class EphemeralAgent extends BaseAgent {
     return this.run(input.message ?? '', undefined, {
       conversationId: input.conversationId,
       spawnDepth: (input.context?.spawnDepth as number | undefined) ?? 0,
-    });
+    }, input.attachments);
   }
 }

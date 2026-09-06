@@ -1,4 +1,4 @@
-import type { Toolpack, Participant, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
+import type { Toolpack, Participant, ModeConfig, ToolpackInitConfig, ImagePart, FilePart } from 'toolpack-sdk';
 import type { EventEmitter } from 'events';
 import type { Interceptor } from '../interceptors/types.js';
 
@@ -108,6 +108,9 @@ export interface AgentInput<TIntent extends string = string> {
 
   /** Natural language message from the user */
   message?: string;
+
+  /** Image or file attachments accompanying the message */
+  attachments?: Array<ImagePart | FilePart>;
 
   /** Structured payload from the channel */
   data?: unknown;

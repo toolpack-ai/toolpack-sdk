@@ -1,5 +1,5 @@
 import type { KnowledgeProvider } from '@toolpack-sdk/knowledge';
-import type { RequestToolDefinition } from 'toolpack-sdk';
+import type { ToolProject } from 'toolpack-sdk';
 import { MindStore } from './store.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { buildMindTools } from './tools.js';
@@ -19,8 +19,8 @@ const MAX_PINNED_CEILING = 10;
 export interface RunContext {
   /** The assembled header string to prepend to the system prompt (empty string if no content). */
   mindHeader: string;
-  /** The 7 mind tool definitions to add to requestTools. */
-  tools: RequestToolDefinition[];
+  /** Mind tools packaged as a ToolProject — pass to toolpack.loadRequestToolProject(). */
+  toolProject: ToolProject;
   /** Call this at run completion. Pass isError=true on crash. */
   flush: (isError: boolean) => Promise<void>;
 }
@@ -94,6 +94,19 @@ export class AgentMind {
 
     const tools = buildMindTools(this.store, draftBuffer, this.config);
 
+    const toolProject: ToolProject = {
+      manifest: {
+        key: 'mind',
+        name: 'mind',
+        displayName: 'Agent Mind',
+        version: '1.0.0',
+        description: 'Agent cognitive tools for beliefs, goals, and reflections.',
+        category: 'mind',
+        tools: tools.map(t => t.name),
+      },
+      tools: tools as unknown as ToolProject['tools'],
+    };
+
     const flush = async (isError: boolean): Promise<void> => {
       if (isError) {
         await draftBuffer.flushOnError();
@@ -102,7 +115,7 @@ export class AgentMind {
       }
     };
 
-    return { mindHeader, tools, flush };
+    return { mindHeader, toolProject, flush };
   }
 
   async close(): Promise<void> {

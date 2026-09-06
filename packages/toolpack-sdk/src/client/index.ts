@@ -1311,13 +1311,32 @@ export class AIClient extends EventEmitter {
         
         const sections: string[] = [];
 
+        const hasMindBelieve = toolNames.has('mind_believe');
+
         if (toolNames.has('knowledge_search') || toolNames.has('knowledge_add')) {
             const lines = ['Knowledge Base:'];
             if (toolNames.has('knowledge_search')) {
-                lines.push('- Use `knowledge_search` when you need factual or domain-specific information that may already be stored.');
+                lines.push('- Use `knowledge_search` proactively whenever the user asks about anything that could have been stored, including personal facts about the user, their preferences, names, past decisions, domain-specific information or anything that could have been stored in the memory. Search before concluding you do not know something.');
             }
             if (toolNames.has('knowledge_add')) {
-                lines.push('- Use `knowledge_add` when you encounter a durable fact, user preference, or decision that future conversations should know. Do not add confidential information, routine task outputs, or context that is specific to this conversation only.');
+                const knowledgeAddNote = hasMindBelieve
+                    ? '- Use `knowledge_add` for factual domain knowledge: documents, research, technical references, or organizational information shared across agents. Do NOT use it for personal user facts or preferences — use `mind_believe` for those.'
+                    : '- Use `knowledge_add` when you encounter a durable fact, user preference, or decision that future conversations should know. Do not add confidential information, routine task outputs, or context that is specific to this conversation only.';
+                lines.push(knowledgeAddNote);
+            }
+            sections.push(lines.join('\n'));
+        }
+
+        if (hasMindBelieve || toolNames.has('mind_reflect') || toolNames.has('mind_recall')) {
+            const lines = ['Agent Memory (Mind):'];
+            if (hasMindBelieve) {
+                lines.push('- Use `mind_believe` to record what you have personally learned about this user: their preferences, habits, stated personal facts (names, family, job, decisions), or anything you should remember about them across future conversations. Call it at the end of your response when you learn something personal. Always prefer `mind_believe` over `knowledge_add` for personal user facts.');
+            }
+            if (toolNames.has('mind_reflect')) {
+                lines.push('- Use `mind_reflect` to record a lesson learned, standing rule, or observation from this interaction that should influence future behaviour.');
+            }
+            if (toolNames.has('mind_recall')) {
+                lines.push('- Use `mind_recall` to search your personal memory before answering questions about the user or recalling past decisions.');
             }
             sections.push(lines.join('\n'));
         }

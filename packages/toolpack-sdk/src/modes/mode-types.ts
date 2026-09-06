@@ -86,13 +86,6 @@ export interface ModeConfig {
     blockAllTools: boolean;
 
     /**
-     * Whether to auto-inject relevant skill content into the system prompt
-     * via BM25 matching of the user's message (skill interceptor).
-     * Default: false — opt-in only. Set to true to enable auto-injection.
-     */
-    skillInterceptor?: boolean;
-
-    /**
      * Root directory for rule files.
      * Auto-discovers:
      *   <rulesDir>/__global__/   → injected for all modes sharing this dir

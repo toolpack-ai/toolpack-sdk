@@ -26,6 +26,12 @@ export interface VertexAIEmbedderOptions {
    * Example: 500 adds a 0.5s pause between batches (120 QPM effective rate).
    */
   rateLimitMs?: number;
+  /**
+   * Inline service account credentials object (parsed JSON key).
+   * When provided, used instead of Application Default Credentials.
+   * Mirrors the googleAuthOptions.credentials pattern in VertexAIAdapter.
+   */
+  credentials?: Record<string, unknown>;
 }
 
 const MODEL_DIMENSIONS: Record<string, number> = {
@@ -43,6 +49,7 @@ export class VertexAIEmbedder implements Embedder {
   private readonly retries: number;
   private readonly retryDelay: number;
   private readonly rateLimitMs: number;
+  private readonly credentials?: Record<string, unknown>;
   private lastEmbedAt = 0;
 
   constructor(options: VertexAIEmbedderOptions = {}) {
@@ -72,6 +79,7 @@ export class VertexAIEmbedder implements Embedder {
     this.retries = options.retries ?? 3;
     this.retryDelay = options.retryDelay ?? 1000;
     this.rateLimitMs = options.rateLimitMs ?? 0;
+    this.credentials = options.credentials;
   }
 
   async embed(text: string): Promise<number[]> {
@@ -141,7 +149,10 @@ export class VertexAIEmbedder implements Embedder {
 
   private async _getAccessToken(): Promise<string> {
     const { GoogleAuth } = await import('google-auth-library');
-    const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      ...(this.credentials ? { credentials: this.credentials as any } : {}),
+    });
     const client = await auth.getClient();
     const token = await client.getAccessToken();
     if (!token.token) throw new EmbeddingError('Failed to obtain Google access token via ADC.');

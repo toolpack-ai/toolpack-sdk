@@ -351,10 +351,17 @@ export class OpenAIAdapter extends ProviderAdapter {
     private async toOpenAIMessage(msg: Message, _options: import('../../types/index.js').MediaOptions = {}): Promise<any> {
         // Tool result messages
         if (msg.role === 'tool' && msg.tool_call_id) {
+            const rawContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
+            const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+            // OpenAI supports inline images but not inline PDFs — skip non-image data URLs.
             return {
                 role: 'tool',
                 tool_call_id: msg.tool_call_id,
-                content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? ''),
+                content: dataMatch
+                    ? dataMatch[1].startsWith('image/')
+                        ? [{ type: 'image_url', image_url: { url: rawContent } }]
+                        : '[File content not available inline for this provider]'
+                    : rawContent,
             };
         }
 
@@ -401,7 +408,20 @@ export class OpenAIAdapter extends ProviderAdapter {
                     image_url: { url: `data:${mimeType};base64,${data}` }
                 };
             }
-            
+
+            if (part.type === 'file') {
+                const { url, mimeType } = part.file;
+                if (url.startsWith('data:')) {
+                    // OpenAI chat completions does not support inline base64 documents; skip non-image data URLs.
+                    if (mimeType.startsWith('image/')) return { type: 'image_url', image_url: { url } };
+                    return null;
+                }
+                if (mimeType.startsWith('image/')) {
+                    return { type: 'image_url', image_url: { url } };
+                }
+                return { type: 'file', file: { url } };
+            }
+
             return null;
         }));
 

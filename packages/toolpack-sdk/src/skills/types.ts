@@ -36,13 +36,6 @@ export interface SkillSearchResult {
   score: number;
 }
 
-export interface SkillInterceptorOptions {
-  dir?: string;                        // default: '.toolpack/skills'
-  maxSkills?: number;                  // default: 3
-  minScore?: number;                   // default: 0.3
-  onValidationError?: SkillValidationMode; // default: 'fail'
-}
-
 export interface SkillToolsOptions {
   /** Skills directory. Default: '.toolpack/skills' */
   dir?: string;

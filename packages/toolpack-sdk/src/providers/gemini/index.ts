@@ -398,19 +398,23 @@ export class GeminiAdapter extends ProviderAdapter {
                 if (p.type === 'text') return { text: p.text };
                 
                 if (p.type === 'image_data' || p.type === 'image_file' || p.type === 'image_url') {
-                    // For Gemini, we convert everything to inlineData initially
-                    // The SDK currently accepts inlineData for base64 images
                     try {
                         const { data, mimeType } = await normalizeImagePart(p);
                         return { inlineData: { mimeType, data } };
                     } catch (err) {
                         if (p.type === 'image_url') {
-                            // Fallback for broken URLs 
                             return { text: `[Image: ${p.image_url.url}]` };
                         }
                         return { text: '[Unresolvable Image]' };
                     }
                 }
+
+                if (p.type === 'file') {
+                    const dataMatch = p.file.url.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                    if (dataMatch) return { inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } };
+                    return { fileData: { fileUri: p.file.url, mimeType: p.file.mimeType } };
+                }
+
                 return null;
             }));
             
@@ -419,18 +423,17 @@ export class GeminiAdapter extends ProviderAdapter {
 
         const rawHistory = await Promise.all(historyMsgs.map(async m => {
             if (m.role === 'tool' && m.tool_call_id) {
-                return {
-                    role: 'function',
-                    parts: [{
-                        functionResponse: {
-                            name: this.sanitizeToolName(m.name || m.tool_call_id),
-                            response: {
-                                name: this.sanitizeToolName(m.name || m.tool_call_id),
-                                content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-                            },
-                        },
-                    }],
-                };
+                const toolName = this.sanitizeToolName(m.name || m.tool_call_id);
+                const rawContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const parts: any[] = [{
+                    functionResponse: {
+                        name: toolName,
+                        response: { name: toolName, content: dataMatch ? 'File data attached as sibling part.' : rawContent },
+                    },
+                }];
+                if (dataMatch) parts.push({ inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } });
+                return { role: 'function', parts };
             }
 
             if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {

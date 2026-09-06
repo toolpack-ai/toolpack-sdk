@@ -619,21 +619,14 @@ See the [Knowledge package README](../toolpack-knowledge/README.md) for full doc
 
 ## Skills
 
-The skills system lets you define **reusable behavioral instructions** in `.skill.md` files and automatically inject them into requests based on message relevance — no agent code changes required.
+The skills system lets you define **reusable behavioral instructions** in `.skill.md` files and expose them to the agent via LLM-callable tools.
 
 ### Quick Start
 
 ```typescript
-import { Toolpack, createSkillInterceptor, createSkillTools } from 'toolpack-sdk';
+import { createSkillTools } from 'toolpack-sdk';
 
 const skillTools = createSkillTools({ dir: '.toolpack/skills' });
-
-const toolpack = await Toolpack.init({
-  provider: 'anthropic',
-  interceptors: [
-    createSkillInterceptor({ dir: '.toolpack/skills', maxSkills: 3, minScore: 0.3 }),
-  ],
-});
 
 // Attach skill tools per agent via ModeConfig.customTools:
 // agent.mode = { ...agentMode, customTools: [...skillTools.tools] };
@@ -669,21 +662,9 @@ When reviewing code:
 4. Be constructive — suggest improvements, not just problems
 ```
 
-When a user sends "review this PR", the interceptor automatically injects the `## Instructions` block before the LLM sees the message.
-
 ### How It Works
 
-- **`createSkillInterceptor`** — An SDK interceptor that runs BM25 search on every user message and prepends matching skill instructions as a `<skill-instructions>` block. Validates all files at `Toolpack.init()` time.
-- **`createSkillTools`** — Four LLM-callable tools (`skill.create`, `skill.read`, `skill.update`, `skill.list`) for managing the skill library at runtime.
-
-### `createSkillInterceptor` Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `dir` | string | `.toolpack/skills` | Path to the skill files directory |
-| `maxSkills` | number | `3` | Maximum number of skills injected per message |
-| `minScore` | number | `0.3` | BM25 relevance threshold |
-| `onValidationError` | `'fail'` \| `'warn'` | `'fail'` | How to handle invalid skill files at startup |
+**`createSkillTools`** registers four LLM-callable tools (`skill.create`, `skill.read`, `skill.update`, `skill.list`) for managing the skill library at runtime. The agent calls `skill.read` to load instructions on demand — skills are never auto-injected.
 
 See the [Skills guide](https://toolpacksdk.com/guides/skills) and [Skill Tools reference](https://toolpacksdk.com/tools/skills) for full documentation.
 
@@ -1025,7 +1006,7 @@ class FintechResearchAgent extends ResearchAgent {
 
 ### Features
 
-- ✅ **7 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled
+- ✅ **8 Built-in Channels** — Slack, Telegram, Discord, Email, SMS, Webhook, Scheduled, Chat
 - ✅ **4 Built-in Agents** — Research, Coding, Data, Browser
 - ✅ **Event-Driven** — Full lifecycle events for monitoring
 - ✅ **Knowledge Integration** — Conversation memory and RAG
@@ -1038,10 +1019,10 @@ See the [Agents package README](./packages/toolpack-agents/README.md) for full d
 
 ## Multimodal Support
 
-The SDK supports multimodal inputs (text + images) across all vision-capable providers. Images can be provided in three formats:
+The SDK supports multimodal inputs (text + images + files) across all vision-capable providers. Images can be provided in three formats:
 
 ```typescript
-import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart } from 'toolpack-sdk';
+import { Toolpack, ImageFilePart, ImageDataPart, ImageUrlPart, FilePart } from 'toolpack-sdk';
 
 const sdk = await Toolpack.init({ provider: 'openai' });
 
@@ -1076,6 +1057,30 @@ const response = await sdk.generate({
 });
 ```
 
+### File Attachments (Documents)
+
+Use `FilePart` to attach non-image files such as PDFs. Pass a public or pre-signed URL and the MIME type:
+
+```typescript
+import { FilePart, FILE_LIMITS } from 'toolpack-sdk';
+
+const doc: FilePart = {
+  type: 'file',
+  file: {
+    url: 'https://example.com/report.pdf',
+    mimeType: 'application/pdf',
+    name: 'report.pdf',  // optional
+    size: 204800,        // optional bytes, used for client-side limit checks
+  },
+};
+
+// FILE_LIMITS.image.maxBytes    → 10 MB
+// FILE_LIMITS.document.maxBytes → 10 MB
+// FILE_LIMITS.document.maxPages → 20 pages
+```
+
+A data URI (`data:<mime>;base64,<data>`) is also accepted in `file.url` for inline embedding.
+
 ### Provider Behavior
 
 | Provider | File Path | Base64 | URL |
@@ -1084,6 +1089,16 @@ const response = await sdk.generate({
 | Anthropic | Converted to base64 | ✓ Native | Downloaded → base64 |
 | Gemini | Converted to base64 | ✓ Native | Downloaded → base64 |
 | Ollama | Converted to base64 | ✓ Native | Downloaded → base64 |
+
+### Provider Support for File Attachments (FilePart)
+
+| Provider | URL | Inline base64 (`data:` URI) |
+|----------|-----|-----------------------------|
+| **Anthropic** | ✓ images and documents | ✓ auto-routed to `image` or `document` block |
+| **Anthropic Vertex** | ✓ | ✓ |
+| **Gemini** | ✓ (`fileData`) | ✓ (`inlineData`) |
+| **VertexAI** | ✓ (`fileData`) | ✓ (`inlineData`) |
+| **OpenAI** | ✓ images and documents | Images only (non-image base64 is dropped) |
 
 ## Configuration
 
