@@ -25,13 +25,13 @@ jobs:
     - name: Install dependencies
       run: npm install
 
-    - name: Install rollup native addon (Linux)
+    - name: Install native addons (Linux)
       if: runner.os == 'Linux'
-      run: npm install @rollup/rollup-linux-x64-gnu --no-save
+      run: npm install @rollup/rollup-linux-x64-gnu @rolldown/binding-linux-x64-gnu --no-save
 
-    - name: Install rollup native addon (Windows)
+    - name: Install native addons (Windows)
       if: runner.os == 'Windows'
-      run: npm install @rollup/rollup-win32-x64-gnu --no-save
+      run: npm install @rollup/rollup-win32-x64-gnu @rolldown/binding-win32-x64-msvc --no-save
 
     - name: Run Linter
       run: npm run lint
