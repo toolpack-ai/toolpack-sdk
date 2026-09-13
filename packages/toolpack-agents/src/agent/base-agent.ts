@@ -749,6 +749,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         mode: this.mode,
         // Abort signal — checked at every round boundary in AIClient.stream/generate.
         signal: _options?.signal,
+        // Output token cap injected by the platform when the org's credit balance is low.
+        ...(_options?.maxTokens ? { max_tokens: _options.maxTokens } : {}),
       };
 
       let resultContent: string | null = null;

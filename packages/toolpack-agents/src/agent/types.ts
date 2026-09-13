@@ -191,6 +191,8 @@ export interface AgentRunOptions {
    * per invocation (e.g. single-shot routers using delegate_to_agent).
    */
   maxToolRounds?: number;
+  /** Hard cap on output tokens for this run. Maps directly to max_tokens on the provider request. */
+  maxTokens?: number;
   /** Optional abort signal — propagated to the underlying AIClient stream/generate call. */
   signal?: AbortSignal;
 }
