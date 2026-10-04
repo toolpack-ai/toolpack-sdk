@@ -83,7 +83,9 @@ export function parseFileEnvelope(content: string): FileEnvelope | null {
         if (parsed?.type === 'file' && typeof parsed.mimeType === 'string' && typeof parsed.url === 'string') {
             return parsed as FileEnvelope;
         }
-    } catch {}
+    } catch {
+        // Not JSON, so not a file envelope.
+    }
     return null;
 }
 
