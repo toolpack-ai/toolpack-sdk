@@ -633,6 +633,19 @@ abstract class BaseAgent {
 }
 ```
 
+#### Streaming and memory-save failures
+
+`AgentRunOptions` (and `AgentInput`) accept `onChunk?: (delta: string) => void`. When set, the run streams and calls it with every text delta; the returned `AgentResult` is unchanged.
+
+If the reply was produced but the agent's mind could not be saved at the end of the run, the run still succeeds and the reason is in `result.metadata.mindSaveError`:
+
+```typescript
+const result = await this.run(input.message, { onChunk: (d) => process.stdout.write(d) });
+if (result.metadata?.mindSaveError) {
+  console.warn('Reply kept, memory not saved:', result.metadata.mindSaveError);
+}
+```
+
 ### AgentRegistry
 
 ```typescript

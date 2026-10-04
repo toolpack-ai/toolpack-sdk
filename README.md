@@ -592,6 +592,30 @@ const result = await sdk.generate({
 | `tools` | ToolDefinition[] | ✓ | Array of tool definitions |
 | `dependencies` | Record<string, string> | | npm dependencies (validated at load) |
 
+### Tool Context and `actor`
+
+Every tool's `execute` receives a context as its second argument. Besides `workspaceRoot` and `config`, it carries `ctx.actor`: who the run acts for (for example the signed-in user). The host sets it with the `actor` init option; the model never sees or sets it, so a tool can trust it for per-user data.
+
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+  actor: { id: 'user_123', kind: 'user' },
+});
+
+// In a tool:
+execute: async (args, ctx) => {
+  const userId = ctx.actor?.id; // undefined when no actor was set
+  // load only this user's data
+}
+```
+
+When one instance serves several people, pass a function (read on every tool call), for example `actor: () => requestStore.getStore() ?? null`.
+
+### Returning files from tools
+
+A tool can return a file by URL with `{ "type": "file", "mimeType": "application/pdf", "url": "https://..." }`. Anthropic and Vertex AI receive it as a native file part, and OpenAI receives images (other files get a placeholder). `data:` URIs keep working as before.
+
 ## Knowledge & RAG (Retrieval-Augmented Generation)
 
 For AI applications that need to search and reference documentation, use the companion `@toolpack-sdk/knowledge` package:
@@ -1133,7 +1157,7 @@ const sdk = await Toolpack.init({
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the tool system entirely |
 | `autoExecute` | boolean | `true` | Auto-execute tool calls from the AI |
-| `maxToolRounds` | number | `5` | Max tool-call rounds per request |
+| `maxToolRounds` | number | `5` | Max tool-call rounds per request. When the cap is hit with tools still pending, the model gets one final text-only round to wrap up |
 | `toolChoicePolicy` | string | `"auto"` | `"auto"`, `"required"`, or `"required_for_actions"` |
 | `enabledTools` | string[] | `[]` | Whitelist specific tools (empty = all) |
 | `enabledToolCategories` | string[] | `[]` | Whitelist categories (empty = all) |
@@ -1219,6 +1243,8 @@ import { Toolpack } from 'toolpack-sdk';
 // logging                                — LoggingConfig (filePath, level, enabled)
 // hitl                                   — HitlConfig (confirmationMode, bypass rules)
 // mcp                                    — McpToolsConfig (connect external MCP servers)
+// actor                                  — who tool calls act for, passed to tools as ctx.actor (or a function returning it)
+// disableBaseContext / disableToolGuidance — turn off the injected base context / tool usage guidance
 //
 // Removed in v2.8: customTools (→ ModeConfig.customTools), modeOverrides (→ ModeConfig),
 //                  configPath (→ all config is now inline)
