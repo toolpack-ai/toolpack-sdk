@@ -10,7 +10,7 @@ import { prepareSummarizationRequest, createSummarySystemMessage, parseSummariza
 import { ContextWindowStateManager, createContextWindowStateManager } from '../utils/context-window-state.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolRouter } from '../tools/router.js';
-import type { ToolsConfig, ToolSchema, ToolContext, ToolDefinition } from "../tools/types.js";
+import type { ToolsConfig, ToolSchema, ToolContext, ToolActor, ToolDefinition } from "../tools/types.js";
 import { DEFAULT_TOOLS_CONFIG } from "../tools/types.js";
 import type { HitlConfig } from '../providers/config.js';
 import { ModeConfig } from '../modes/mode-types.js';
@@ -19,7 +19,7 @@ import { generateBaseAgentContext } from './base-agent-context.js';
 import { QueryClassifier } from './query-classifier.js';
 import { ToolOrchestrator } from './tool-orchestrator.js';
 import { extractLastUserText } from '../utils/message-utils.js';
-import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog } from "../providers/provider-logger.js";
+import { logInfo, logWarn, logError, logDebug, safePreview, shouldLog, logTools } from "../providers/provider-logger.js";
 import { RuleLoader } from '../rules/index.js';
 
 
@@ -27,8 +27,11 @@ function logRequestMessages(requestId: string, messages: CompletionRequest['mess
     if (!shouldLog('debug')) return;
     logDebug(`[AIClient][${requestId}] Messages (${messages.length}):`);
     messages.forEach((m, i) => {
-        const preview = safePreview((m as any).content, 300);
-        logDebug(`[AIClient][${requestId}]  #${i} role=${(m as any).role} content=${preview}`);
+        const msg = m as any;
+        const content = typeof msg.content === 'string'
+            ? msg.content
+            : safePreview(msg.content, 10_000);
+        logDebug(`[AIClient][${requestId}]  #${i} role=${msg.role} content=${content}`);
     });
 }
 
@@ -82,6 +85,8 @@ export interface AIClientConfig {
     toolsConfig?: ToolsConfig;
     systemPrompt?: string;
     disableBaseContext?: boolean;
+    /** Disable automatic tool usage guidance injection into the system prompt */
+    disableToolGuidance?: boolean;
     /** Human-in-the-loop configuration for tool confirmation */
     hitlConfig?: HitlConfig;
     /** Callback for handling tool confirmation requests */
@@ -90,6 +95,8 @@ export interface AIClientConfig {
     conversationId?: string;
     /** Context window management configuration */
     contextWindowConfig?: ContextWindowConfig;
+    /** Who tool calls act for; passed to every tool as `ctx.actor`. A function is read on each call. */
+    actor?: ToolActor | (() => ToolActor | null | undefined);
 }
 
 export class AIClient extends EventEmitter {
@@ -104,12 +111,14 @@ export class AIClient extends EventEmitter {
     private activeMode: ModeConfig | null = null;
     private overrideSystemPrompt?: string;
     private disableBaseContext: boolean;
+    private disableToolGuidance: boolean;
     private toolResultMaxChars: number;
     private hitlConfig?: HitlConfig;
     private onToolConfirm?: OnToolConfirmCallback;
 
     private conversationId?: string;
     private contextWindowConfig?: ContextWindowConfig;
+    private actor?: ToolActor | (() => ToolActor | null | undefined);
     private contextWindowStateManager?: ContextWindowStateManager;
     private providerModelCache: Map<string, ProviderModelInfo[]> = new Map();
     private ruleLoader: RuleLoader;
@@ -127,12 +136,14 @@ export class AIClient extends EventEmitter {
         this.toolOrchestrator = new ToolOrchestrator();
         this.overrideSystemPrompt = config.systemPrompt;
         this.disableBaseContext = config.disableBaseContext || false;
+        this.disableToolGuidance = config.disableToolGuidance || false;
         const configuredMax = this.toolsConfig.resultMaxChars ?? DEFAULT_TOOLS_CONFIG.resultMaxChars ?? 20_000;
         this.toolResultMaxChars = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 20_000;
         this.hitlConfig = config.hitlConfig;
         this.onToolConfirm = config.onToolConfirm;
         this.conversationId = config.conversationId;
         this.contextWindowConfig = config.contextWindowConfig;
+        this.actor = config.actor;
         this.providerModelCache = new Map();
         this.ruleLoader = new RuleLoader();
 
@@ -492,7 +503,7 @@ export class AIClient extends EventEmitter {
      * When tools are enabled and autoExecute is true, handles the full
      * tool call → execute → send result → get final answer loop.
      */
-    async generate<T = unknown>(request: CompletionRequest<T>, providerName?: string): Promise<CompletionResponse<T>> {
+    async generate<T = unknown>(request: CompletionRequest<T>, providerName?: string, options?: { getLatestRequestTools?: () => RequestToolDefinition[] }): Promise<CompletionResponse<T>> {
         const provider = this.getProvider(providerName);
         try {
             const requestId = this.newRequestId();
@@ -547,6 +558,7 @@ export class AIClient extends EventEmitter {
             };
 
             logInfo(`[AIClient][${requestId}] generate() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${effectiveToolsConfig.enabled && effectiveToolsConfig.autoExecute}`);
+            logTools(requestId, enrichedRequest.tools as any);
             logRequestMessages(requestId, enrichedRequest.messages);
 
             const callProvider = (req: any) => withRetry(
@@ -556,7 +568,7 @@ export class AIClient extends EventEmitter {
 
             let response = await callProvider(outboundReq);
 
-            logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
+            logDebug(`[AIClient][${requestId}] generate() initial response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content=${response.content || ''}`);
 
             // Auto-execute tool call loop
             if (effectiveToolsConfig.autoExecute && (this.toolRegistry || requestToolMap.size > 0 || (mode?.customTools?.length ?? 0) > 0)) {
@@ -733,6 +745,15 @@ export class AIClient extends EventEmitter {
                         __toolpack_request_id: requestId,
                         ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
                     };
+                    // Merge any request tools registered mid-loop (e.g. by mcp.overview)
+                    const latestTools = options?.getLatestRequestTools?.() ?? [];
+                    if (latestTools.length > 0) {
+                        const merged = new Map<string, RequestToolDefinition>((enrichedRequest.requestTools ?? []).map(t => [t.name, t]));
+                        for (const t of latestTools) merged.set(t.name, t);
+                        rawFollowupReq.requestTools = Array.from(merged.values());
+                        // Also update dispatch map so executeTool can find newly-registered tools.
+                        for (const t of latestTools) requestToolMap.set(t.name, t);
+                    }
                     // Re-enrich to include any tools discovered in the previous round.
                     // Uses the request-start mode snapshot — NOT live activeMode.
                     let followupReq = this.stripRequestTools((await this.enrichRequestWithTools(rawFollowupReq, mode)).request);
@@ -747,7 +768,51 @@ export class AIClient extends EventEmitter {
                         logRequestMessages(requestId, messages);
                     }
                     response = await callProvider(followupReq) as CompletionResponse;
-                    logDebug(`[AIClient][${requestId}] generate() followup response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content_preview=${safePreview(response.content || '', 200)}`);
+                    logDebug(`[AIClient][${requestId}] generate() followup response finish_reason=${(response as any).finish_reason ?? 'unknown'} tool_calls=${response.tool_calls?.length || 0} content=${response.content || ''}`);
+                }
+
+                // When the cap was hit (not an abort) and the last response is still a
+                // tool call, make one final text-only round so the LLM can finish
+                // gracefully instead of returning empty content.
+                if (rounds >= maxRounds && !request.signal?.aborted && response.tool_calls && response.tool_calls.length > 0) {
+                    logInfo(`[AIClient][${requestId}] Tool-round cap (${maxRounds}) hit with pending tool calls; requesting graceful conclusion`);
+
+                    // Add the unexecuted tool-call turn to history so the conversation is valid
+                    messages.push({
+                        role: 'assistant',
+                        content: response.content || '',
+                        tool_calls: response.tool_calls.map(tc => ({
+                            id: tc.id,
+                            type: 'function' as const,
+                            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+                        })),
+                    });
+                    for (const tc of response.tool_calls) {
+                        messages.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: '[Tool call skipped: maximum tool rounds reached]',
+                        });
+                    }
+                    messages.push({
+                        role: 'user',
+                        content: 'You have reached the maximum number of tool calls allowed. Do not call any more tools. Based on what you have gathered so far, either complete the task or clearly explain what you were unable to accomplish and why.',
+                    });
+
+                    const conclusionReq: any = {
+                        ...enrichedRequest,
+                        messages,
+                        __toolpack_request_id: requestId,
+                        tools: [],
+                        requestTools: [],
+                        tool_choice: undefined,
+                    };
+                    try {
+                        response = await callProvider(await this.enforceContextWindow(conclusionReq, provider)) as CompletionResponse;
+                        logInfo(`[AIClient][${requestId}] Graceful conclusion received content_length=${response.content?.length ?? 0}`);
+                    } catch (conclusionErr: any) {
+                        logWarn(`[AIClient][${requestId}] Graceful conclusion call failed: ${conclusionErr?.message ?? conclusionErr}; returning last response`);
+                    }
                 }
             }
 
@@ -768,7 +833,7 @@ export class AIClient extends EventEmitter {
      * When tools are enabled and autoExecute is true, handles tool calls
      * by collecting them, executing, and re-calling the model.
      */
-    async *stream(request: CompletionRequest, providerName?: string): AsyncGenerator<CompletionChunk> {
+    async *stream(request: CompletionRequest, providerName?: string, options?: { getLatestRequestTools?: () => RequestToolDefinition[] }): AsyncGenerator<CompletionChunk> {
         const provider = this.getProvider(providerName);
         try {
             const requestId = this.newRequestId();
@@ -819,6 +884,7 @@ export class AIClient extends EventEmitter {
             };
 
             logInfo(`[AIClient][${requestId}] stream() start provider=${resolvedProviderName} class=${providerClass} model=${enrichedRequest.model} messages=${enrichedRequest.messages.length} tools=${enrichedRequest.tools?.length || 0} tool_choice=${(enrichedRequest as any).tool_choice ?? 'unset'} policy=${policy} needsTools=${needsTools} autoExecute=${effectiveToolsConfig.enabled && effectiveToolsConfig.autoExecute}`);
+            logTools(requestId, enrichedRequest.tools as any);
             logRequestMessages(requestId, enrichedRequest.messages);
 
             if (!effectiveToolsConfig.autoExecute || (!this.toolRegistry && requestToolMap.size === 0 && (mode?.customTools?.length ?? 0) === 0)) {
@@ -828,6 +894,7 @@ export class AIClient extends EventEmitter {
 
             const messages = [...enrichedRequest.messages];
             let rounds = 0;
+            let capHitWithPendingTools = false;
 
             // Classify query to adjust maxToolRounds (same as generate()).
             // Per-request maxToolRounds is a hard cap that bypasses classifier adjustment.
@@ -863,6 +930,15 @@ export class AIClient extends EventEmitter {
                     messages,
                     ...(modeResponseFormat ? { response_format: modeResponseFormat } : {}),
                 };
+                // Merge any request tools registered mid-loop (e.g. by mcp.overview)
+                const latestStreamTools = options?.getLatestRequestTools?.() ?? [];
+                if (latestStreamTools.length > 0) {
+                    const merged = new Map<string, RequestToolDefinition>((enrichedRequest.requestTools ?? []).map(t => [t.name, t]));
+                    for (const t of latestStreamTools) merged.set(t.name, t);
+                    rawRoundReq.requestTools = Array.from(merged.values());
+                    // Also update dispatch map so executeTool can find newly-registered tools.
+                    for (const t of latestStreamTools) requestToolMap.set(t.name, t);
+                }
                 // Re-enrich to include any newly discovered tools from previous rounds.
                 // Uses the request-start mode snapshot — NOT live activeMode.
                 let roundReq = this.stripRequestTools((await this.enrichRequestWithTools(rawRoundReq, mode)).request);
@@ -898,7 +974,7 @@ export class AIClient extends EventEmitter {
                     }
                 }
 
-                logDebug(`[AIClient][${requestId}] stream() round_end finish_reason=${lastFinishReason ?? 'unknown'} accumulated_len=${accumulatedContent.length} tool_calls_total=${pendingToolCalls.length} content_preview=${safePreview(accumulatedContent, 200)}`);
+                logDebug(`[AIClient][${requestId}] stream() round_end finish_reason=${lastFinishReason ?? 'unknown'} accumulated_len=${accumulatedContent.length} tool_calls_total=${pendingToolCalls.length} content=${accumulatedContent}`);
 
                 // If no tool calls, we're done
                 if (pendingToolCalls.length === 0) {
@@ -1046,6 +1122,43 @@ export class AIClient extends EventEmitter {
                 if (shouldLog('debug')) {
                     logDebug(`[AIClient][${requestId}] stream() after_tools messages=${messages.length}`);
                     logRequestMessages(requestId, messages);
+                }
+
+                // Mark cap-hit if this was the last allowed round and the LLM still
+                // wanted to call tools (tool results were added but no text response follows).
+                if (rounds > maxRounds) {
+                    capHitWithPendingTools = true;
+                }
+            }
+
+            // When the cap was hit (not an abort) and tool results are waiting for a
+            // response, make one final text-only streaming round so the LLM can finish
+            // gracefully instead of silently cutting off.
+            if (capHitWithPendingTools && !request.signal?.aborted) {
+                logInfo(`[AIClient][${requestId}] Tool-round cap (${maxRounds}) hit; requesting graceful conclusion`);
+
+                messages.push({
+                    role: 'user',
+                    content: 'You have reached the maximum number of tool calls allowed. Do not call any more tools. Based on what you have gathered so far, either complete the task or clearly explain what you were unable to accomplish and why.',
+                });
+
+                const conclusionReq: any = {
+                    ...enrichedRequest,
+                    messages,
+                    tools: [],
+                    requestTools: [],
+                    tool_choice: undefined,
+                };
+
+                try {
+                    const conclusionFinalReq = await this.enforceContextWindow(conclusionReq, provider);
+                    for await (const chunk of provider.stream(conclusionFinalReq)) {
+                        if (request.signal?.aborted) break;
+                        yield chunk;
+                    }
+                    logInfo(`[AIClient][${requestId}] Graceful conclusion stream complete`);
+                } catch (conclusionErr: any) {
+                    logWarn(`[AIClient][${requestId}] Graceful conclusion stream failed: ${conclusionErr?.message ?? conclusionErr}`);
                 }
             }
         } catch (error) {
@@ -1301,6 +1414,10 @@ export class AIClient extends EventEmitter {
     }
 
     private injectRequestToolGuidance(request: CompletionRequest, effectiveTools?: ToolCallRequest[]): CompletionRequest {
+        if (this.disableToolGuidance) {
+            return request;
+        }
+
         const toolNames = new Set((effectiveTools || request.tools || []).map(tool => tool.function.name));
         if (toolNames.size === 0) {
             return request;
@@ -1819,6 +1936,7 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 : this.toolsConfig?.additionalConfigurations ?? {};
             const ctx: ToolContext = {
                 workspaceRoot: process.cwd(),
+                actor: (typeof this.actor === 'function' ? this.actor() : this.actor) ?? undefined,
                 config: effectiveAdditional,
                 log: (msg) => logInfo(`[Tool] ${msg}`),
                 processRegistry: this.toolRegistry?.runtimeContext?.processRegistry,
@@ -1992,6 +2110,14 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
         // final result set when allowlists are restrictive. We slice down to the configured limit below.
         const oversampleLimit = effectiveMode ? Math.max(limit * 4, limit) : limit;
         let results = this.bm25Engine.search(query, { limit: oversampleLimit, category: requestedCategory });
+
+        // If a category filter was given but yielded 0 results the category name is likely wrong
+        // (LLMs sometimes infer names like "filesystem" instead of the actual "internal"). Fall back
+        // to an uncategorised search so the query still surfaces relevant tools.
+        if (requestedCategory && results.length === 0) {
+            logInfo(`[AIClient] tool.search category="${requestedCategory}" returned 0 results; retrying without category filter`);
+            results = this.bm25Engine.search(query, { limit: oversampleLimit });
+        }
 
         if (effectiveMode && results.length > 0) {
             const allowedSchemas = this.filterSchemasByMode(results.map(result => result.tool), effectiveMode);

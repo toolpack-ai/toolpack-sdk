@@ -39,9 +39,22 @@ export interface ToolpackCredentials {
     netlifyAuthToken?: string;
 }
 
+/**
+ * Who a run acts for, e.g. the signed-in user of the host application.
+ * Supplied by the host (never by the model), so a tool can trust it for per-user data.
+ */
+export interface ToolActor {
+    /** The host application's stable id for the actor. */
+    id: string;
+    /** What the actor is, in the host's terms (e.g. 'user'). */
+    kind?: string;
+}
+
 export interface ToolContext {
     /** Absolute path to the workspace/project root */
     workspaceRoot: string;
+    /** Who this run acts for, when the host set one (see ToolpackInitConfig.actor). */
+    actor?: ToolActor;
     /**
      * Tool-specific config from toolsConfig.additionalConfigurations.
      * Includes credentials (ctx.config.credentials) and per-tool settings

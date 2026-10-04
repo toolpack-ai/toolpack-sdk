@@ -164,3 +164,15 @@ export function logMessagePreview(requestId: string, provider: string, messages:
         logDebug(`[${provider}][${requestId}]  #${i} role=${m?.role} content=${safePreview(m?.content, 300)}`);
     });
 }
+
+export function logTools(requestId: string, tools: Array<{ name?: string; description?: string; parameters?: unknown; function?: { name?: string; description?: string; parameters?: unknown } }> | undefined): void {
+    if (!tools || tools.length === 0) return;
+    const name = (t: typeof tools[0]) => t.function?.name ?? t.name ?? '?';
+    const desc = (t: typeof tools[0]) => t.function?.description ?? t.description ?? '';
+    const schema = (t: typeof tools[0]) => t.function?.parameters ?? t.parameters ?? {};
+    logInfo(`[AIClient][${requestId}] tools=[${tools.map(name).join(', ')}]`);
+    if (!shouldLog('debug')) return;
+    tools.forEach(t => {
+        logDebug(`[AIClient][${requestId}]  tool=${name(t)} description=${safePreview(desc(t), 200)} schema=${safePreview(JSON.stringify(schema(t)), 500)}`);
+    });
+}

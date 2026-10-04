@@ -130,6 +130,9 @@ export interface AgentInput<TIntent extends string = string> {
 
   /** Optional abort signal — when aborted, the running LLM stream stops at the next round boundary. */
   signal?: AbortSignal;
+
+  /** Called with each text delta as it is generated. When provided, the run uses streaming mode. */
+  onChunk?: (delta: string) => void;
 }
 
 /**
@@ -166,7 +169,11 @@ export interface AgentResult {
   /** Workflow steps taken during execution (populated by run()) */
   steps?: WorkflowStep[];
 
-  /** Optional metadata for routing decisions or post-processing */
+  /**
+   * Optional metadata for routing decisions or post-processing.
+   * `mindSaveError` is set by run() when the reply was produced but what the agent learned in
+   * the run could not be saved to its mind (the message of the failure).
+   */
   metadata?: Record<string, unknown>;
 }
 
@@ -195,6 +202,8 @@ export interface AgentRunOptions {
   maxTokens?: number;
   /** Optional abort signal — propagated to the underlying AIClient stream/generate call. */
   signal?: AbortSignal;
+  /** Called with each text delta as it is generated. When provided, the run uses streaming mode. */
+  onChunk?: (delta: string) => void;
 }
 
 /**

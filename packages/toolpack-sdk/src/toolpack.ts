@@ -137,6 +137,9 @@ export interface ToolpackInitConfig {
     /** Disable base agent context injection (for testing or custom prompts) */
     disableBaseContext?: boolean;
 
+    /** Disable automatic tool usage guidance injection into the system prompt */
+    disableToolGuidance?: boolean;
+
     /* MCP Tools configuration
      * When provided, connects to MCP servers and registers tools */
     mcp?: McpToolsConfig;
@@ -170,6 +173,13 @@ export interface ToolpackInitConfig {
 
     /** Optional conversation ID for tracking context across confirmations */
     conversationId?: string;
+
+    /**
+     * Who this instance's tool calls act for (e.g. the signed-in user). Passed to every tool as
+     * `ctx.actor`; the model never sees or sets it. Pass a function when one instance serves
+     * several actors: it is read on each tool call.
+     */
+    actor?: import('./tools/types.js').ToolActor | (() => import('./tools/types.js').ToolActor | null | undefined);
 
     /**
      * Optional interceptors that wrap each `generate()` call in the direct execution path.
@@ -452,6 +462,7 @@ export class Toolpack extends EventEmitter {
 
         // 1b. Base context
         const disableBaseContext = config.disableBaseContext ?? false;
+        const disableToolGuidance = config.disableToolGuidance ?? false;
 
         // 2. Resolve Providers
         const providers: Record<string, ProviderAdapter> = {};
@@ -566,10 +577,12 @@ export class Toolpack extends EventEmitter {
             toolRegistry: registry,
             toolsConfig: registry.getConfig(),
             disableBaseContext: disableBaseContext,
+            disableToolGuidance: disableToolGuidance,
             hitlConfig: Object.keys(hitlConfig).length > 0 ? hitlConfig : undefined,
             onToolConfirm: config.onToolConfirm,
             conversationId: config.conversationId,
             contextWindowConfig: config.contextWindow,
+            actor: config.actor,
         });
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);
@@ -759,11 +772,15 @@ export class Toolpack extends EventEmitter {
         if (this._interceptors.length > 0) {
             const chain = this._buildInterceptorChain(
                 this._interceptors,
-                (r) => this.client.generate(r ?? req, providerName),
+                (r) => this.client.generate(r ?? req, providerName, {
+                    getLatestRequestTools: () => [...this._instanceRequestTools],
+                }),
             );
             return chain(req);
         }
-        return this.client.generate(req, providerName);
+        return this.client.generate(req, providerName, {
+            getLatestRequestTools: () => [...this._instanceRequestTools],
+        });
     }
 
     /**
@@ -808,7 +825,9 @@ export class Toolpack extends EventEmitter {
         }
 
         // Direct streaming (no workflow)
-        yield* this.client.stream(preparedRequest, providerName);
+        yield* this.client.stream(preparedRequest, providerName, {
+            getLatestRequestTools: () => [...this._instanceRequestTools],
+        });
     }
 
     async embed(request: EmbeddingRequest, providerName?: string): Promise<EmbeddingResponse> {

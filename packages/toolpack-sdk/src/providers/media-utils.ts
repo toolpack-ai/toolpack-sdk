@@ -70,6 +70,23 @@ export async function fetchUrlAsBase64(url: string): Promise<{ data: string; mim
     }
 }
 
+export interface FileEnvelope {
+    type: 'file';
+    mimeType: string;
+    url: string;
+}
+
+export function parseFileEnvelope(content: string): FileEnvelope | null {
+    if (!content.startsWith('{')) return null;
+    try {
+        const parsed = JSON.parse(content);
+        if (parsed?.type === 'file' && typeof parsed.mimeType === 'string' && typeof parsed.url === 'string') {
+            return parsed as FileEnvelope;
+        }
+    } catch {}
+    return null;
+}
+
 export async function normalizeImagePart(part: ImagePart): Promise<{ data: string; mimeType: string }> {
     if (part.type === 'image_data') {
         return {

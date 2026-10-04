@@ -15,6 +15,7 @@ import type {
 } from '../../types/index.js';
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from '../../errors/index.js';
 import { logDebug, safePreview, logMessagePreview } from '../provider-logger.js';
+import { parseFileEnvelope } from '../media-utils.js';
 
 export interface VertexAIConfig {
     /** GCP project ID. Falls back to TOOLPACK_VERTEXAI_PROJECT or VERTEX_AI_PROJECT env vars. */
@@ -157,6 +158,18 @@ export class VertexAIAdapter extends ProviderAdapter {
                 ? [...history, { role: 'user', parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage }]
                 : history;
 
+            // Defensive: strip any inlineData parts with empty/missing data to avoid Vertex AI rejection.
+            for (const c of contents) {
+                const parts = c.parts as any[];
+                if (!Array.isArray(parts)) continue;
+                for (let pi = 0; pi < parts.length; pi++) {
+                    const p = parts[pi];
+                    if (p?.inlineData !== undefined && !p.inlineData?.data) {
+                        parts.splice(pi--, 1);
+                    }
+                }
+            }
+
             const response = await this.ai.models.generateContent({ model, contents, config });
 
             const { content, toolCalls, rawContent } = this.parseResponse(response, request.tools);
@@ -200,19 +213,37 @@ export class VertexAIAdapter extends ProviderAdapter {
                 ? [...history, { role: 'user', parts: typeof lastUserMessage === 'string' ? [{ text: lastUserMessage }] : lastUserMessage }]
                 : history;
 
+            // Defensive: strip any inlineData parts with empty/missing data to avoid Vertex AI rejection.
+            for (const c of contents) {
+                const parts = c.parts as any[];
+                if (!Array.isArray(parts)) continue;
+                for (let pi = 0; pi < parts.length; pi++) {
+                    const p = parts[pi];
+                    if (p?.inlineData !== undefined && !p.inlineData?.data) {
+                        parts.splice(pi--, 1);
+                    }
+                }
+            }
+
             const chunkStream = await this.ai.models.generateContentStream({ model, contents, config });
+
+            const streamedToolCallIds: string[] = [];
+            const streamedRawParts: any[] = [];
 
             for await (const chunk of chunkStream) {
                 for (const candidate of chunk.candidates ?? []) {
                     for (const part of candidate.content?.parts ?? []) {
+                        streamedRawParts.push(part);
                         if ((part as any).functionCall) {
                             const fc = (part as any).functionCall;
                             logDebug(`[VertexAI][${requestId}] stream tool_call name=${fc.name}`);
+                            const id = `vtx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                            streamedToolCallIds.push(id);
                             yield {
                                 delta: '',
                                 finish_reason: 'tool_calls',
                                 tool_calls: [{
-                                    id: `vtx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                                    id,
                                     name: this.restoreToolName(fc.name, request.tools),
                                     arguments: fc.args ?? {},
                                 }],
@@ -222,6 +253,16 @@ export class VertexAIAdapter extends ProviderAdapter {
                         }
                     }
                 }
+            }
+
+            // Cache raw parts (which carry thought_signature fields) for the next round.
+            if (streamedToolCallIds.length > 0 && streamedRawParts.length > 0) {
+                const cacheKey = streamedToolCallIds.join('|');
+                const rawContent = { role: 'model' as const, parts: streamedRawParts };
+                if (this.rawContentCache.size >= VertexAIAdapter.RAW_CONTENT_CACHE_MAX) {
+                    this.rawContentCache.delete(this.rawContentCache.keys().next().value!);
+                }
+                this.rawContentCache.set(cacheKey, rawContent);
             }
         } catch (error) {
             throw this.handleError(error);
@@ -295,13 +336,15 @@ export class VertexAIAdapter extends ProviderAdapter {
                 const toolName = this.sanitizeToolName(m.name ?? m.tool_call_id);
                 const rawContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
                 const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const fileEnvelope = !dataMatch ? parseFileEnvelope(rawContent) : null;
                 const parts: Part[] = [{
                     functionResponse: {
                         name: toolName,
-                        response: { name: toolName, content: dataMatch ? 'File data attached as sibling part.' : rawContent },
+                        response: { name: toolName, content: (dataMatch || fileEnvelope) ? 'File data attached as sibling part.' : rawContent },
                     },
                 } as unknown as Part];
                 if (dataMatch) parts.push({ inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } } as unknown as Part);
+                if (fileEnvelope) parts.push({ fileData: { mimeType: fileEnvelope.mimeType, fileUri: fileEnvelope.url } } as unknown as Part);
                 return { role: 'function', parts } as unknown as Content;
             }
 
@@ -363,14 +406,21 @@ export class VertexAIAdapter extends ProviderAdapter {
                 if (p.type === 'text') return { text: p.text } as Part;
                 if (p.type === 'image_data') {
                     const { data, mimeType } = p.image_data ?? {};
-                    return { inlineData: { mimeType: mimeType ?? 'image/jpeg', data: data ?? '' } } as unknown as Part;
+                    if (!data) return null;
+                    return { inlineData: { mimeType: mimeType ?? 'image/jpeg', data } } as unknown as Part;
                 }
                 if (p.type === 'image_url') {
-                    return { fileData: { mimeType: 'image/jpeg', fileUri: p.image_url?.url ?? '' } } as unknown as Part;
+                    const uri = p.image_url?.url ?? '';
+                    if (!uri) return null;
+                    return { fileData: { mimeType: 'image/jpeg', fileUri: uri } } as unknown as Part;
                 }
                 if (p.type === 'file') {
                     const dataMatch = p.file.url.match(/^data:([\w/+.-]+);base64,(.+)$/s);
-                    if (dataMatch) return { inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } } as unknown as Part;
+                    if (dataMatch) {
+                        if (!dataMatch[2]) return null;
+                        return { inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } } as unknown as Part;
+                    }
+                    if (!p.file.url) return null;
                     return { fileData: { mimeType: p.file.mimeType, fileUri: p.file.url } } as unknown as Part;
                 }
                 return null;

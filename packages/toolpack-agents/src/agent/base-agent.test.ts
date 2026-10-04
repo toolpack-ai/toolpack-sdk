@@ -199,6 +199,68 @@ describe('BaseAgent', () => {
     });
   });
 
+  describe('mind save after the reply', () => {
+    /** An agent whose model calls mind_believe once, with a mind store that fails or works on save. */
+    function makeMindAgent(saveFails: boolean) {
+      const saved: string[] = [];
+      let believe: ((args: Record<string, unknown>) => Promise<unknown>) | undefined;
+      const toolpack = {
+        ...createMockToolpack(),
+        loadRequestToolProject: vi.fn((project: { tools: { name: string; execute: (args: Record<string, unknown>) => Promise<unknown> }[] }) => {
+          believe = project.tools.find(t => t.name === 'mind_believe')?.execute ?? believe;
+        }),
+        generate: vi.fn(async () => {
+          await believe!({ content: 'The office cat is called Pixel', confidence: 'high' });
+          return { content: 'Noted.', usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } };
+        }),
+      } as unknown as Toolpack;
+
+      const agent = new TestAgent({ toolpack });
+      agent.mind = {
+        embedder: { dimensions: 3, embed: async () => [1, 0, 0], embedBatch: async (texts: string[]) => texts.map(() => [1, 0, 0]) },
+        provider: {
+          validateDimensions: async () => {},
+          add: async (chunks: { content: string }[]) => {
+            if (saveFails) throw new Error('database is down');
+            saved.push(...chunks.map(c => c.content));
+          },
+          query: async () => [],
+          keywordQuery: async () => [],
+          delete: async () => {},
+          clear: async () => {},
+          getAllChunks: async () => [],
+        },
+      } as never;
+      return { agent, saved };
+    }
+
+    it('saves what the agent learned when the run completes', async () => {
+      const { agent, saved } = makeMindAgent(false);
+      const result = await agent.invokeAgent({ message: 'remember the cat' });
+
+      expect(result.output).toBe('Noted.');
+      expect(saved).toEqual(['The office cat is called Pixel']);
+      expect(result.metadata?.mindSaveError).toBeUndefined();
+    });
+
+    it('keeps the reply when the save fails, and reports the failure', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { agent, saved } = makeMindAgent(true);
+      const completed = vi.fn();
+      agent.on('agent:complete', completed);
+
+      const result = await agent.invokeAgent({ message: 'remember the cat' });
+
+      expect(result.output).toBe('Noted.');
+      expect(result.metadata).toMatchObject({ mindSaveError: 'database is down', usage: { total_tokens: 15 } });
+      expect(saved).toEqual([]);
+      expect(agent.errorCalled).toBe(false);
+      expect(completed).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+  });
+
   describe('lifecycle hooks', () => {
     it('should call onBeforeRun before execution', async () => {
       const agent = new TestAgent({ toolpack: mockToolpack });

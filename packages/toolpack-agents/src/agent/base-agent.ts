@@ -757,11 +757,14 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       let resultUsage: import('toolpack-sdk').Usage | undefined;
       let fullResult: unknown;
 
-      const isStreaming = typeof this.mode !== 'string' && this.mode?.streaming;
+      const isStreaming = (typeof this.mode !== 'string' && this.mode?.streaming) || !!_options?.onChunk;
       if (isStreaming) {
         let content = '';
         for await (const chunk of this.toolpack.stream(requestParams, this.provider)) {
-          content += chunk.delta || '';
+          if (chunk.delta) {
+            content += chunk.delta;
+            _options?.onChunk?.(chunk.delta);
+          }
           if (chunk.usage) resultUsage = chunk.usage;
         }
         resultContent = content || null;
@@ -782,9 +785,18 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       await this.onComplete(agentResult);
 
       // Commit the mind draft buffer on clean completion.
-      // Propagates flush errors to the caller per spec.
+      // The reply already exists, so a failed commit must not discard it: the run still
+      // succeeds, and the failure is reported in `metadata.mindSaveError` for the caller.
       if (mindFlush) {
-        await mindFlush(false);
+        try {
+          await mindFlush(false);
+        } catch (flushErr) {
+          console.error(`[${this.name ?? 'agent'}][AgentMind] Draft buffer flush failed; the reply is kept:`, flushErr);
+          agentResult.metadata = {
+            ...agentResult.metadata,
+            mindSaveError: flushErr instanceof Error ? flushErr.message : String(flushErr),
+          };
+        }
       }
 
       this.emit('agent:complete', agentResult);

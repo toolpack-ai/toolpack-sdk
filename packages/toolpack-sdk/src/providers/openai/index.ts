@@ -5,6 +5,7 @@ import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
 import { logDebug, logTrace, safePreview, logMessagePreview } from "../provider-logger.js";
+import { parseFileEnvelope } from "../media-utils.js";
 
 export class OpenAIAdapter extends ProviderAdapter {
     private client: OpenAI;
@@ -353,7 +354,8 @@ export class OpenAIAdapter extends ProviderAdapter {
         if (msg.role === 'tool' && msg.tool_call_id) {
             const rawContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
             const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
-            // OpenAI supports inline images but not inline PDFs — skip non-image data URLs.
+            const fileEnvelope = !dataMatch ? parseFileEnvelope(rawContent) : null;
+            // OpenAI supports inline images via image_url — skip non-image types.
             return {
                 role: 'tool',
                 tool_call_id: msg.tool_call_id,
@@ -361,7 +363,11 @@ export class OpenAIAdapter extends ProviderAdapter {
                     ? dataMatch[1].startsWith('image/')
                         ? [{ type: 'image_url', image_url: { url: rawContent } }]
                         : '[File content not available inline for this provider]'
-                    : rawContent,
+                    : fileEnvelope
+                        ? fileEnvelope.mimeType.startsWith('image/')
+                            ? [{ type: 'image_url', image_url: { url: fileEnvelope.url } }]
+                            : '[File content not available inline for this provider]'
+                        : rawContent,
             };
         }
 

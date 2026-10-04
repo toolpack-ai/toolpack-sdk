@@ -8,6 +8,11 @@ import { logDebug, safePreview, logMessagePreview } from "../provider-logger.js"
 
 export class GeminiAdapter extends ProviderAdapter {
     private genAI: GoogleGenerativeAI;
+    // Stores raw Gemini Content objects keyed by joined tool call IDs.
+    // Thinking models (Gemini 3.x+) embed thought_signature inside functionCall parts.
+    // Without replaying the exact raw Content, the API rejects subsequent turns with a 400.
+    private readonly rawContentCache = new Map<string, any>();
+    private static readonly RAW_CONTENT_CACHE_MAX = 500;
 
     constructor(apiKey: string) {
         super();
@@ -202,6 +207,7 @@ export class GeminiAdapter extends ProviderAdapter {
 
             const { history, lastUserMessage } = await this.formatHistory(request.messages, request.mediaOptions);
 
+
             const chat = model.startChat({
                 history: history,
                 generationConfig: {
@@ -239,6 +245,17 @@ export class GeminiAdapter extends ProviderAdapter {
                             arguments: fc.args || {},
                         });
                     }
+                }
+            }
+
+            if (toolCalls.length > 0) {
+                const rawContent = (response as any).candidates?.[0]?.content;
+                if (rawContent) {
+                    const cacheKey = toolCalls.map(tc => tc.id).join('|');
+                    if (this.rawContentCache.size >= GeminiAdapter.RAW_CONTENT_CACHE_MAX) {
+                        this.rawContentCache.delete(this.rawContentCache.keys().next().value!);
+                    }
+                    this.rawContentCache.set(cacheKey, rawContent);
                 }
             }
 
@@ -288,6 +305,7 @@ export class GeminiAdapter extends ProviderAdapter {
 
             const { history, lastUserMessage } = await this.formatHistory(request.messages, request.mediaOptions);
 
+
             const chat = model.startChat({
                 history: history,
                 generationConfig: {
@@ -307,16 +325,20 @@ export class GeminiAdapter extends ProviderAdapter {
 
             const result = await chat.sendMessageStream(lastUserMessage);
 
+            const streamedToolCallIds: string[] = [];
+
             for await (const chunk of result.stream) {
                 // Check for function calls in the chunk
                 for (const part of (chunk as any).candidates?.[0]?.content?.parts || []) {
                     if (part.functionCall) {
                         logDebug(`[Gemini][${requestId}] Stream finish_reason=tool_calls name=${part.functionCall.name}`);
+                        const id = `gemini_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+                        streamedToolCallIds.push(id);
                         yield {
                             delta: '',
                             finish_reason: 'tool_calls',
                             tool_calls: [{
-                                id: `gemini_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+                                id,
                                 name: this.restoreToolName(part.functionCall.name, request.tools),
                                 arguments: part.functionCall.args || {},
                             }],
@@ -333,6 +355,23 @@ export class GeminiAdapter extends ProviderAdapter {
                         yield { delta: text };
                     }
                 } catch { /* text() may throw if no text parts */ }
+            }
+
+            // Cache the raw content with thought_signature for the next round.
+            // Thinking models (Gemini 3.x+) attach thought_signature to functionCall parts;
+            // without replaying the exact Content object the API returns a 400 on the next turn.
+            if (streamedToolCallIds.length > 0) {
+                try {
+                    const finalResponse = await result.response;
+                    const rawContent = (finalResponse as any).candidates?.[0]?.content;
+                    if (rawContent) {
+                        const cacheKey = streamedToolCallIds.join('|');
+                        if (this.rawContentCache.size >= GeminiAdapter.RAW_CONTENT_CACHE_MAX) {
+                            this.rawContentCache.delete(this.rawContentCache.keys().next().value!);
+                        }
+                        this.rawContentCache.set(cacheKey, rawContent);
+                    }
+                } catch { /* cache miss is handled gracefully in formatHistory */ }
             }
         } catch (error) {
             throw this.handleError(error);
@@ -437,6 +476,13 @@ export class GeminiAdapter extends ProviderAdapter {
             }
 
             if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+                // Use cached raw Content when available — it carries thought_signature fields
+                // that thinking models (Gemini 3.x+) require on every subsequent turn.
+                const cacheKey = m.tool_calls.map(tc => tc.id).join('|');
+                const cached = this.rawContentCache.get(cacheKey);
+                if (cached) return cached;
+
+                // Fallback reconstruction for non-thinking responses or cache misses.
                 const parts: any[] = [];
                 if (typeof m.content === 'string' && m.content) {
                     parts.push({ text: m.content });

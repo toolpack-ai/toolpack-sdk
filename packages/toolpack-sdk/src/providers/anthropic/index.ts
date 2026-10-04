@@ -4,6 +4,7 @@ import { ProviderAdapter } from "../base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallResult, Message, EmbeddingRequest, EmbeddingResponse, ProviderModelInfo, FileUploadRequest, FileUploadResponse } from "../../types/index.js";
 import { AuthenticationError, RateLimitError, InvalidRequestError, ProviderError } from "../../errors/index.js";
 import { logDebug, logTrace, safePreview, logMessagePreview } from "../provider-logger.js";
+import { parseFileEnvelope } from "../media-utils.js";
 
 export class AnthropicAdapter extends ProviderAdapter {
     private client: Anthropic;
@@ -325,11 +326,16 @@ export class AnthropicAdapter extends ProviderAdapter {
                 // Tool result — Anthropic expects this as a user message with tool_result content
                 const rawContent = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
                 const dataMatch = rawContent.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+                const fileEnvelope = !dataMatch ? parseFileEnvelope(rawContent) : null;
                 const toolResultContent: any = dataMatch
                     ? dataMatch[1].startsWith('image/')
                         ? [{ type: 'image', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
                         : [{ type: 'document', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } }]
-                    : rawContent;
+                    : fileEnvelope
+                        ? fileEnvelope.mimeType.startsWith('image/')
+                            ? [{ type: 'image', source: { type: 'url', url: fileEnvelope.url } }]
+                            : [{ type: 'document', source: { type: 'url', url: fileEnvelope.url } }]
+                        : rawContent;
                 userMessages.push({
                     role: 'user',
                     content: [{
