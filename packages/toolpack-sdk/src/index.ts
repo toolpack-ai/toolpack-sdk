@@ -7,6 +7,7 @@ export * from './modes/index.js';
 export * from './workflows/index.js';
 export * from './toolpack.js';
 export * from './conversation/index.js';
+export * from './utils/abort.js';
 export * from './utils/home-config.js';
 export * from './utils/runtime-config-loader.js';
 export * from './utils/token-counter.js';

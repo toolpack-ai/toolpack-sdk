@@ -1,4 +1,5 @@
 import { RateLimitError } from '../errors/index.js';
+import { AbortedError } from './abort.js';
 
 export interface RetryOptions {
   /** Maximum number of retry attempts after the first failure. Default: 3 */
@@ -9,6 +10,18 @@ export interface RetryOptions {
   isRetryable?: (error: any) => boolean;
   /** Called before each retry so callers can log or instrument. */
   onRetry?: (attempt: number, delayMs: number, error: any) => void;
+  /** When aborted, no further attempt is started and a wait for one ends at once (with an AbortedError). */
+  signal?: AbortSignal;
+}
+
+/** Waits `ms`, or rejects with an AbortedError as soon as `signal` is aborted (the timer is cleared). */
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new AbortedError());
+    const onAbort = () => { clearTimeout(timer); reject(new AbortedError()); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**
@@ -22,9 +35,11 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
     backoffMs = [10_000, 30_000, 60_000],
     isRetryable = (err) => err instanceof RateLimitError,
     onRetry,
+    signal,
   } = options;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) throw new AbortedError();
     try {
       return await fn();
     } catch (error: any) {
@@ -33,7 +48,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
           ? error.retryAfter * 1000
           : (backoffMs[attempt] ?? backoffMs[backoffMs.length - 1] ?? 60_000);
         onRetry?.(attempt + 1, delay, error);
-        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        await wait(delay, signal);
         continue;
       }
       throw error;

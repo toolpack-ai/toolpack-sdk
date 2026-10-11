@@ -128,7 +128,7 @@ export interface AgentInput<TIntent extends string = string> {
    */
   participant?: Participant;
 
-  /** Optional abort signal — when aborted, the running LLM stream stops at the next round boundary. */
+  /** Optional abort signal: when aborted, the running LLM call stops at once and tools not yet started are not run. */
   signal?: AbortSignal;
 
   /** Called with each text delta as it is generated. When provided, the run uses streaming mode. */
@@ -173,6 +173,7 @@ export interface AgentResult {
    * Optional metadata for routing decisions or post-processing.
    * `mindSaveError` is set by run() when the reply was produced but what the agent learned in
    * the run could not be saved to its mind (the message of the failure).
+   * `aborted` is true when a streaming run was stopped by its signal: `output` is what had arrived.
    */
   metadata?: Record<string, unknown>;
 }

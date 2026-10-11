@@ -109,7 +109,7 @@ export class AnthropicVertexAdapter extends ProviderAdapter {
             logDebug(`[AnthropicVertex][${requestId}] generate() model=${params.model} messages=${params.messages.length} tools=${params.tools?.length ?? 0}`);
             logMessagePreview(requestId, 'AnthropicVertex', params.messages);
 
-            const response = await this.client.messages.create(params) as any;
+            const response = await this.client.messages.create(params, request.signal ? { signal: request.signal } : undefined) as any;
 
             const textParts: string[] = [];
             const toolCalls: ToolCallResult[] = [];
@@ -175,7 +175,7 @@ export class AnthropicVertexAdapter extends ProviderAdapter {
 
             logDebug(`[AnthropicVertex][${requestId}] stream() model=${params.model} messages=${params.messages.length} tools=${params.tools?.length ?? 0}`);
 
-            const streamResponse = await this.client.messages.create(params);
+            const streamResponse = await this.client.messages.create(params, request.signal ? { signal: request.signal } : undefined);
 
             let currentToolId = '';
             let currentToolName = '';

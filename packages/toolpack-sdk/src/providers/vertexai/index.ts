@@ -170,6 +170,8 @@ export class VertexAIAdapter extends ProviderAdapter {
                 }
             }
 
+            // A stop cancels the HTTP call itself.
+            if (request.signal) config.abortSignal = request.signal;
             const response = await this.ai.models.generateContent({ model, contents, config });
 
             const { content, toolCalls, rawContent } = this.parseResponse(response, request.tools);
@@ -225,6 +227,7 @@ export class VertexAIAdapter extends ProviderAdapter {
                 }
             }
 
+            if (request.signal) config.abortSignal = request.signal;
             const chunkStream = await this.ai.models.generateContentStream({ model, contents, config });
 
             const streamedToolCallIds: string[] = [];

@@ -225,7 +225,7 @@ export class GeminiAdapter extends ProviderAdapter {
                 },
             });
 
-            const result = await chat.sendMessage(lastUserMessage);
+            const result = await chat.sendMessage(lastUserMessage, request.signal ? { signal: request.signal } : undefined);
             const response = await result.response;
 
             // Parse function calls from response
@@ -323,7 +323,7 @@ export class GeminiAdapter extends ProviderAdapter {
                 },
             });
 
-            const result = await chat.sendMessageStream(lastUserMessage);
+            const result = await chat.sendMessageStream(lastUserMessage, request.signal ? { signal: request.signal } : undefined);
 
             const streamedToolCallIds: string[] = [];
 

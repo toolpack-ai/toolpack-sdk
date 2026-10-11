@@ -3,6 +3,7 @@ import { ProviderAdapter } from "../providers/base/index.js";
 import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, RequestToolDefinition, ContextWindowConfig, ProviderModelInfo } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
 import { withRetry } from '../utils/retry.js';
+import { AbortedError, raceAbort, untilAborted } from '../utils/abort.js';
 import { ContextWindowExceededError, SummarizationError } from '../errors/context-window-errors.js';
 import { countTokens, getSafeOutputReserve } from '../utils/token-counter.js';
 import { pruneMessages } from '../utils/message-pruner.js';
@@ -260,13 +261,14 @@ export class AIClient extends EventEmitter {
             maxSummaryTokens: 500,
         });
 
-        const summaryResponse = await provider.generate({
+        const summaryResponse = await raceAbort(provider.generate({
             model: summarizerModel,
             messages: summaryRequestMessages,
             max_tokens: 500,
             temperature: 0,
             response_format: 'text',
-        });
+            signal: request.signal,
+        }), request.signal);
 
         if (!summaryResponse.content) {
             throw new SummarizationError('Summarization provider returned no summary', this.getConversationId(), messagesToSummarize.length, 'invalid_response');
@@ -332,6 +334,8 @@ export class AIClient extends EventEmitter {
                 }
                 managedRequest = await this.pruneConversation(summarizedRequest, provider, safeInputLimit);
             } catch (error) {
+                // A stop is not a failed summary: nothing is pruned in its place.
+                if (error instanceof AbortedError) throw error;
                 managedRequest = await this.pruneConversation(managedRequest, provider, safeInputLimit);
             }
         } else {
@@ -561,10 +565,15 @@ export class AIClient extends EventEmitter {
             logTools(requestId, enrichedRequest.tools as any);
             logRequestMessages(requestId, enrichedRequest.messages);
 
-            const callProvider = (req: any) => withRetry(
+            // A stop takes effect at once, also while the provider call (or a rate limit wait) is under way.
+            const callProvider = (req: any) => raceAbort(withRetry(
                 () => provider.generate(req),
-                { onRetry: (n, ms) => logInfo(`[AIClient][${requestId}] Rate limited — retrying in ${ms / 1000}s (attempt ${n}/3)`) },
-            );
+                {
+                    // After a stop no new call is started (a rate limit retry would be one), and the wait for it ends.
+                    signal: request.signal,
+                    onRetry: (n, ms) => logInfo(`[AIClient][${requestId}] Rate limited — retrying in ${ms / 1000}s (attempt ${n}/3)`),
+                },
+            ), request.signal);
 
             let response = await callProvider(outboundReq);
 
@@ -600,7 +609,7 @@ export class AIClient extends EventEmitter {
                 while (response.tool_calls && response.tool_calls.length > 0 && rounds < maxRounds) {
                     if (request.signal?.aborted) {
                         logInfo(`[AIClient][${requestId}] generate() aborted by signal`);
-                        break;
+                        throw new AbortedError();
                     }
                     rounds++;
                     logInfo(`[AIClient][${requestId}] generate() tool round ${rounds}/${maxRounds} tool_calls=${response.tool_calls.length}`);
@@ -651,12 +660,14 @@ export class AIClient extends EventEmitter {
                         logInfo(`[AIClient][${requestId}] Using parallel execution for ${toolCallsToExecute.length} tools`);
                         let toolResults: Map<string, string>;
                         try {
-                            toolResults = await this.toolOrchestrator.executeWithDependencies(
+                            // A stop ends the wait for the tools that are running; the ones not yet started are not run.
+                            toolResults = await raceAbort(this.toolOrchestrator.executeWithDependencies(
                                 toolCallsToExecute,
-                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode, rounds),
+                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal),
                                 5 // maxConcurrent
-                            );
+                            ), request.signal);
                         } catch (err: any) {
+                            if (err instanceof AbortedError) throw err;
                             // Execution engine failed (e.g. circular dependency). Build a full error map
                             // so every tool_call in the assistant turn gets a matching tool_result entry.
                             logError(`[AIClient][${requestId}] Parallel tool execution failed: ${err.message}`);
@@ -706,8 +717,9 @@ export class AIClient extends EventEmitter {
                         for (const toolCall of toolCallsToExecute) {
                             let result: string;
                             try {
-                                result = await this.executeTool(toolCall, requestToolMap, mode, rounds);
+                                result = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
                             } catch (err: any) {
+                                if (err instanceof AbortedError) throw err;
                                 result = JSON.stringify({ error: err.message ?? 'Tool execution failed' });
                             }
                             const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
@@ -736,6 +748,12 @@ export class AIClient extends EventEmitter {
                             });
                         }
                         logDebug(`[AIClient][${requestId}] Round tool output size: ${roundOutputSize} chars (budget: ${MAX_TOOL_OUTPUT_PER_ROUND})`);
+                    }
+
+                    // Stopped while the tools ran: their results are not sent to the model.
+                    if (request.signal?.aborted) {
+                        logInfo(`[AIClient][${requestId}] generate() aborted by signal during tool execution`);
+                        throw new AbortedError();
                     }
 
                     // Call the model again with updated messages
@@ -811,6 +829,7 @@ export class AIClient extends EventEmitter {
                         response = await callProvider(await this.enforceContextWindow(conclusionReq, provider)) as CompletionResponse;
                         logInfo(`[AIClient][${requestId}] Graceful conclusion received content_length=${response.content?.length ?? 0}`);
                     } catch (conclusionErr: any) {
+                        if (conclusionErr instanceof AbortedError) throw conclusionErr;
                         logWarn(`[AIClient][${requestId}] Graceful conclusion call failed: ${conclusionErr?.message ?? conclusionErr}; returning last response`);
                     }
                 }
@@ -888,7 +907,8 @@ export class AIClient extends EventEmitter {
             logRequestMessages(requestId, enrichedRequest.messages);
 
             if (!effectiveToolsConfig.autoExecute || (!this.toolRegistry && requestToolMap.size === 0 && (mode?.customTools?.length ?? 0) === 0)) {
-                yield* provider.stream(baseReq);
+                yield* untilAborted(provider.stream(baseReq), request.signal);
+                if (request.signal?.aborted) throw new AbortedError();
                 return;
             }
 
@@ -915,7 +935,7 @@ export class AIClient extends EventEmitter {
                 // Check for abort signal at start of each round
                 if (request.signal?.aborted) {
                     logInfo(`[AIClient][${requestId}] stream() aborted by signal`);
-                    return;
+                    throw new AbortedError();
                 }
 
                 let accumulatedContent = '';
@@ -949,11 +969,11 @@ export class AIClient extends EventEmitter {
                     logInfo(`[AIClient][${requestId}] stream() round_${rounds} tool_choice override required->${(roundReq as any).tool_choice}`);
                 }
 
-                for await (const chunk of provider.stream(roundReq)) {
+                for await (const chunk of untilAborted(provider.stream(roundReq), request.signal)) {
                     // Check for abort signal during streaming
                     if (request.signal?.aborted) {
                         logInfo(`[AIClient][${requestId}] stream() aborted by signal during chunk processing`);
-                        return;
+                        throw new AbortedError();
                     }
 
                     if (chunk.tool_calls && chunk.tool_calls.length > 0) {
@@ -972,6 +992,12 @@ export class AIClient extends EventEmitter {
                     if (chunk.finish_reason === 'stop') {
                         yield chunk;
                     }
+                }
+
+                // Stopped while waiting for the next chunk: the tool calls that had arrived are not run.
+                if (request.signal?.aborted) {
+                    logInfo(`[AIClient][${requestId}] stream() aborted by signal while waiting for the provider`);
+                    throw new AbortedError();
                 }
 
                 logDebug(`[AIClient][${requestId}] stream() round_end finish_reason=${lastFinishReason ?? 'unknown'} accumulated_len=${accumulatedContent.length} tool_calls_total=${pendingToolCalls.length} content=${accumulatedContent}`);
@@ -1040,16 +1066,17 @@ export class AIClient extends EventEmitter {
                         logInfo(`[AIClient][${requestId}] stream() using parallel execution for ${toolCallsToExecute.length} tools`);
                         // Track per-tool durations via a wrapper
                         streamToolDurations = new Map();
-                        streamToolResults = await this.toolOrchestrator.executeWithDependencies(
+                        // A stop ends the wait for the tools that are running; the ones not yet started are not run.
+                        streamToolResults = await raceAbort(this.toolOrchestrator.executeWithDependencies(
                             toolCallsToExecute,
                             async (toolCall) => {
                                 const t = Date.now();
-                                const r = await this.executeTool(toolCall, requestToolMap, mode, rounds);
+                                const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
                                 streamToolDurations!.set(toolCall.id, Date.now() - t);
                                 return r;
                             },
                             5
-                        );
+                        ), request.signal);
                     } else {
                         // Single tool — execute directly
                         logInfo(`[AIClient][${requestId}] stream() executing single tool sequentially`);
@@ -1057,7 +1084,7 @@ export class AIClient extends EventEmitter {
                         streamToolResults = new Map();
                         for (const toolCall of toolCallsToExecute) {
                             const t = Date.now();
-                            const r = await this.executeTool(toolCall, requestToolMap, mode, rounds);
+                            const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
                             streamToolDurations.set(toolCall.id, Date.now() - t);
                             streamToolResults.set(toolCall.id, r);
                         }
@@ -1065,6 +1092,12 @@ export class AIClient extends EventEmitter {
                 } finally {
                     streamToolsDone = true;
                     clearInterval(streamHeartbeatInterval);
+                }
+
+                // Stopped while the tools ran: their results are not sent to the model.
+                if (request.signal?.aborted) {
+                    logInfo(`[AIClient][${requestId}] stream() aborted by signal during tool execution`);
+                    throw new AbortedError();
                 }
 
                 // Yield any queued heartbeat chunks
@@ -1152,16 +1185,22 @@ export class AIClient extends EventEmitter {
 
                 try {
                     const conclusionFinalReq = await this.enforceContextWindow(conclusionReq, provider);
-                    for await (const chunk of provider.stream(conclusionFinalReq)) {
-                        if (request.signal?.aborted) break;
+                    for await (const chunk of untilAborted(provider.stream(conclusionFinalReq), request.signal)) {
                         yield chunk;
                     }
+                    if (request.signal?.aborted) throw new AbortedError();
                     logInfo(`[AIClient][${requestId}] Graceful conclusion stream complete`);
                 } catch (conclusionErr: any) {
+                    if (conclusionErr instanceof AbortedError) throw conclusionErr;
                     logWarn(`[AIClient][${requestId}] Graceful conclusion stream failed: ${conclusionErr?.message ?? conclusionErr}`);
                 }
             }
         } catch (error) {
+            // A stop is not a failure: the stream ends with one last chunk that says it was stopped.
+            if (error instanceof AbortedError) {
+                yield { delta: '', finish_reason: 'aborted' };
+                return;
+            }
             throw this.wrapError(error);
         }
     }
@@ -1793,7 +1832,10 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
      * Execute a single tool call via the registry.
      * Emits 'tool:started', 'tool:completed', and 'tool:failed' events.
      */
-    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0): Promise<string> {
+    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0, signal?: AbortSignal): Promise<string> {
+        // After a stop no tool is started.
+        if (signal?.aborted) throw new AbortedError();
+
         const startTime = Date.now();
 
         // Emit started event
@@ -1885,10 +1927,10 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 } as ToolConfirmationRequestedEvent);
 
                 // Wait for user decision
-                const decision = await this.onToolConfirm(hitlTool, args, {
+                const decision = await raceAbort(this.onToolConfirm(hitlTool, args, {
                     roundNumber,
                     conversationId: this.conversationId,
-                });
+                }), signal);
 
                 // Emit confirmation resolved event
                 this.emit('tool:confirmation_resolved', {
@@ -1941,8 +1983,10 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
                 log: (msg) => logInfo(`[Tool] ${msg}`),
                 processRegistry: this.toolRegistry?.runtimeContext?.processRegistry,
                 githubTokenStore: this.toolRegistry?.runtimeContext?.githubTokenStore,
+                signal,
             };
-            const result = await tool.execute(args, ctx);
+            // A stop ends the wait for the tool. A tool that reads ctx.signal can also end its own work.
+            const result = await raceAbort(Promise.resolve(tool.execute(args, ctx)), signal);
             const duration = Date.now() - startTime;
 
             // Emit completed event
@@ -1998,6 +2042,8 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
             } as ToolLogEvent);
 
             logError(`[AIClient] Tool ${toolCall.name} failed: ${safePreview(errorMsg, 300)}`);
+            // A stop is passed on, so the run ends instead of sending this to the model as a tool result.
+            if (error instanceof AbortedError) throw error;
             return JSON.stringify({ error: errorMsg });
         }
     }
@@ -2160,6 +2206,8 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
     }
 
     private wrapError(error: any): SDKError {
+        // A stop is not a provider error: it keeps its own name ('AbortError').
+        if (error instanceof AbortedError) return error;
         if (error instanceof SDKError) {
             return error;
         }

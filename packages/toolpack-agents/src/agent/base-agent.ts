@@ -747,7 +747,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         // so a concurrent setMode() from another agent sharing this Toolpack
         // (e.g. awaited delegation) cannot change this run's tool filtering.
         mode: this.mode,
-        // Abort signal — checked at every round boundary in AIClient.stream/generate.
+        // Abort signal: a stop takes effect at once, also while a provider call or a tool is under way.
         signal: _options?.signal,
         // Output token cap injected by the platform when the org's credit balance is low.
         ...(_options?.maxTokens ? { max_tokens: _options.maxTokens } : {}),
@@ -756,6 +756,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       let resultContent: string | null = null;
       let resultUsage: import('toolpack-sdk').Usage | undefined;
       let fullResult: unknown;
+      // Whether the run was stopped by its signal (streaming only: generate() throws on a stop).
+      let stopped = false;
 
       const isStreaming = (typeof this.mode !== 'string' && this.mode?.streaming) || !!_options?.onChunk;
       if (isStreaming) {
@@ -766,6 +768,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
             _options?.onChunk?.(chunk.delta);
           }
           if (chunk.usage) resultUsage = chunk.usage;
+          if (chunk.finish_reason === 'aborted') stopped = true;
         }
         resultContent = content || null;
         fullResult = { content: resultContent, usage: resultUsage };
@@ -781,6 +784,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         steps: this.extractSteps(fullResult),
         metadata: resultUsage ? { usage: resultUsage } : undefined,
       };
+      // A stopped run keeps what had arrived; `metadata.aborted` tells the caller the reply is not complete.
+      if (stopped) agentResult.metadata = { ...agentResult.metadata, aborted: true };
 
       await this.onComplete(agentResult);
 
@@ -789,7 +794,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // succeeds, and the failure is reported in `metadata.mindSaveError` for the caller.
       if (mindFlush) {
         try {
-          await mindFlush(false);
+          // A stopped run is saved like a failed one: what it learned is kept, its goal writes are dropped.
+          await mindFlush(stopped);
         } catch (flushErr) {
           console.error(`[${this.name ?? 'agent'}][AgentMind] Draft buffer flush failed; the reply is kept:`, flushErr);
           agentResult.metadata = {

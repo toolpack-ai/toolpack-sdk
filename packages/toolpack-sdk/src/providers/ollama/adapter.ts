@@ -224,6 +224,7 @@ export class OllamaAdapter extends ProviderAdapter {
                 'POST',
                 payload,
                 this.timeout,
+                request.signal,
             );
 
             if (res.status !== 200) {

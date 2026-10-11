@@ -211,7 +211,8 @@ export interface CompletionResponse<T = unknown> {
 export interface CompletionChunk {
     delta: string;
     usage?: Usage;
-    finish_reason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error';
+    /** 'aborted' is the last chunk of a stream that was stopped by the request's AbortSignal. */
+    finish_reason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error' | 'aborted';
     tool_calls?: ToolCallResult[];
     /** Present when chunk comes from a workflow step */
     workflowStep?: { number: number; description: string };

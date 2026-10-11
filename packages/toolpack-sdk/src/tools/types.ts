@@ -70,6 +70,8 @@ export interface ToolContext {
     processRegistry?: import('./exec-tools/process-registry.js').ProcessRegistry;
     /** Per-tenant GitHub App installation-token cache (github-tools). */
     githubTokenStore?: import('./github-tools/auth.js').GithubTokenStore;
+    /** Aborted when the run was stopped. A long-running tool can watch it to end its own work early. */
+    signal?: AbortSignal;
 }
 
 // ── Tool Annotations (MCP) ────────────────────────────────────

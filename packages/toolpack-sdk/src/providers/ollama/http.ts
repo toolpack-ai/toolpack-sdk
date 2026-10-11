@@ -1,4 +1,5 @@
 import http from 'http';
+import { AbortedError } from '../../utils/abort.js';
 
 // ============================================================================
 // HTTP helpers (zero-dependency, uses Node built-in http)
@@ -10,8 +11,11 @@ export function ollamaRequest(
     method: 'GET' | 'POST',
     body?: object,
     timeoutMs: number = 120000,
+    signal?: AbortSignal,
 ): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(new AbortedError());
+
         const url = new URL(path, baseUrl);
         const options: http.RequestOptions = {
             hostname: url.hostname,
@@ -32,6 +36,11 @@ export function ollamaRequest(
                 });
             });
         });
+
+        // A stop closes the connection.
+        const onAbort = () => { req.destroy(); reject(new AbortedError()); };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        req.on('close', () => signal?.removeEventListener('abort', onAbort));
 
         req.on('error', (err) => reject(err));
         req.on('timeout', () => {
