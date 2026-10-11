@@ -1136,9 +1136,32 @@ const resultPromise = agent.invokeAgent({
 // Abort from wherever you need — HTTP stop endpoint, UI button, timeout, etc.
 controller.abort();
 
-const result = await resultPromise;
-// result.output will indicate the run was stopped
+const result = await resultPromise; // see "What the caller gets back" below
 ```
+
+### What the caller gets back
+
+| Run | On a stop |
+|---|---|
+| Streaming (`onChunk` set, or the mode has `streaming`) | Resolves with the text that had arrived, and `result.metadata.aborted` is `true` |
+| Not streaming | Rejects with an error whose `name` is `'AbortError'` |
+
+```typescript
+try {
+  const result = await agent.invokeAgent({ message, signal: controller.signal, onChunk });
+  if (result.metadata?.aborted) {
+    // stopped while streaming: result.output is the part that arrived
+  }
+} catch (err) {
+  if ((err as Error).name === 'AbortError') {
+    // stopped while not streaming
+  } else {
+    throw err;
+  }
+}
+```
+
+A stopped streaming run is saved to the agent's mind like a failed one: what it learned is kept, its goal writes are dropped.
 
 ### In a web server (stop endpoint)
 
@@ -1177,9 +1200,9 @@ await executiveAgent.invokeAgent({ message: '...', signal: controller.signal });
 controller.abort(); // stops executive + all delegates it spawned
 ```
 
-### Limitation
+### Timing
 
-The signal fires at **tool-round boundaries**, not mid-tool-execution. A running tool call (including a delegation) finishes its current step before the abort is observed. Sub-agents stop at their own next round boundary once the signal is propagated. This is the standard behavior for cooperative cancellation with `AbortSignal`.
+A stop takes effect at once: in the middle of a model call, a rate limit wait, or a tool. Tools that have not started are not run. A tool that is already running is no longer waited for, but its own work only ends early if it reads `ctx.signal`; otherwise it finishes in the background and its result is ignored. Sub-agents receive the same signal and stop the same way.
 
 ## Testing
 

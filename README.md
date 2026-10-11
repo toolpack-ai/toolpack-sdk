@@ -612,6 +612,24 @@ execute: async (args, ctx) => {
 
 When one instance serves several people, pass a function (read on every tool call), for example `actor: () => requestStore.getStore() ?? null`.
 
+### Stopping a request
+
+Pass an `AbortSignal` as `signal` on a request. A stop takes effect at once, also in the middle of a provider call, a rate limit wait, or a tool.
+
+```typescript
+const controller = new AbortController();
+stopButton.onclick = () => controller.abort(); // or a timeout, a newer message
+
+for await (const chunk of sdk.stream({ model, messages, signal: controller.signal })) {
+  if (chunk.finish_reason === 'aborted') break; // stopped: what arrived before is kept
+  process.stdout.write(chunk.delta);
+}
+```
+
+- `stream()` ends without throwing; its last chunk has `finish_reason: 'aborted'`
+- `generate()` rejects with an `AbortedError` (`name` is `'AbortError'`, exported from the package root)
+- Tools that have not started are not run. A tool can read `ctx.signal` to end its own long work early, for example `fetch(url, { signal: ctx.signal })`
+
 ### Returning files from tools
 
 A tool can return a file by URL with `{ "type": "file", "mimeType": "application/pdf", "url": "https://..." }`. Anthropic and Vertex AI receive it as a native file part, and OpenAI receives images (other files get a placeholder). `data:` URIs keep working as before.
@@ -1308,7 +1326,7 @@ interface CompletionResponse {
 interface CompletionChunk {
   delta: string;
   usage?: Usage;
-  finish_reason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error';
+  finish_reason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error' | 'aborted'; // 'aborted': stopped by the request's signal
   tool_calls?: ToolCallResult[];
 }
 
