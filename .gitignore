@@ -58,3 +58,6 @@ samples/
 
 # Enterprise packages — private repo, gitignored from SDK
 enterprise/
+
+# Claude Code local settings
+.claude/
