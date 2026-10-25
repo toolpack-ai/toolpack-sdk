@@ -4,7 +4,7 @@ import { MindStore } from './store.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { buildMindTools } from './tools.js';
 import { assemble } from './assembler.js';
-import type { AgentMindConfig, ResolvedMindConfig } from './types.js';
+import type { AgentMindConfig, MindEntryType, ResolvedMindConfig } from './types.js';
 
 const DEFAULT_TOKEN_BUDGET = 300;
 const DEFAULT_RECENCY_WINDOW_DAYS = 7;
@@ -76,9 +76,10 @@ export class AgentMind {
    */
   async createRunContext(): Promise<RunContext> {
     // Read committed goal count and pinned reflection count for cap checks in the draft buffer.
+    // (A kind the agent does not remember is not read at all.)
     const [committedGoalCount, committedPinnedCount, mindHeader] = await Promise.all([
-      this.store.getActiveGoalCount(),
-      this.store.getPinnedReflectionCount(),
+      this.config.kinds.includes('goal') ? this.store.getActiveGoalCount() : Promise.resolve(0),
+      this.config.kinds.includes('reflection') ? this.store.getPinnedReflectionCount() : Promise.resolve(0),
       assemble(this.store, this.config),
     ]);
 
@@ -145,5 +146,16 @@ function resolveConfig(agentName: string, options: AgentMindConfig): ResolvedMin
       reflection: options.ttlDefaults?.reflection,
     },
     namespace: options.namespace ?? `mind/${agentName}`,
+    kinds: resolveKinds(options.kinds),
   };
+}
+
+const ALL_KINDS: MindEntryType[] = ['belief', 'reflection', 'goal'];
+
+/** The kinds the agent remembers: all by default; a list must name at least one, and each kind once. */
+function resolveKinds(kinds: MindEntryType[] | undefined): MindEntryType[] {
+  if (kinds === undefined) return [...ALL_KINDS];
+  const unique = ALL_KINDS.filter(k => kinds.includes(k));
+  if (unique.length === 0) throw new Error('AgentMindConfig.kinds must name at least one of belief, reflection and goal.');
+  return unique;
 }

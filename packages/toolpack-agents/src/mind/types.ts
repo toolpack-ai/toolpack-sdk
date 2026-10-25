@@ -91,6 +91,11 @@ export interface AgentMindConfig {
   deduplicationThreshold?: number; // default: 0.85
   retrievalThreshold?: number; // default: 0.35
   ttlDefaults?: MindTtlDefaults;
+  /**
+   * Which kinds of entry this agent remembers. Default: all three. With only `['belief']` the agent remembers facts and nothing else: the mind
+   * header has no goals and no reflections, there are no goal or reflection tools, and `mind_recall` searches beliefs only.
+   */
+  kinds?: MindEntryType[];
 }
 
 export interface ResolvedMindConfig {
@@ -102,6 +107,7 @@ export interface ResolvedMindConfig {
   retrievalThreshold: number;
   ttlDefaults: { belief: string | undefined; reflection: string | undefined };
   namespace: string;
+  kinds: MindEntryType[];
 }
 
 // --- Draft buffer operation types ---

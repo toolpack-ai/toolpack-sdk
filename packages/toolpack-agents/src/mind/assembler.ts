@@ -7,11 +7,15 @@ import { estimateTokens } from './utils.js';
 // Throws if the store read fails — callers must handle the error.
 export async function assemble(store: MindStore, config: ResolvedMindConfig): Promise<string> {
   // All reads are parallel; none require an embedding (spec: assemble() is not embedding-bound)
+  // A kind the agent does not remember (`config.kinds`) is not read, so it is never in the header.
+  const goals = config.kinds.includes('goal');
+  const reflections = config.kinds.includes('reflection');
+  const beliefs = config.kinds.includes('belief');
   const [activeGoals, pinnedReflections, highConfBeliefs, recentReflections] = await Promise.all([
-    store.getActiveGoals(),
-    store.getPinnedReflections(),
-    store.getHighConfidenceBeliefs(20), // fetch more than needed, then trim to budget
-    store.getRecentReflections(config.recencyWindowDays, 3),
+    goals ? store.getActiveGoals() : Promise.resolve([]),
+    reflections ? store.getPinnedReflections() : Promise.resolve([]),
+    beliefs ? store.getHighConfidenceBeliefs(20) : Promise.resolve([]), // fetch more than needed, then trim to budget
+    reflections ? store.getRecentReflections(config.recencyWindowDays, 3) : Promise.resolve([]),
   ]);
 
   const goalLines = activeGoals.map(g => formatGoal(g));

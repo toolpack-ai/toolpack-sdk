@@ -19,14 +19,14 @@ export function buildMindTools(
   draftBuffer: DraftBuffer,
   config: ResolvedMindConfig,
 ): RequestToolDefinition[] {
+  const reflections = config.kinds.includes('reflection');
+  const goals = config.kinds.includes('goal');
+  // Only the tools of the kinds the agent remembers are given to it (`config.kinds`): an agent that remembers facts only never sees a goal tool.
   return [
     buildMindRecall(store, config),
-    buildMindBelieve(store, draftBuffer, config),
-    buildMindReflect(draftBuffer, config),
-    buildMindUnpinReflection(draftBuffer),
-    buildMindSetGoal(draftBuffer, config),
-    buildMindUpdateGoal(store, draftBuffer),
-    buildMindCompleteGoal(store),
+    ...(config.kinds.includes('belief') ? [buildMindBelieve(store, draftBuffer, config)] : []),
+    ...(reflections ? [buildMindReflect(draftBuffer, config), buildMindUnpinReflection(draftBuffer)] : []),
+    ...(goals ? [buildMindSetGoal(draftBuffer, config), buildMindUpdateGoal(store, draftBuffer), buildMindCompleteGoal(store)] : []),
   ];
 }
 
@@ -51,8 +51,8 @@ function buildMindRecall(store: MindStore, config: ResolvedMindConfig): RequestT
         },
         type: {
           type: 'string',
-          enum: ['belief', 'reflection', 'goal', 'all'],
-          description: "Entry type to search. Default: 'all'",
+          enum: [...config.kinds, 'all'],
+          description: config.kinds.length === 3 ? "Entry type to search. Default: 'all'" : `Entry type to search: ${config.kinds.join(', ')}. Default: 'all' (${config.kinds.join(' and ')}).`,
         },
         status: {
           type: 'string',
@@ -86,6 +86,8 @@ function buildMindRecall(store: MindStore, config: ResolvedMindConfig): RequestT
     execute: async (args: Record<string, unknown>) => {
       const query = String(args.query ?? '');
       const type = (args.type as string) ?? 'all';
+      // Only the kinds this agent remembers are searched: a kind it does not remember is never read, whatever `type` says.
+      const wants = (kind: 'belief' | 'reflection' | 'goal') => config.kinds.includes(kind) && (type === kind || type === 'all');
       const status = (args.status as GoalStatus) ?? 'active';
       const tags = Array.isArray(args.tags) ? args.tags.map(String) : undefined;
       const pinned = typeof args.pinned === 'boolean' ? args.pinned : undefined;
@@ -94,17 +96,17 @@ function buildMindRecall(store: MindStore, config: ResolvedMindConfig): RequestT
       const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : 5;
 
       const results: MindRecallResult[] = [];
-      const needsVector = (type === 'belief' || type === 'reflection' || type === 'all') && query.trim();
+      const needsVector = (wants('belief') || wants('reflection')) && query.trim();
       const vector = needsVector ? await store.embed(query) : null;
 
-      if (type === 'goal' || type === 'all') {
+      if (wants('goal')) {
         const goals = await store.keywordSearchGoals(query, { limit, status, tags });
         for (const g of goals) {
           results.push(goalToRecall(g));
         }
       }
 
-      if (vector && (type === 'belief' || type === 'all')) {
+      if (vector && wants('belief')) {
         const beliefs = await store.queryBeliefs(vector, {
           limit,
           threshold,
@@ -116,7 +118,7 @@ function buildMindRecall(store: MindStore, config: ResolvedMindConfig): RequestT
         }
       }
 
-      if (vector && (type === 'reflection' || type === 'all')) {
+      if (vector && wants('reflection')) {
         const reflections = await store.queryReflections(vector, {
           limit,
           threshold,
