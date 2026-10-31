@@ -201,6 +201,8 @@ export interface AgentRunOptions {
   maxToolRounds?: number;
   /** Hard cap on output tokens for this run. Maps directly to max_tokens on the provider request. */
   maxTokens?: number;
+  /** Wraps every tool call of this run: it can stop a call or change its result. Passed to the request as `interceptTool`. */
+  interceptTool?: import('toolpack-sdk').ToolInterceptor;
   /** Optional abort signal — propagated to the underlying AIClient stream/generate call. */
   signal?: AbortSignal;
   /** Called with each text delta as it is generated. When provided, the run uses streaming mode. */

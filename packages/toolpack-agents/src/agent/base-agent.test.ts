@@ -142,6 +142,21 @@ describe('BaseAgent', () => {
       );
     });
 
+    it('passes the run\'s tool interceptor to the request, and nothing when there is none', async () => {
+      class InterceptAgent extends TestAgent {
+        async invokeAgent(input: AgentInput<'greet' | 'help'>): Promise<AgentResult> {
+          return this.run(input.message || '', { interceptTool: async (_call, run) => run() });
+        }
+      }
+      const withHook = new InterceptAgent({ toolpack: mockToolpack });
+      await withHook.invokeAgent({ message: 'Test', conversationId: 'intercept-1' });
+      expect(vi.mocked(mockToolpack.generate).mock.calls.at(-1)![0]).toEqual(expect.objectContaining({ interceptTool: expect.any(Function) }));
+
+      const without = new TestAgent({ toolpack: mockToolpack });
+      await without.invokeAgent({ message: 'Test', conversationId: 'intercept-2' });
+      expect(vi.mocked(mockToolpack.generate).mock.calls.at(-1)![0]).not.toHaveProperty('interceptTool');
+    });
+
     it('should pass provider override to generate', async () => {
       const agent = new TestAgent({ toolpack: mockToolpack });
       await agent.invokeAgent({

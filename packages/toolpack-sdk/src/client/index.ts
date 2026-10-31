@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { ProviderAdapter } from "../providers/base/index.js";
-import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, RequestToolDefinition, ContextWindowConfig, ProviderModelInfo } from "../types/index.js";
+import { CompletionRequest, CompletionResponse, CompletionChunk, ToolCallRequest, ToolCallResult, EmbeddingRequest, EmbeddingResponse, ToolProgressEvent, ToolLogEvent, OnToolConfirmCallback, ToolConfirmationRequestedEvent, ToolConfirmationResolvedEvent, RequestToolDefinition, ToolInterceptor, ContextWindowConfig, ProviderModelInfo } from "../types/index.js";
 import { SDKError, ProviderError } from "../errors/index.js";
 import { withRetry } from '../utils/retry.js';
 import { AbortedError, raceAbort, untilAborted } from '../utils/abort.js';
@@ -663,7 +663,7 @@ export class AIClient extends EventEmitter {
                             // A stop ends the wait for the tools that are running; the ones not yet started are not run.
                             toolResults = await raceAbort(this.toolOrchestrator.executeWithDependencies(
                                 toolCallsToExecute,
-                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal),
+                                (toolCall) => this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal, request.interceptTool),
                                 5 // maxConcurrent
                             ), request.signal);
                         } catch (err: any) {
@@ -717,7 +717,7 @@ export class AIClient extends EventEmitter {
                         for (const toolCall of toolCallsToExecute) {
                             let result: string;
                             try {
-                                result = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
+                                result = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal, request.interceptTool);
                             } catch (err: any) {
                                 if (err instanceof AbortedError) throw err;
                                 result = JSON.stringify({ error: err.message ?? 'Tool execution failed' });
@@ -823,6 +823,7 @@ export class AIClient extends EventEmitter {
                         __toolpack_request_id: requestId,
                         tools: [],
                         requestTools: [],
+                        interceptTool: undefined,
                         tool_choice: undefined,
                     };
                     try {
@@ -1071,7 +1072,7 @@ export class AIClient extends EventEmitter {
                             toolCallsToExecute,
                             async (toolCall) => {
                                 const t = Date.now();
-                                const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
+                                const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal, request.interceptTool);
                                 streamToolDurations!.set(toolCall.id, Date.now() - t);
                                 return r;
                             },
@@ -1084,7 +1085,7 @@ export class AIClient extends EventEmitter {
                         streamToolResults = new Map();
                         for (const toolCall of toolCallsToExecute) {
                             const t = Date.now();
-                            const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal);
+                            const r = await this.executeTool(toolCall, requestToolMap, mode, rounds, request.signal, request.interceptTool);
                             streamToolDurations.set(toolCall.id, Date.now() - t);
                             streamToolResults.set(toolCall.id, r);
                         }
@@ -1180,6 +1181,7 @@ export class AIClient extends EventEmitter {
                     messages,
                     tools: [],
                     requestTools: [],
+                    interceptTool: undefined,
                     tool_choice: undefined,
                 };
 
@@ -1536,9 +1538,10 @@ export class AIClient extends EventEmitter {
 
     private stripRequestTools(request: CompletionRequest): CompletionRequest {
         // Strip SDK-internal fields (requestTools, mode) — providers must not see them.
-        const { requestTools, mode, ...rest } = request;
+        const { requestTools, mode, interceptTool, ...rest } = request;
         void requestTools;
         void mode;
+        void interceptTool;
         return rest;
     }
 
@@ -1832,7 +1835,17 @@ NEVER guess or hallucinate tool names. ALWAYS use tool.search to discover tools 
      * Execute a single tool call via the registry.
      * Emits 'tool:started', 'tool:completed', and 'tool:failed' events.
      */
-    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0, signal?: AbortSignal): Promise<string> {
+    private async executeTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0, signal?: AbortSignal, intercept?: ToolInterceptor): Promise<string> {
+        if (!intercept) return this.runTool(toolCall, requestToolMap, mode, roundNumber, signal);
+        // A stop takes effect before the interceptor is asked.
+        if (signal?.aborted) throw new AbortedError();
+        return intercept(
+            { toolName: toolCall.name, args: toolCall.arguments, round: roundNumber },
+            () => this.runTool(toolCall, requestToolMap, mode, roundNumber, signal),
+        );
+    }
+
+    private async runTool(toolCall: ToolCallResult, requestToolMap: Map<string, RequestToolDefinition>, mode?: ModeConfig | null, roundNumber: number = 0, signal?: AbortSignal): Promise<string> {
         // After a stop no tool is started.
         if (signal?.aborted) throw new AbortedError();
 

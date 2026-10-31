@@ -743,6 +743,8 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
         // Forward the per-run maxToolRounds cap (if any) so AIClient respects it
         // as a hard ceiling, bypassing the query-classifier adjustment.
         maxToolRounds: _options?.maxToolRounds,
+        // Per-run tool call interceptor (stops a call or changes its result), if the host set one.
+        ...(_options?.interceptTool ? { interceptTool: _options.interceptTool } : {}),
         // Per-request mode: snapshotted by the client for the entire request,
         // so a concurrent setMode() from another agent sharing this Toolpack
         // (e.g. awaited delegation) cannot change this run's tool filtering.

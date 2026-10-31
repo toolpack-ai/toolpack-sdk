@@ -109,6 +109,21 @@ export interface ToolCallRequest {
     function: ToolCallFunction;
 }
 
+/** One tool call, as a {@link ToolInterceptor} sees it. */
+export interface InterceptedToolCall {
+    toolName: string;
+    args: Record<string, any>;
+    /** The tool round of the request this call belongs to (1 for the first). Parallel calls of one round share it. */
+    round: number;
+}
+
+/**
+ * Wraps every tool call of one request. Call `run()` to run the tool (and use or change its result), or return text
+ * without calling it to stop the call: the model then sees that text as the tool's result. The tool's started, completed
+ * and log events are sent only when `run()` is called.
+ */
+export type ToolInterceptor = (call: InterceptedToolCall, run: () => Promise<string>) => Promise<string> | string;
+
 export interface RequestToolDefinition {
     name: string;
     displayName: string;
@@ -156,6 +171,11 @@ export interface CompletionRequest<T = unknown> {
     stream?: boolean;
     tools?: ToolCallRequest[];
     requestTools?: RequestToolDefinition[];
+    /**
+     * Wraps every tool call of this request, whatever the tool (request, mode or registry tool, and `tool.search`).
+     * It can stop a call or change its result. See {@link ToolInterceptor}. Not sent to the provider.
+     */
+    interceptTool?: ToolInterceptor;
     tool_choice?: 'auto' | 'none' | 'required';
     /** AbortSignal to cancel the request */
     signal?: AbortSignal;
