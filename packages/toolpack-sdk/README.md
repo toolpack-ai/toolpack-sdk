@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-The TypeScript SDK for building production AI agents — 100+ built-in tools, 8 channel integrations, a persistent cognitive layer, and full Knowledge/RAG, all in one package.
+The TypeScript SDK for building production AI agents — 100+ built-in tools, 9 channel integrations, a persistent cognitive layer, and full Knowledge/RAG, all in one package.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -206,7 +206,7 @@ const sdk = await Toolpack.init({
 ```
 
 See `docs/MCP_INTEGRATION.md` and `docs/examples/mcp-integration-example.ts` for full instructions and best practices.
-- **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GOOGLE_GENERATIVE_AI_KEY` or `TOOLPACK_GEMINI_KEY`.
+- **Gemini**: Uses synthetic tool call IDs (`gemini_<timestamp>_<random>`) since the Gemini API doesn't return tool call IDs natively. Tool results are converted to `functionResponse` parts in chat history automatically. API key read from `GEMINI_API_KEY` or `TOOLPACK_GEMINI_KEY`.
 - **Ollama**: Auto-discovers all locally pulled models when registered as `{ ollama: {} }`. Uses `/api/show` and tool probing to detect capabilities (tool calling, vision, embeddings) per model. Models without tool support are automatically stripped of tools and given a system instruction to prevent hallucinated tool usage. Uses synthetic tool call IDs (`ollama_<timestamp>_<random>`). Embeddings use the modern `/api/embed` batch endpoint. Legacy per-model registration (`{ 'ollama-llama3': {} }`) is also supported.
 - **OpenRouter**: Routes requests to any of the 300+ models available on [openrouter.ai](https://openrouter.ai) via an OpenAI-compatible API. Models are discovered dynamically from the `/models` endpoint. Tool calling is fully supported; models that reject `tool_choice: 'none'` have tools stripped gracefully instead. No embeddings support. Optional `siteUrl` and `siteName` config for OpenRouter's attribution leaderboard. API key read from `OPENROUTER_API_KEY` or `TOOLPACK_OPENROUTER_KEY`.
 
@@ -611,6 +611,26 @@ for await (const chunk of sdk.stream({ model, messages, signal: controller.signa
 - `stream()` ends without throwing; its last chunk has `finish_reason: 'aborted'`
 - `generate()` rejects with an `AbortedError` (`name` is `'AbortError'`, exported from the package root)
 - Tools that have not started are not run. A tool can read `ctx.signal` to end its own long work early, for example `fetch(url, { signal: ctx.signal })`
+
+### Stopping or changing a tool call
+
+Pass `interceptTool` on a request to wrap every tool call of that request (request, mode and registry tools, and `tool.search`). Call `run()` to run the tool and use or change its result, or return text without calling it to stop the call: the model then sees that text as the tool's result.
+
+```typescript
+import type { ToolInterceptor } from 'toolpack-sdk';
+
+const interceptTool: ToolInterceptor = async (call, run) => {
+  // call: { toolName, args, round }
+  if (call.toolName === 'fs.delete_file') return 'Deleting files is not allowed here.'; // not run
+  return run();
+};
+
+const response = await sdk.generate({ model, messages, interceptTool });
+```
+
+- The tool's `tool:started`, `tool:completed` and log events are sent only when `run()` is called
+- After a stop (`signal`), the interceptor is not asked and no tool is started
+- `interceptTool` is never sent to the provider
 
 ### Returning files from tools
 
@@ -1150,7 +1170,7 @@ A data URI (`data:<mime>;base64,<data>`) is also accepted in `file.url` for inli
 # Provider API keys (at least one required)
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
-export GOOGLE_GENERATIVE_AI_KEY="AIza..."
+export GEMINI_API_KEY="AIza..."
 export OPENROUTER_API_KEY="sk-or-..."
 
 # SDK logging (override programmatic config)
@@ -1345,7 +1365,9 @@ interface CompletionRequest {
   max_tokens?: number;
   tools?: ToolCallRequest[];
   requestTools?: RequestToolDefinition[];  // Request-scoped tools
+  interceptTool?: ToolInterceptor;         // Wraps every tool call: stop it or change its result
   tool_choice?: 'auto' | 'none' | 'required';
+  signal?: AbortSignal;                    // Stops the request
 }
 
 interface CompletionResponse {

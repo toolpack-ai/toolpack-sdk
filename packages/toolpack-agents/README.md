@@ -385,7 +385,7 @@ class SupportAgent extends BaseAgent {
 - Auto-stores user and assistant messages via the capture interceptor
 - Auto-trims to `maxMessagesPerConversation` limit (default: 500)
 - Zero-config in-memory mode for development
-- `conversation_search` tool is automatically provided as a request-scoped tool whenever a `conversationId` is active
+- `conversation_search` tool is automatically provided as a request-scoped tool whenever a `conversationId` is active. Set `conversationSearch = false` on the agent to leave it out (for example to give it your own search tool under the same name); the history still loads
 
 **Memory model:**
 Agent memory is per-conversation by default. The `conversation_search` tool is bound at invocation time to the current conversation — the LLM cannot override this scope, and turns from other conversations are structurally unreachable. Use `knowledge_add` to promote durable facts that should persist across conversations; knowledge is the only cross-conversation bridge.
@@ -596,10 +596,10 @@ const toolpack = await Toolpack.init({
 
 ## Peer Dependencies
 
-Requires `toolpack-sdk` (`^3.1.0`). Optional peers — install only what you need:
+Requires `toolpack-sdk` (`^3.6.0`). Optional peers, install only what you need:
 
 ```bash
-# Knowledge / RAG (optional)
+# Knowledge / RAG and Agent Mind (optional, ^3.6.0)
 npm install @toolpack-sdk/knowledge
 
 # For DiscordChannel
@@ -645,6 +645,36 @@ if (result.metadata?.mindSaveError) {
   console.warn('Reply kept, memory not saved:', result.metadata.mindSaveError);
 }
 ```
+
+#### Stopping or changing a tool call
+
+`AgentRunOptions` accepts `interceptTool`, which wraps every tool call of that run (see `toolpack-sdk`). Call `run()` to run the tool, or return text without calling it to stop the call; the model sees that text as the tool's result. This is not the same as the [Interceptors](#interceptors) below, which handle incoming messages before `invokeAgent`.
+
+```typescript
+const result = await this.run(input.message, {
+  interceptTool: async (call, run) => {
+    if (call.toolName.startsWith('fs.delete')) return 'Ask the user before deleting anything.';
+    return run();
+  },
+});
+```
+
+#### Agent Mind: what it remembers
+
+Set `mind` on the agent to give it memory that lasts across runs. By default it keeps beliefs (facts), reflections and goals. Pass `kinds` to keep only some of them:
+
+```typescript
+import { OllamaEmbedder } from '@toolpack-sdk/knowledge';
+
+class FactsAgent extends BaseAgent {
+  mind = {
+    embedder: new OllamaEmbedder({ model: 'nomic-embed-text' }),
+    kinds: ['belief'], // facts only
+  };
+}
+```
+
+A kind that is left out is switched off: it is not in the mind header, its tools are not given to the agent, and `mind_recall` does not search it. `kinds` must name at least one of `'belief'`, `'reflection'` and `'goal'`.
 
 ### AgentRegistry
 

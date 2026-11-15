@@ -7,8 +7,8 @@ export interface VertexAIEmbedderOptions {
   /** GCP region. Defaults to 'us-central1'. */
   location?: string;
   /**
-   * Embedding model. Defaults to 'gemini-embedding-2' (3072 dims).
-   * Other options: 'gemini-embedding-001' (3072), 'text-embedding-005' (768).
+   * Embedding model. Defaults to 'gemini-embedding-001' (3072 dims).
+   * Other options: 'text-embedding-005' (768), 'text-multilingual-embedding-002' (768).
    */
   model?: string;
   /**
