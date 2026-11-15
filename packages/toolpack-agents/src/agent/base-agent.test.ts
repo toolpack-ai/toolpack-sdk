@@ -824,6 +824,57 @@ describe('BaseAgent', () => {
       expect(request.requestTools?.some(t => t.name === 'conversation_search')).toBe(true);
     });
 
+    it('should leave out conversation_search when conversationSearch is false', async () => {
+      const mockConversationHistory: ConversationStore = {
+        get: vi.fn().mockResolvedValue([]),
+        append: vi.fn().mockResolvedValue(undefined),
+        search: vi.fn().mockResolvedValue([]),
+        deleteMessages: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      expect(agent.conversationSearch).toBe(true);
+      agent.conversationHistory = mockConversationHistory;
+      agent._conversationId = 'test-conv';
+      agent.conversationSearch = false;
+
+      await agent.invokeAgent({
+        message: 'What did I say earlier?',
+        conversationId: 'test-conv',
+      });
+
+      const generateCall = vi.mocked(mockToolpack.generate).mock.calls[0];
+      const request = generateCall[0] as { requestTools?: Array<{ name: string }> };
+
+      expect(request.requestTools?.some(t => t.name === 'conversation_search') ?? false).toBe(false);
+    });
+
+    it('should still load the conversation history when conversationSearch is false', async () => {
+      const history: StoredMessage[] = [{
+        id: 'h1', conversationId: 'test-conv',
+        participant: { kind: 'user', id: 'u1', displayName: 'Ana' },
+        content: 'builder.ts is for creating agents', timestamp: new Date().toISOString(), scope: 'channel',
+      }];
+      const mockConversationHistory: ConversationStore = {
+        get: vi.fn().mockResolvedValue(history),
+        append: vi.fn().mockResolvedValue(undefined),
+        search: vi.fn().mockResolvedValue([]),
+        deleteMessages: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.conversationHistory = mockConversationHistory;
+      agent._conversationId = 'test-conv';
+      agent.conversationSearch = false;
+
+      await agent.invokeAgent({ message: 'What is builder.ts for?', conversationId: 'test-conv' });
+
+      expect(mockConversationHistory.get).toHaveBeenCalled();
+      expect(mockConversationHistory.search).not.toHaveBeenCalled();
+      const request = vi.mocked(mockToolpack.generate).mock.calls[0][0] as { messages: Array<{ content: unknown }> };
+      expect(JSON.stringify(request.messages)).toContain('builder.ts is for creating agents');
+    });
+
     it('should pass a callable conversation_search request tool to the SDK', async () => {
       const matchingMessage: StoredMessage = {
         id: '1', conversationId: 'test-conv',

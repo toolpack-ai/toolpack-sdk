@@ -54,6 +54,12 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   mind?: AgentMindConfig;
 
   /**
+   * Adds the built-in `conversation_search` tool to every run that has a conversation. Set to false to leave it out, for
+   * example to give the agent your own search tool under the same name. Default true.
+   */
+  conversationSearch = true;
+
+  /**
    * AI-driven agent delegation. When enabled, a `delegate_to_agent` tool is
    * injected into every run() call so the LLM can hand tasks to peer agents.
    * Only active when the agent is registered in an AgentRegistry with peers.
@@ -335,7 +341,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
       // Expose a search tool when a conversation is active so the LLM can
       // retrieve specific past turns beyond the assembled context window.
       const requestTools: RequestToolDefinition[] = [];
-      if (convId) {
+      if (convId && this.conversationSearch) {
         const store = this.conversationHistory;
         requestTools.push({
           name: 'conversation_search',
